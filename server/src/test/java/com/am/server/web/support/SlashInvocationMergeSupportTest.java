@@ -28,7 +28,7 @@ class SlashInvocationMergeSupportTest {
 
     @Test
     void sameTokenDifferentKindsAreDistinct() {
-        List<Object[]> rows = List.of(
+        List<Object[]> rows = List.<Object[]>of(
                 new Object[] { 2L, "[{\"token\":\"/x\",\"kind\":\"command\"},{\"token\":\"/x\",\"kind\":\"noise\"}]" }
         );
 

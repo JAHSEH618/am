@@ -85,6 +85,44 @@ func TestParseFile_Codex(t *testing.T) {
 	}
 }
 
+// Codex 在上下文压缩 / 重置时，total_token_usage 累计计数会回退变小。
+// 旧逻辑 dIn = newIn - prevIn 会算出大负增量并上报，服务端求和后「今日 Token」变负、
+// 前端越界。此处验证：计数回退时不得产生负向 ActivityDelta，但基线必须推进到新值，
+// 这样压缩后继续累积的增量仍按新基线正确计算。
+func TestCodex_TokenCountReset_NoNegativeDelta(t *testing.T) {
+	body := `{"timestamp":"2026-05-07T10:00:00Z","type":"session_meta","payload":{"id":"sess-reset","cwd":"/tmp/proj","cli_version":"0.5.0"}}
+{"timestamp":"2026-05-07T10:00:06Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200000,"cached_input_tokens":0,"output_tokens":5000,"reasoning_output_tokens":0}}}}
+{"timestamp":"2026-05-07T10:00:07Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20000,"cached_input_tokens":0,"output_tokens":300,"reasoning_output_tokens":0}}}}
+{"timestamp":"2026-05-07T10:00:08Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":25000,"cached_input_tokens":0,"output_tokens":700,"reasoning_output_tokens":0}}}}
+`
+	path := writeFixture(t, body)
+	ps, _, err := parseFile(path)
+	if err != nil {
+		t.Fatalf("parseFile: %v", err)
+	}
+
+	var sumIn, sumOut int64
+	for _, d := range ps.ActivityDeltas {
+		if d.Source != common.ActivitySourceTokenCount {
+			continue
+		}
+		if d.InputTokensDelta < 0 || d.OutputTokensDelta < 0 {
+			t.Errorf("negative token delta emitted: in=%d out=%d", d.InputTokensDelta, d.OutputTokensDelta)
+		}
+		sumIn += d.InputTokensDelta
+		sumOut += d.OutputTokensDelta
+	}
+
+	// 基线必须推进到最后一次上报值（25000 / 700），否则后续 tick 又会算出负增量。
+	if ps.InputTokens != 25000 || ps.OutputTokens != 700 {
+		t.Errorf("baseline = in:%d out:%d, want in:25000 out:700", ps.InputTokens, ps.OutputTokens)
+	}
+	// 第一段 +200000/+5000，回退段裁 0，压缩后回升段 +5000/+400。
+	if sumIn != 205000 || sumOut != 5400 {
+		t.Errorf("summed deltas = in:%d out:%d, want in:205000 out:5400", sumIn, sumOut)
+	}
+}
+
 func TestCodex_ParseUserMessage_nonInputTextPreservesDollarSkill(t *testing.T) {
 	body := `{"timestamp":"2026-05-07T10:00:00Z","type":"session_meta","payload":{"id":"sess-skill","cwd":"/tmp/proj","cli_version":"0.99.0"}}
 {"timestamp":"2026-05-07T10:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"text","text":"$skill-creator 这是什么"}]}}

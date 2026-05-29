@@ -33,6 +33,18 @@ class MessageDeltaFallbackSupportTest {
     }
 
     @Test
+    void clampTokenDelta_negativeBecomesZero() {
+        assertEquals(0L, AbstractAiSessionIngestService.clampTokenDelta(-180000L));
+        assertEquals(0L, AbstractAiSessionIngestService.clampTokenDelta(-1L));
+    }
+
+    @Test
+    void clampTokenDelta_nonNegativeUnchanged() {
+        assertEquals(205000L, AbstractAiSessionIngestService.clampTokenDelta(205000L));
+        assertEquals(0L, AbstractAiSessionIngestService.clampTokenDelta(0L));
+    }
+
+    @Test
     void prefersPerItemDeltaPath_activityDeltas() {
         AiSessionEventRepository events = mock(AiSessionEventRepository.class);
         MonitorSessionDto dto = new MonitorSessionDto();

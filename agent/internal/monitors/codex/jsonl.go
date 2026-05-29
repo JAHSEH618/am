@@ -255,8 +255,17 @@ func handleEvent(ps *parsedSession, ev eventPayload, ts time.Time) {
 			u := ev.Info.TotalTokenUsage
 			newIn := int64(u.InputTokens)
 			newOut := int64(u.OutputTokens + u.ReasoningOutput)
+			// total_token_usage 是会话累计值；Codex 在自动压缩 / 上下文重置后会把它回退到更小的基数。
+			// 此时 new - prev 为负，若原样上报，服务端求和会让「今日 Token」变负、前端越界。
+			// 计数回退视作一次重置：本次增量裁 0，但基线仍推进到新值，压缩后继续累积仍按新基线正确计。
 			dIn := newIn - ps.InputTokens
+			if dIn < 0 {
+				dIn = 0
+			}
 			dOut := newOut - ps.OutputTokens
+			if dOut < 0 {
+				dOut = 0
+			}
 			if dIn != 0 || dOut != 0 {
 				ref := "token_count:" + ts.Format(time.RFC3339Nano)
 				common.AppendActivityDelta(&ps.ActivityDeltas, ts, ref, common.ActivitySourceTokenCount, dIn, dOut, 0)

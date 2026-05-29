@@ -548,6 +548,11 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             }
             long inD = nz(d.getInputTokensDelta());
             long outD = nz(d.getOutputTokensDelta());
+            // 服务端兜底：客户端累计计数回退（Codex 压缩 / 重置）时可能下发负向 token 增量，
+            // 老版本 agent 不会立即升级，这里裁 0 防止「今日 Token」求和变负、前端越界。
+            // 与 clampFallbackMessageDelta「禁止负向事件」同口径。
+            inD = clampTokenDelta(inD);
+            outD = clampTokenDelta(outD);
             int msgD = d.getMessagesDelta() == null ? 0 : d.getMessagesDelta();
             if (inD != 0 || outD != 0) {
                 sseEvents.add(writeEvent(session, AiSessionEventType.TOKEN_DELTA, session.getStatus(), null,
@@ -665,6 +670,11 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     /** 快照累计 fallback 只允许正向消息增量；计数回退是解析 artifact，不应进 event 流。 */
     static int clampFallbackMessageDelta(int delta) {
         return Math.max(delta, 0);
+    }
+
+    /** 客户端累计 token 计数回退（压缩 / 重置）会算出负增量；只允许正向，避免汇总变负。 */
+    static long clampTokenDelta(long delta) {
+        return Math.max(delta, 0L);
     }
 
     private int writeMessages(AiSession session, MonitorSessionDto incoming, SignatureContext ctx,

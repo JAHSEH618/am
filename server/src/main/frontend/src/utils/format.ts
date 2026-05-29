@@ -13,8 +13,12 @@ export function formatDuration(seconds: number | null | undefined): string {
 
 export function formatTokens(n: number | null | undefined): string {
   if (!n) return '0';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)} M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)} k`;
+  // 按量级缩写时取绝对值再补回符号：异常数据（如客户端计数回退算出的负 token）也能缩成
+  // "-92.50 M" 而非原样输出 "-92504752" 撑破卡片。正常正值不受影响。
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(2)} M`;
+  if (abs >= 1_000) return `${sign}${(abs / 1_000).toFixed(1)} k`;
   return n.toString();
 }
 
