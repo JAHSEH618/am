@@ -1,0 +1,335 @@
+/*
+ * 全局样式（v1.6 设计系统）。
+ *
+ * 与 main.tsx 的 ConfigProvider.theme 配合：
+ *   - tokens（颜色 / 圆角 / 字号）走 AntD theme，不在这里写 hex；
+ *   - 这里只放 AntD 控件无法覆盖的"骨架"样式：滚动条、表格 sticky、辅助类。
+ *
+ * 设计基调：minimalism + dashboard-first；不上 glass / brutalism 等强风格，
+ * 保证 B 端监控后台的"信息密度高 + 留白克制"。
+ */
+
+:root {
+  /* 字号 scale，组件里用 var(--am-fs-xs) 等引用；与 AntD token 字号一致 */
+  --am-fs-xs: 12px;
+  --am-fs-sm: 13px;
+  --am-fs-md: 14px;
+  --am-fs-lg: 16px;
+  --am-fs-xl: 20px;
+  --am-fs-2xl: 28px;
+
+  /* 间距 scale (8pt rhythm)，需要在非 antd 元素上保持节奏感时使用 */
+  --am-sp-1: 4px;
+  --am-sp-2: 8px;
+  --am-sp-3: 12px;
+  --am-sp-4: 16px;
+  --am-sp-5: 24px;
+  --am-sp-6: 32px;
+
+  /* 语义状态色（与 format.ts statusColor 对齐，方便 css 也能引用） */
+  --am-color-idle: #94a3b8;
+  --am-color-running: #6366f1;
+  --am-color-success: #10b981;
+  --am-color-warn: #f59e0b;
+  --am-color-error: #ef4444;
+  --am-color-info: #2563eb;
+
+  /* 表面分层：从最低到最高 */
+  --am-bg-page: #f5f7fa;
+  --am-bg-card: #ffffff;
+  --am-border-subtle: #eef0f4;
+  --am-border-strong: #e2e6ed;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  font-size: var(--am-fs-md);
+  font-feature-settings: 'tnum'; /* 数字等宽：防止数据表格抖动 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--am-bg-page);
+}
+
+/* 滚动条克制化：默认窄，hover 才显形 */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* 数据表格：thead sticky，长列表滚动时表头始终可见 */
+.am-sticky-table .ant-table-thead > tr > th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fafbfc !important;
+  font-weight: 500;
+}
+
+/* 在线 Agent 表：rowSpan 合并的"按机器不变"列上下居中、加微弱左右内边以便视觉分组；
+   分行展开的"运行中 Agent / 状态 / 模型 / 项目"列保持紧凑。 */
+.am-online-table .ant-table-tbody > tr > td {
+  vertical-align: middle;
+}
+/* 让同一 agent_device 的子行之间出现一条更浅的虚线分隔，告诉用户"这是同一员工的另一个 agent" */
+.am-online-table .ant-table-tbody > tr:not(:last-child) > td {
+  border-bottom: 1px dashed #eef2f7;
+}
+/* 但每个 agent_device 之间保持完整实线分隔——通过 mergeCell 第一行 rowSpan 自动撑高，CSS 不需特别处理 */
+
+/* 卡片 hover 微反馈：dashboard 上的可点击卡片用 .am-clickable */
+.am-clickable {
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+  cursor: pointer;
+}
+.am-clickable:hover {
+  border-color: var(--am-border-strong);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+}
+
+/* Dashboard：顶部 4 张 Hero 卡同高（列 stretch + 卡片撑满） */
+.am-dashboard-hero-row {
+  align-items: stretch;
+}
+.am-dashboard-hero-row > .ant-col {
+  display: flex;
+}
+.am-dashboard-hero-row > .ant-col > .ant-card.am-hero {
+  flex: 1;
+  width: 100%;
+}
+
+/* Hero metric：dashboard 顶部 4 个核心指标卡的容器（强语义色背景 + 大字号） */
+.am-hero {
+  position: relative;
+  overflow: hidden;
+  min-height: 132px;
+}
+.am-hero .am-hero-icon {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  opacity: 0.18;
+  font-size: 56px;
+  pointer-events: none;
+}
+.am-hero-label {
+  font-size: var(--am-fs-sm);
+  color: rgba(15, 23, 42, 0.55);
+  margin-bottom: 6px;
+}
+.am-hero-value {
+  font-size: var(--am-fs-2xl);
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.92);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.am-hero-suffix {
+  font-size: var(--am-fs-sm);
+  color: rgba(15, 23, 42, 0.5);
+  margin-left: 6px;
+  font-weight: 400;
+}
+.am-hero-subnote {
+  margin-top: 4px;
+  font-size: var(--am-fs-sm);
+  color: rgba(15, 23, 42, 0.5);
+  font-weight: 400;
+  line-height: 1.3;
+}
+
+/* metric list：次级指标紧凑形态（一行一个） */
+.am-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--am-border-subtle);
+  font-size: var(--am-fs-md);
+}
+.am-metric-row:last-child {
+  border-bottom: 0;
+}
+.am-metric-row > .am-metric-label {
+  color: rgba(15, 23, 42, 0.6);
+}
+.am-metric-row > .am-metric-value {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 工具栏区：Sessions / Cost 等列表页顶部的过滤栏统一形态 */
+.am-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.am-toolbar-spacer {
+  flex: 1;
+}
+
+/* 页头：每页 H1 区，与 MainLayout 协同 */
+.am-page-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.am-page-title {
+  font-size: var(--am-fs-xl);
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.92);
+  margin: 0;
+}
+.am-page-subtitle {
+  font-size: var(--am-fs-sm);
+  color: rgba(15, 23, 42, 0.5);
+}
+
+/* 注册员工列：离线状态用叠在姓名上的朱红小印章（轻微倾斜） */
+.am-employee-cell {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  min-height: 1.35em;
+}
+.am-employee-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-offline-seal {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  transform: translate(-42%, -50%) rotate(-14deg);
+  z-index: 2;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'Songti SC', 'STSong', 'SimSun', serif;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  color: #b91c1c;
+  padding: 3px 4px 2px;
+  border: 1.5px solid #b91c1c;
+  border-radius: 1px;
+  background: rgba(255, 252, 250, 0.78);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(185, 28, 28, 0.22),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* 注册员工表：筛选工具条（白底胶囊 + 竖线分隔 + 搜索前缀图标） */
+.am-agent-filter {
+  padding: 14px 16px 12px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 55%, #eef2f7 100%);
+  border-bottom: 1px solid var(--am-border-subtle);
+}
+.am-agent-filter-inner {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  padding: 2px 4px 2px 2px;
+  max-width: 100%;
+}
+.am-agent-filter-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 12px;
+  min-height: 38px;
+  flex-shrink: 0;
+}
+.am-agent-filter-label {
+  font-size: var(--am-fs-xs);
+  font-weight: 600;
+  color: #64748b;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.am-agent-filter-select.ant-select-borderless {
+  min-width: 100px;
+}
+.am-agent-filter-select .ant-select-selector {
+  padding-inline: 4px !important;
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.88) !important;
+}
+.am-agent-filter-divider {
+  align-self: center;
+  width: 1px;
+  height: 22px;
+  background: linear-gradient(180deg, transparent, #e2e8f0 20%, #e2e8f0 80%, transparent);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.am-agent-filter-input.ant-input-affix-wrapper {
+  flex: 1;
+  min-width: 140px;
+  min-height: 38px;
+  padding-inline: 8px 10px;
+}
+.am-agent-filter-search-icon {
+  color: #94a3b8;
+  font-size: 15px;
+  margin-inline-end: 2px;
+}
+.am-agent-filter-input input::placeholder {
+  color: #94a3b8;
+  font-size: var(--am-fs-sm);
+}
+.am-agent-filter-hint {
+  margin: 8px 0 0;
+  padding-left: 4px;
+  font-size: var(--am-fs-xs);
+  color: #94a3b8;
+  line-height: 1.45;
+}
+
+@media (max-width: 575px) {
+  .am-agent-filter-inner {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 10px;
+  }
+  .am-agent-filter-status {
+    min-height: auto;
+    padding: 4px 6px 2px 6px;
+  }
+  .am-agent-filter-divider {
+    width: 100%;
+    height: 1px;
+    margin: 6px 0;
+    background: #e2e8f0;
+  }
+  .am-agent-filter-input.ant-input-affix-wrapper {
+    min-width: 0;
+  }
+}

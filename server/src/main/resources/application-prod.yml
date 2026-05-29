@@ -1,0 +1,40 @@
+
+server:
+  port: 9527
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://22.50.6.25:3306/am?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true}
+    username: ${DB_USERNAME:am}
+    password: ${DB_PASSWORD:am_test}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: aiwatch-cp
+      maximum-pool-size: 100
+      minimum-idle: 20
+  sql:
+    init:
+      mode: never
+  jpa:
+    show-sql: false
+
+
+logging:
+  level:
+    root: INFO
+    com.am.server: INFO
+    org.hibernate.SQL: WARN
+
+aiwatch:
+  agent:
+    # 2min 上报 + bootstrap 慢 tick；5min 在线/活跃窗口（≈2.5× 上报间隔）
+    online-window-seconds: 300
+    activity-window-seconds: 300
+    per-report-cap-seconds: 120
+  install:
+    # 默认 /home/app/sxpservice/temp，可通过 AIWATCH_INSTALL_DIR 环境变量覆盖
+    dir: ${AIWATCH_INSTALL_DIR:/home/app/sxpservice/temp}
+  insight:
+    # 推广期关闭后台扫表 LLM 审计，减轻 bootstrap 大包 + 入库时的 CPU/内存/DB 压力。
+    # 全员回填稳定后改为 true 并重启；亦可启动参数 --aiwatch.insight.audit-scan-enabled=true 覆盖。
+    audit-scan-enabled: false

@@ -1,0 +1,43 @@
+server:
+  port: 8081
+
+aiwatch:
+  install:
+    # dev 默认指向 agent/build-dist.sh 的产物目录；
+    # 跑过一次 build-dist.sh 之后前端"安装客户端"弹框就能用，无需配环境变量
+    dir: ${user.home}/projects/am/agent/dist/install
+
+spring:
+  # dev 模式禁用静态资源缓存：前端 npm run build 后端不重启也能立即生效
+  # 生产由 application.yml 默认值（cache 开启）覆盖
+  web:
+    resources:
+      cache:
+        period: 0
+      chain:
+        cache: false
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/am?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: root
+    password: 99129
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      pool-name: aiwatch-cp
+      maximum-pool-size: 10
+      minimum-idle: 2
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:sql/schema.sql
+      continue-on-error: false
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+logging:
+  level:
+    com.am.server: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE

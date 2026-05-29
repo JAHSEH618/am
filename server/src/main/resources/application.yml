@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: aiwatch
+  profiles:
+    active: dev
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          time_zone: Asia/Shanghai
+
+server:
+  # port 留给各 profile 自己声明：dev = 8081（默认 8080 给打包后的 prod / aiwatch-server.jar 使用）
+  port: 8080
+  tomcat:
+    # Cursor 等大 payload：单次 /report 解压后 JSON 可达数 MB～十余 MB；连接器默认 maxPostSize≈2MB
+    # 会触发读取/解析异常并在全局处理器里表现为 code=50000。生产务必放宽。
+    max-http-form-post-size: 512MB
+  compression:
+    enabled: true
+    mime-types: application/json,text/html,text/css,application/javascript
+  servlet:
+    session:
+      # 管理员会话默认 7 天滑动；JSESSIONID Cookie，重启会清空（管理员需重新登录）
+      timeout: 7d
+      cookie:
+        http-only: true
+        same-site: lax
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized
+
+logging:
+  level:
+    root: INFO
+    com.am.server: INFO
+    org.hibernate.SQL: WARN
+
+# AIWatch 业务参数。前缀 aiwatch 为 v2.0 起的标准 namespace；
+# 当前 Java 端没有 @ConfigurationProperties 直接读这里（保留为运行时配置预留位）。
+aiwatch:
+  agent:
+    heartbeat-interval-seconds: 60
+    max-heartbeat-gap-seconds: 180
+    timestamp-window-seconds: 300
+    min-agent-version: 1.0.0
+    # 设备在线判定：last_seen 距现在不超过此秒数。默认 300（5min）≈ 2.5× 默认 2min 上报间隔。
+    online-window-seconds: 300
+    # 会话活跃判定：ingest 侧 last_activity 窗口，与客户端 ActivityTimeout 对齐。
+    activity-window-seconds: 300
+    # 单次 /report 推进 work_session 时长上限（与 report_interval 一致）。
+    per-report-cap-seconds: 120
+  capture:
+    max-text-bytes-per-part: 524288
+    max-blob-bytes-per-part: 1048576
+    max-blobs-per-message: 8
+    max-parts-per-message: 64
+    inline-blob-max-bytes: 32768
+    audit-message-max-chars: 4000
+

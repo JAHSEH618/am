@@ -1,0 +1,210 @@
+import { useState } from 'react';
+import { Drawer, Popover, Spin, Tag, Tooltip, Typography } from 'antd';
+import type { ProjectGitCommit } from '../api/types';
+import { fetchGitCommitPatch } from '../api/client';
+import { decodeGitQuotedPath } from '../utils/gitPath';
+
+const { Text } = Typography;
+
+type Props = {
+  row: ProjectGitCommit;
+};
+
+function DiffBody({
+  patch,
+  binary,
+  truncated,
+  reason,
+}: {
+  patch: string;
+  binary: boolean;
+  truncated: boolean;
+  reason?: string | null;
+}) {
+  if (binary) {
+    return <Text type="secondary">二进制文件，无文本 diff</Text>;
+  }
+  if (!patch) {
+    return <Text type="secondary">暂无 patch 内容（旧数据或未采集）</Text>;
+  }
+  return (
+    <>
+      {truncated && (
+        <Tag color="orange" style={{ marginBottom: 8 }}>
+          已截断{reason ? `：${reason}` : ''}
+        </Tag>
+      )}
+      <pre
+        style={{
+          margin: 0,
+          padding: 12,
+          fontSize: 11,
+          lineHeight: 1.45,
+          overflow: 'auto',
+          maxHeight: 'calc(100vh - 180px)',
+          background: '#fafafa',
+          border: '1px solid #f0f0f0',
+          borderRadius: 6,
+        }}
+      >
+        {patch.split('\n').map((line, i) => {
+          let bg: string | undefined;
+          if (line.startsWith('+') && !line.startsWith('+++')) bg = '#ecfdf5';
+          else if (line.startsWith('-') && !line.startsWith('---')) bg = '#fef2f2';
+          else if (line.startsWith('@@')) bg = '#eff6ff';
+          return (
+            <div
+              key={i}
+              style={{ background: bg, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
+            >
+              {line || ' '}
+            </div>
+          );
+        })}
+      </pre>
+    </>
+  );
+}
+
+export function GitCommitChangeCell({ row }: Props) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [patch, setPatch] = useState('');
+  const [binary, setBinary] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const [truncateReason, setTruncateReason] = useState<string | null>(null);
+
+  const repoUrl = row.repo_url ?? '';
+  const paths = row.path_stats?.filter((p) => p.path) ?? [];
+
+  const summary = (
+    <Text type="secondary">
+      <Text style={{ color: '#16a34a' }}>+{row.lines_added}</Text>
+      {' / '}
+      <Text style={{ color: '#dc2626' }}>-{row.lines_deleted}</Text>
+    </Text>
+  );
+
+  const openDiff = async (path: string) => {
+    if (!repoUrl) {
+      return;
+    }
+    setSelectedPath(path);
+    setDrawerOpen(true);
+    setLoading(true);
+    setPatch('');
+    try {
+      const res = await fetchGitCommitPatch({
+        repo_url: repoUrl,
+        commit_hash: row.commit_hash,
+        path,
+      });
+      setPatch(res.patch ?? '');
+      setBinary(res.binary);
+      setTruncated(res.patch_truncated);
+      setTruncateReason(res.truncate_reason ?? null);
+    } catch {
+      setPatch('');
+      setBinary(false);
+      setTruncated(false);
+      setTruncateReason(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (paths.length === 0) {
+    return (
+      <Tooltip title="暂无文件级明细（旧数据或未上报 path_stats）" mouseEnterDelay={0.25}>
+        {summary}
+      </Tooltip>
+    );
+  }
+
+  const popoverBody = (
+    <div style={{ maxWidth: 480, maxHeight: 360, overflowY: 'auto' }}>
+      <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13, color: '#111827' }}>
+        文件变更（{paths.length}）
+        {row.detail_status && row.detail_status !== 'none' && (
+          <Tag style={{ marginLeft: 8 }} color={row.detail_status === 'full' ? 'green' : 'default'}>
+            {row.detail_status}
+          </Tag>
+        )}
+      </div>
+      {paths.map((p, idx) => {
+        const displayPath = decodeGitQuotedPath(p.path);
+        const clickable = Boolean(repoUrl);
+        return (
+          <div
+            key={`${p.path}-${idx}`}
+            role={clickable ? 'button' : undefined}
+            tabIndex={clickable ? 0 : undefined}
+            onClick={clickable ? () => openDiff(decodeGitQuotedPath(p.path)) : undefined}
+            onKeyDown={
+              clickable
+                ? (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') openDiff(decodeGitQuotedPath(p.path));
+                  }
+                : undefined
+            }
+            style={{
+              padding: '8px 0',
+              borderBottom: idx < paths.length - 1 ? '1px solid #f0f0f0' : undefined,
+              cursor: clickable ? 'pointer' : 'default',
+            }}
+          >
+            <div style={{ fontSize: 12, marginBottom: 4 }}>
+              <Text style={{ color: '#16a34a', fontWeight: 500 }}>+{p.lines_added}</Text>
+              <Text style={{ color: '#9ca3af', margin: '0 4px' }}>/</Text>
+              <Text style={{ color: '#dc2626', fontWeight: 500 }}>-{p.lines_deleted}</Text>
+              {clickable && (
+                <Text type="secondary" style={{ marginLeft: 8, fontSize: 11 }}>
+                  点击查看 diff
+                </Text>
+              )}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                lineHeight: 1.5,
+                color: clickable ? '#2563eb' : '#374151',
+                wordBreak: 'break-all',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              }}
+              title={displayPath}
+            >
+              {displayPath}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <>
+      <Popover
+        content={popoverBody}
+        trigger="hover"
+        placement="leftTop"
+        mouseEnterDelay={0.2}
+        overlayStyle={{ maxWidth: 500 }}
+        overlayInnerStyle={{ padding: '12px 14px' }}
+      >
+        {summary}
+      </Popover>
+      <Drawer
+        title={selectedPath ? decodeGitQuotedPath(selectedPath) : '文件 diff'}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        width={Math.min(960, typeof window !== 'undefined' ? window.innerWidth - 48 : 960)}
+        destroyOnClose
+      >
+        <Spin spinning={loading}>
+          <DiffBody patch={patch} binary={binary} truncated={truncated} reason={truncateReason} />
+        </Spin>
+      </Drawer>
+    </>
+  );
+}
