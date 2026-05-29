@@ -17,6 +17,38 @@ WORKDIR /build
 COPY server/ ./server/
 WORKDIR /build/server
 # node-gradle 插件会自动下载 Node 22.14 + pnpm 9.15，并把前端打入 jar 内的 static/
+#
+# —— 国内镜像加速（仅 Docker 构建期生效，不改动仓库里的 build.gradle / gradle-wrapper）——
+# 1) Gradle 发行版 zip 走腾讯云镜像（services.gradle.org 国内慢）
+RUN sed -i 's#services.gradle.org/distributions#mirrors.cloud.tencent.com/gradle#' \
+        gradle/wrapper/gradle-wrapper.properties
+# 2) init 脚本：Maven 依赖 / Gradle 插件走阿里云，node 插件的 Node 下载源指向 npmmirror
+COPY <<'EOF' /root/.gradle/init.gradle
+allprojects {
+    repositories {
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        mavenCentral()
+    }
+    afterEvaluate { proj ->
+        def nodeExt = proj.extensions.findByName('node')
+        if (nodeExt != null) {
+            nodeExt.distBaseUrl.set('https://npmmirror.com/mirrors/node')
+        }
+    }
+}
+settingsEvaluated { s ->
+    s.pluginManagement {
+        repositories {
+            maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+            gradlePluginPortal()
+        }
+    }
+}
+EOF
+# 3) npm/pnpm registry 走 npmmirror（node 插件装 pnpm + 前端 pnpm install 都读它）
+COPY <<'EOF' /root/.npmrc
+registry=https://registry.npmmirror.com
+EOF
 RUN chmod +x gradlew && ./gradlew --no-daemon clean bootJar
 
 ##############################################
@@ -27,7 +59,7 @@ WORKDIR /build/agent
 COPY agent/ ./
 ENV CGO_ENABLED=0
 # 国内构建慢可解开下一行使用国内代理：
-# ENV GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=https://goproxy.cn,direct
 RUN VERSION=1.0.13 bash build-dist.sh    # 产物在 dist/install/
 
 ##############################################
