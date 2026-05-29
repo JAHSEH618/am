@@ -1,0 +1,26 @@
+# 缩小构建上下文，避免把无关/大体积/敏感文件送进 Docker daemon
+.git
+.gitignore
+.obsidian
+docs
+openspec
+scripts
+AGENTS.md
+ARCHITECTURE.md
+README.md
+安装使用教程.md
+
+# 本地密钥（务必排除）
+.env
+.env.local
+
+# 构建产物（镜像内会重新生成）
+**/node_modules
+server/build
+server/src/main/frontend/dist
+server/src/main/resources/static
+agent/dist
+
+# 系统/日志
+**/*.log
+.DS_Store

@@ -1,0 +1,66 @@
+# AIWatch Docker 部署编排（server + MySQL）
+# 使用前：cp .env.example .env 并填入真实密码，详见 docs/guides/docker-deploy-centos.md
+#
+#   docker compose build      # 首次较久：拉依赖 + 编前端 + 编 agent
+#   docker compose up -d
+#   docker compose logs -f server
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: aiwatch-mysql
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max-connections=300          # 需 ≥ HikariCP maximum-pool-size（prod=100）
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: am
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动（数据卷为空时）自动导入表结构 + 种子数据（含默认管理员）
+      - ./server/src/main/resources/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # 如需宿主机直接连库，解开下面两行（生产不建议对公网暴露 3306）：
+    # ports:
+    #   - "3306:3306"
+
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aiwatch-server:1.0.13
+    container_name: aiwatch-server
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: ${DB_URL}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      AIWATCH_INSTALL_DIR: /srv/aiwatch/install
+      TZ: Asia/Shanghai
+    ports:
+      - "9527:9527"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9527/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    # 想"不重建镜像"就更新客户端分发包时，解开下面两行用宿主目录覆盖镜像内置分发包：
+    # volumes:
+    #   - ./agent/dist/install:/srv/aiwatch/install:ro
+
+volumes:
+  mysql-data:
