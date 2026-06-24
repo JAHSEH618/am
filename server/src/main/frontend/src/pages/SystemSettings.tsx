@@ -1137,6 +1137,8 @@ const KEYS = {
   INSIGHT_MAX_LLM: 'insight.max_llm_calls_per_report',
   INSIGHT_REAUDIT: 'insight.reaudit_message_threshold',
   INSIGHT_CONCURRENCY: 'insight.audit_concurrency',
+  INSIGHT_AUDIT_SCAN: 'insight.audit_scan_enabled',
+  INSIGHT_REDACT: 'insight.redact_enabled',
   INSIGHT_RUBRIC: 'insight.rubric_version',
   INSIGHT_AUDIT_VERSION: 'insight.audit_version',
   INSIGHT_RUBRIC_YAML: 'insight.rubric_yaml',
@@ -1337,6 +1339,39 @@ function JudgeConfigPanel() {
                   value={Number(draft[KEYS.INSIGHT_CONCURRENCY] ?? 1)}
                   onChange={(v) => setField(KEYS.INSIGHT_CONCURRENCY, String(v ?? 1))}
                   style={{ width: '100%' }}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} md={12}>
+              <Form.Item
+                label={
+                  <Tooltip title="关闭则后台不自动审计会话、仅生成报告时按需审；打开后台扫描器开始清积压。改后热生效，无需重启。">
+                    后台审计扫描
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                  </Tooltip>
+                }
+              >
+                <Switch
+                  checked={draft[KEYS.INSIGHT_AUDIT_SCAN] === 'true'}
+                  onChange={(v) => setField(KEYS.INSIGHT_AUDIT_SCAN, v ? 'true' : 'false')}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                label={
+                  <Tooltip title="拼 LLM 审计 prompt 前对密钥/令牌/私钥打码，降低把会话原文里的密钥发给第三方模型网关的泄露风险。">
+                    LLM 外发脱敏
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                  </Tooltip>
+                }
+              >
+                <Switch
+                  checked={draft[KEYS.INSIGHT_REDACT] === 'true'}
+                  onChange={(v) => setField(KEYS.INSIGHT_REDACT, v ? 'true' : 'false')}
                 />
               </Form.Item>
             </Col>

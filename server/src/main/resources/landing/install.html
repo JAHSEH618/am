@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>AIWatch 客户端安装</title>
+  <style>
+    :root { --pri: #2563eb; --ink: #0f172a; --muted: #64748b; --line: #e2e8f0; --bg: #f8fafc; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+           background: var(--bg); color: var(--ink); line-height: 1.6; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 48px 20px; }
+    h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; }
+    .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+    .step { font-size: 13px; font-weight: 600; color: var(--pri); margin: 0 0 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; }
+    input:focus { outline: none; border-color: var(--pri); }
+    .full { grid-column: 1 / -1; }
+    .tabs { display: flex; gap: 8px; margin: 20px 0 10px; }
+    .tab { padding: 6px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+           cursor: pointer; font-size: 13px; color: var(--muted); }
+    .tab.active { border-color: var(--pri); color: var(--pri); background: #eff6ff; font-weight: 600; }
+    pre { position: relative; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 16px 14px;
+          font-size: 12.5px; line-height: 1.7; white-space: pre; overflow-x: auto; margin: 0; }
+    .copy { position: absolute; top: 8px; right: 8px; background: #1e293b; color: #cbd5e1; border: 1px solid #334155;
+            border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .copy:hover { color: #fff; }
+    .hint { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+    .warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px;
+            padding: 10px 12px; font-size: 13px; margin: 0 0 16px; }
+    .err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 8px;
+           padding: 10px 12px; font-size: 13px; margin: 14px 0 0; display: none; }
+    .foot { color: #94a3b8; font-size: 12px; text-align: center; margin-top: 22px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>AIWatch 客户端安装</h1>
+    <p class="sub">在你的开发机上安装 aiwatchd，用于统计 AI 编码工具的使用情况。</p>
+
+    <div id="httpWarn" class="warn" style="display:none">
+      当前以明文 HTTP 访问，安装命令与上报可能被中间人窥探/篡改。建议联系管理员为平台配置 HTTPS 后再安装。
+    </div>
+
+    <div class="card">
+      <div class="step">① 填写你的信息</div>
+      <div class="grid">
+        <div class="full">
+          <label>公司邮箱 / 工号</label>
+          <input id="code" placeholder="如 zhangsan@company.com" autocomplete="off" />
+        </div>
+        <div>
+          <label>姓名</label>
+          <input id="name" placeholder="张三" autocomplete="off" />
+        </div>
+        <div>
+          <label>部门</label>
+          <input id="dept" placeholder="研发部" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="step" style="margin-top:20px">② 选择系统并复制命令</div>
+      <div class="tabs">
+        <div class="tab active" data-os="mac">macOS</div>
+        <div class="tab" data-os="linux">Linux</div>
+        <div class="tab" data-os="win">Windows</div>
+      </div>
+      <pre><button class="copy" id="copyBtn">复制</button><code id="cmd"></code></pre>
+      <p class="hint">把命令粘贴到终端执行即可。三项填完后命令才完整。</p>
+      <div id="err" class="err"></div>
+    </div>
+
+    <p class="foot">AIWatch · 仅用于团队 AI 使用观测</p>
+  </div>
+
+  <script>
+    (function () {
+      var origin = window.location.origin;
+      var basePath = '/install';
+      var activeOS = 'mac';
+
+      var isHttp = origin.indexOf('http://') === 0
+        && origin.indexOf('localhost') < 0 && origin.indexOf('127.0.0.1') < 0;
+      if (isHttp) document.getElementById('httpWarn').style.display = 'block';
+
+      function q(v) { return "'" + String(v).replace(/'/g, "'\\''") + "'"; }
+      function psq(v) { return "'" + String(v).replace(/'/g, "''") + "'"; }
+
+      function val(id) { return document.getElementById(id).value.trim(); }
+
+      function build() {
+        var code = val('code') || '<公司邮箱>';
+        var name = val('name') || '<姓名>';
+        var dept = val('dept') || '<部门>';
+        var baseUrl = origin + basePath;
+        if (activeOS === 'win') {
+          return [
+            '& ([scriptblock]::Create((irm ' + baseUrl + '/aiwatchd.ps1)))',
+            '  -Clean',
+            '  -UserCode ' + psq(code),
+            '  -UserName ' + psq(name),
+            '  -Department ' + psq(dept),
+            '  -ServerUrl ' + psq(origin)
+          ].join(' `\n');
+        }
+        return [
+          'curl -fsSL ' + baseUrl + '/aiwatchd.sh | bash -s --',
+          '  --clean',
+          '  --user-code ' + q(code),
+          '  --user-name ' + q(name),
+          '  --department ' + q(dept),
+          '  --server-url ' + origin
+        ].join(' \\\n');
+      }
+
+      function render() { document.getElementById('cmd').textContent = build(); }
+
+      ['code', 'name', 'dept'].forEach(function (id) {
+        document.getElementById(id).addEventListener('input', render);
+      });
+
+      var tabs = document.querySelectorAll('.tab');
+      tabs.forEach(function (t) {
+        t.addEventListener('click', function () {
+          tabs.forEach(function (x) { x.classList.remove('active'); });
+          t.classList.add('active');
+          activeOS = t.getAttribute('data-os');
+          render();
+        });
+      });
+
+      document.getElementById('copyBtn').addEventListener('click', function () {
+        var txt = document.getElementById('cmd').textContent;
+        var done = function () {
+          var b = document.getElementById('copyBtn');
+          b.textContent = '已复制'; setTimeout(function () { b.textContent = '复制'; }, 1500);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(txt).then(done).catch(fallback);
+        } else { fallback(); }
+        function fallback() {
+          var ta = document.createElement('textarea');
+          ta.value = txt; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); done(); } catch (e) {}
+          document.body.removeChild(ta);
+        }
+      });
+
+      // 拉取安装服务状态，校正 base 路径；失败用默认 /install。
+      fetch('/api/v1/install/status', { credentials: 'omit' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          var d = j && j.data;
+          if (d && d.base_url_path) basePath = d.base_url_path;
+          if (d && d.configured === false) {
+            var e = document.getElementById('err');
+            e.style.display = 'block';
+            e.textContent = '服务端尚未配置安装目录（aiwatch.install.dir），请联系管理员。';
+          }
+          render();
+        })
+        .catch(function () { render(); });
+
+      render();
+    })();
+  </script>
+</body>
+</html>

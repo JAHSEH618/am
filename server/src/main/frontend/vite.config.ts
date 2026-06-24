@@ -5,6 +5,9 @@ import path from 'node:path';
 // 设计文档 20.2 节：前端构建产物输出到 Spring Boot 的 static 目录
 // outDir 相对 vite 项目根（即 src/main/frontend），向上一级是 src/main，再进 resources/static
 export default defineConfig({
+  // 管理控制台搬到隐藏路径 /console（与公开「安装落地页」/ 分离）：
+  // 资源以 /console/assets/... 引用，后端把 SPA 挂在 /console/**。
+  base: '/console/',
   plugins: [react()],
   resolve: {
     alias: {

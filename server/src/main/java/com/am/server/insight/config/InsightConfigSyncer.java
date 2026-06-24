@@ -105,6 +105,14 @@ public class InsightConfigSyncer {
                 nullSafe(properties.getAuditVersion()), "string",
                 SystemConfigKeys.CAT_INSIGHT, false,
                 "报告流水线版本号（写入 ai_session_audit；不自动重审历史会话）");
+        configService.seedIfAbsent(SystemConfigKeys.INSIGHT_AUDIT_SCAN_ENABLED,
+                String.valueOf(properties.isAuditScanEnabled()), "boolean",
+                SystemConfigKeys.CAT_INSIGHT, false,
+                "后台洞察审计扫描器总开关；关=不自动审计，仅报告时审。改后热生效不重启");
+        configService.seedIfAbsent(SystemConfigKeys.INSIGHT_REDACT_ENABLED,
+                String.valueOf(properties.isRedactEnabled()), "boolean",
+                SystemConfigKeys.CAT_INSIGHT, false,
+                "LLM 外发脱敏开关；开=拼 Judge prompt 前对密钥/令牌打码");
     }
 
     /** 反向：把 sys_config 当前值刷回 InsightProperties 内存字段。 */
@@ -133,6 +141,10 @@ public class InsightConfigSyncer {
                 SystemConfigKeys.INSIGHT_RUBRIC_VERSION, properties.getRubricVersion()));
         properties.setAuditVersion(configService.getString(
                 SystemConfigKeys.INSIGHT_AUDIT_VERSION, properties.getAuditVersion()));
+        properties.setAuditScanEnabled(configService.getBool(
+                SystemConfigKeys.INSIGHT_AUDIT_SCAN_ENABLED, properties.isAuditScanEnabled()));
+        properties.setRedactEnabled(configService.getBool(
+                SystemConfigKeys.INSIGHT_REDACT_ENABLED, properties.isRedactEnabled()));
     }
 
     /** sys_config 任何 judge.* / insight.* key 变化都会 trigger 重载（粒度刷整个 group，足够小）。 */

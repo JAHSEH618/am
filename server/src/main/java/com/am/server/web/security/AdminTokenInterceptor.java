@@ -46,25 +46,24 @@ public class AdminTokenInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         // 每次请求都从 AuthConfigSyncer 读最新值（volatile field，O(1) 读取，无锁开销）
         String expectedToken = authConfigSyncer.getCurrentAdminToken();
-
-        // 通道 0：token 配置为空 → 鉴权整体关闭
-        if (expectedToken == null || expectedToken.isEmpty()) {
-            return true;
-        }
-
-        // 通道 1：X-Admin-Token 头（自动化脚本 / curl 走这条）
         String got = request.getHeader(HEADER_NAME);
-        if (got != null && !got.isEmpty() && constantTimeEquals(got, expectedToken)) {
+
+        // 通道 1：X-Admin-Token 头（自动化脚本 / curl）。
+        // fail-closed：token 未配置（空）时本通道直接不可用，绝不再「空=放行」。
+        if (expectedToken != null && !expectedToken.isEmpty()
+                && got != null && !got.isEmpty() && constantTimeEquals(got, expectedToken)) {
             return true;
         }
 
-        // 通道 2：已登录后台 session（前端 UI 按钮走这条，不需要塞 token）
+        // 通道 2：已登录后台 session（前端 UI 按钮，不需要塞 token）。
+        // 即便 token 配置为空，登录态用户仍可访问；其余一律拒绝。
         if (isAuthenticatedAdminSession()) {
             return true;
         }
 
-        log.warn("admin auth failed: uri={} got_token_present={} session_admin=false",
-                request.getRequestURI(), got != null);
+        log.warn("admin auth failed: uri={} token_present={} token_configured={} session_admin=false",
+                request.getRequestURI(), got != null,
+                expectedToken != null && !expectedToken.isEmpty());
         throw new BizException(ErrorCode.ADMIN_UNAUTHORIZED, "admin token missing or invalid");
     }
 

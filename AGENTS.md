@@ -33,9 +33,11 @@
 # Agent（Go）
 cd agent && go test ./...
 
-# 服务端（在项目所在机器上使用本地 Gradle，勿写 ./gradlew）
-cd server && gradle test
-cd server && gradle bootRun
+# 服务端：用 wrapper ./gradlew（固定 Gradle 8.7）。
+# ⚠️ 本机全局 gradle 已升到 9.2.x，会因 io.spring.dependency-management 在「配置解析后改 runtimeOnly」
+#    触发硬错误，`gradle test` / `bootJar` 直接失败。所以测试/构建一律走 ./gradlew，勿用本机 gradle。
+cd server && ./gradlew test
+cd server && ./gradlew bootRun
 
 # 前端（或使用 Gradle 集成的前端构建）
 cd server/src/main/frontend && pnpm install && pnpm run build
@@ -78,8 +80,8 @@ openspec/                       规格与变更提议（OpenSpec）
 
 ## 约束（机器可读）
 
-- **MUST**：新增 Java 代码遵守 `docs/architecture/LAYERS.md`；`com.am.server.architecture.BoundaryTest` 不得失败（本地 `gradle test` 验证）。
+- **MUST**：新增 Java 代码遵守 `docs/architecture/LAYERS.md`；`com.am.server.architecture.BoundaryTest` 不得失败（用 `./gradlew test` 验证；本机 gradle 9.2.x 跑不了测试）。
 - **MUST NOT**：在 `domain..` / `insight.domain..` / `system.domain..` 中引入对 `web..`、`agent.api..`、`*..insight.web..`、`system.web..` 的编译期依赖。
 - **PREFER**：业务编排放在 `service` / `agent.service` / `insight.orchestrator` 等，而非控制器。
-- **VERIFY**：`./scripts/check-consistency.sh`、`cd server && gradle test`、`cd agent && go test ./...`
+- **VERIFY**：`./scripts/check-consistency.sh`、`cd server && ./gradlew test`、`cd agent && go test ./...`
 

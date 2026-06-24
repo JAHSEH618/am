@@ -2,6 +2,7 @@ import axios, { AxiosError, type AxiosResponse } from 'axios';
 import { App as AntdApp } from 'antd';
 import type {
   AgentAlert,
+  AiPenetration,
   AiSessionAuditDetail,
   AiSession,
   AiSessionEvent,
@@ -53,11 +54,14 @@ http.interceptors.response.use(
     // 由全局守卫消费：抛 'AUTH_REQUIRED' 让 RequireAuth 捕获后跳转，
     // 避免每个调用方都自己处理 401
     if (err.response?.status === 401) {
-      const here = window.location.pathname + window.location.search;
+      // 控制台挂在 /console 基址下，硬跳必须带上前缀，否则会落到公开落地页 /。
+      const base = '/console';
+      const full = window.location.pathname + window.location.search;
+      const here = full.startsWith(base) ? full.slice(base.length) || '/' : full;
       // 已经在登录页就别再跳，避免死循环
       if (!here.startsWith('/login')) {
         const next = encodeURIComponent(here);
-        window.location.replace(`/login?from=${next}`);
+        window.location.replace(`${base}/login?from=${next}`);
       }
       // 401 不弹错误 toast（登录页跳转本身就是反馈）
       return Promise.reject(err);
@@ -85,6 +89,8 @@ export const fetchInsightAuditFast = () =>
   unwrap<DashboardInsightAuditFast>(http.get('/dashboard/insight-audit/fast'));
 export const fetchInsightAuditSlow = () =>
   unwrap<DashboardInsightAuditSlow>(http.get('/dashboard/insight-audit/slow'));
+export const fetchAiPenetration = (window: string) =>
+  unwrap<AiPenetration>(http.get('/dashboard/ai-penetration', { params: { window } }));
 export const fetchOnline = () => unwrap<OnlineAgent[]>(http.get('/dashboard/online'));
 export const fetchTopProjects = (limit = 10) =>
   unwrap<TopItem[]>(http.get('/dashboard/top-projects', { params: { limit } }));

@@ -44,7 +44,8 @@ param(
     [string]$UserCode   = $env:AM_USER_CODE,
     [string]$UserName   = $env:AM_USER_NAME,
     [string]$Department = $env:AM_DEPARTMENT,
-    [string]$ServerUrl  = $env:AM_SERVER_URL
+    [string]$ServerUrl  = $env:AM_SERVER_URL,
+    [string]$InstallToken = $env:AM_INSTALL_TOKEN
 )
 $ErrorActionPreference = 'Stop'
 
@@ -110,10 +111,12 @@ Write-AwInfo "daemon log : $daemonLog"
 # Windows on ARM 也回退用 amd64（aiwatchd 暂未提供 windows/arm64）
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') { 'amd64' } else { 'amd64' }
 $binaryName = "aiwatchd-windows-$arch.exe"
-$downloadUrl = "$serverUrl/install/$binaryName"
+# 安装端点令牌：服务端 install.token 非空时需带 ?t=；空则普通 URL（向后兼容）
+$tokq = if ($InstallToken) { "?t=$InstallToken" } else { "" }
+$downloadUrl = "$serverUrl/install/$binaryName$tokq"
 
 # ---------- 3. 下载 ----------
-Write-AwInfo "downloading $downloadUrl"
+Write-AwInfo "downloading $serverUrl/install/$binaryName"
 $tmp = New-TemporaryFile
 try {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $tmp -UseBasicParsing -TimeoutSec 30
@@ -125,11 +128,30 @@ try {
 
 $size = (Get-Item $tmp).Length
 if ($size -lt 1048576) {
-    Write-AwErr "downloaded file too small ($size bytes); likely 404 / proxy error"
+    Write-AwErr "downloaded file too small ($size bytes); likely 404 / proxy error / install-token 缺失"
     Get-Content $tmp -TotalCount 5 | Write-Host
     if ($transcriptStarted) { Stop-Transcript | Out-Null }
     exit 1
 }
+
+# ---------- 3.4 sha256 防篡改校验 ----------
+# 从 manifest.json 取该平台 sha256，与下载文件比对；不匹配立即中止（可能被 MITM 篡改）。
+try {
+    $manifest = (Invoke-WebRequest -Uri "$serverUrl/install/manifest.json$tokq" -UseBasicParsing -TimeoutSec 15).Content | ConvertFrom-Json
+    $expectedSha = $manifest.artifacts."windows-$arch".sha256
+} catch { $expectedSha = $null }
+$actualSha = (Get-FileHash -Algorithm SHA256 -Path $tmp).Hash.ToLower()
+if (-not $expectedSha) {
+    Write-AwErr "无法从 manifest.json 获取 windows-$arch 的 sha256；为安全起见中止安装（联系运维确认 manifest 可访问）"
+    if ($transcriptStarted) { Stop-Transcript | Out-Null }
+    exit 1
+}
+if ($actualSha -ne $expectedSha.ToLower()) {
+    Write-AwErr "二进制 sha256 校验失败（期望 $expectedSha 实际 $actualSha）；可能被篡改，已中止"
+    if ($transcriptStarted) { Stop-Transcript | Out-Null }
+    exit 1
+}
+Write-AwInfo "sha256 校验通过"
 
 # 强制覆盖；如果 ScheduledTask / 老进程占着文件锁，先停掉。
 try { Stop-ScheduledTask -TaskName 'aiwatchd' -ErrorAction SilentlyContinue } catch {}

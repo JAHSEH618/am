@@ -87,7 +87,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ConfigProvider locale={zhCN} theme={themeConfig}>
       <AntdApp>
-        <BrowserRouter>
+        <BrowserRouter basename="/console">
           <App />
         </BrowserRouter>
       </AntdApp>

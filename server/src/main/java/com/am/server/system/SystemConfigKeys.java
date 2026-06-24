@@ -39,6 +39,10 @@ public final class SystemConfigKeys {
     public static final String INSIGHT_AUDIT_CONCURRENCY         = "insight.audit_concurrency";
     public static final String INSIGHT_RUBRIC_VERSION            = "insight.rubric_version";
     public static final String INSIGHT_AUDIT_VERSION             = "insight.audit_version";
+    /** 后台洞察审计扫描器总开关；关=不自动审计，仅报告时审。UI 改后热生效不重启。 */
+    public static final String INSIGHT_AUDIT_SCAN_ENABLED        = "insight.audit_scan_enabled";
+    /** LLM 外发脱敏开关；开=拼 Judge prompt 前对密钥/令牌打码。默认开。 */
+    public static final String INSIGHT_REDACT_ENABLED            = "insight.redact_enabled";
     /**
      * Rubric YAML 全文，作为 prompt 头部直接拼接给 LLM。
      * 大文本字段（几 KB ~ 几十 KB），存 sys_config.config_value（MEDIUMTEXT），
@@ -61,6 +65,17 @@ public final class SystemConfigKeys {
     public static final String AUTH_PASSWORD    = "auth.password";
     public static final String AUTH_ADMIN_TOKEN = "auth.admin_token";
 
+    // ========== category: install ==========
+    /** 安装端点预共享令牌；非空则 /install/** 需带 ?t= 或 X-Install-Token，空=不启用。 */
+    public static final String INSTALL_TOKEN    = "install.token";
+
+    // ========== category: console ==========
+    /**
+     * 管理控制台 IP 白名单（逗号分隔，支持精确 IP 或前缀如 10.0.，留空=放行所有）。
+     * 非空时仅这些来源可访问 /console/**、/api/v1/admin/**、/api/v1/dashboard/**。
+     */
+    public static final String CONSOLE_IP_ALLOWLIST = "console.ip_allowlist";
+
     // ========== 分组常量 ==========
     public static final String CAT_AGENTS     = "agents";
     public static final String CAT_SCHEDULING = "scheduling";
@@ -68,4 +83,6 @@ public final class SystemConfigKeys {
     public static final String CAT_INSIGHT    = "insight";
     public static final String CAT_CAPTURE    = "capture";
     public static final String CAT_AUTH       = "auth";
+    public static final String CAT_INSTALL    = "install";
+    public static final String CAT_CONSOLE    = "console";
 }

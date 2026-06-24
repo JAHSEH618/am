@@ -154,6 +154,10 @@ public class SessionAuditService {
 
     private AiSessionAudit auditOne(AiSession session, AiSessionAudit existing) {
         String prompt = buildPrompt(session);
+        // 外发脱敏：拼好的 prompt 出网前对密钥/令牌打码（开关 insight.redact_enabled，默认开）。
+        if (properties.isRedactEnabled()) {
+            prompt = SecretRedactor.redact(prompt);
+        }
         DualJudgeService.Outcome outcome = dualJudgeService.judge(prompt);
 
         AiSessionAudit row = existing != null ? existing : new AiSessionAudit();

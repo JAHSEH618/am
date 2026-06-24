@@ -1,6 +1,7 @@
 package com.am.server.config;
 
 import com.am.server.web.security.AdminTokenInterceptor;
+import com.am.server.web.security.InstallTokenInterceptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
@@ -37,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 public class WebConfig implements WebMvcConfigurer {
 
     private final AdminTokenInterceptor adminTokenInterceptor;
+    private final InstallTokenInterceptor installTokenInterceptor;
     private final InstallProperties installProperties;
     private final Environment environment;
 
@@ -49,6 +51,11 @@ public class WebConfig implements WebMvcConfigurer {
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(adminTokenInterceptor)
                 .addPathPatterns("/api/v1/admin/**");
+        // 安装端点预共享令牌（install.token 非空时生效）：只挡 /install/** 实体文件
+        // （脚本 / 二进制 / manifest）——这是外人拖整包反推后端的入口。
+        // /api/v1/install/status 不挡：登录页未登录态要拉它渲染安装面板。
+        registry.addInterceptor(installTokenInterceptor)
+                .addPathPatterns("/install/**");
     }
 
     @Override
@@ -76,29 +83,24 @@ public class WebConfig implements WebMvcConfigurer {
             log.info("aiwatch.install.dir not set; /install/** disabled (frontend will guide ops to configure)");
         }
 
-        // /assets/** 是 vite 构建出来的带 hash 的文件（如 index-CgaWtEoG.js），
-        // 内容变了 hash 就变 → 直接长缓存 1 年 + immutable，命中浏览器本地最快
-        registry.addResourceHandler("/assets/**")
+        // 管理控制台 SPA 搬到隐藏路径 /console（与公开落地页 / 分离）。
+        // 资源由 vite base=/console/ 生成，引用形如 /console/assets/xxx.js。
+
+        // /console/assets/** 带 hash 的构建产物 → 长缓存 1 年 + immutable。
+        // 必须先于 /console/** 注册，保证 assets 命中专用 handler。
+        registry.addResourceHandler("/console/assets/**")
                 .addResourceLocations("classpath:/static/assets/")
                 .setCacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).cachePublic().immutable())
                 .resourceChain(cacheChain);
 
-        // 其他所有路径走 SPA fallback：命中文件就返回文件、没命中就返回 index.html
-        // 关键：CacheControl=no-cache 让浏览器每次都来询问；
-        //   - 如果 index.html 没变（ETag 相同）→ 304 极快；
-        //   - 如果 index.html 变了（发版）→ 立刻拿到新 index.html，跟着拉新的 hash bundle
-        // 这样彻底杜绝"浏览器抱着老 index.html + 引用了被删的 hash 文件 / 残留旧 DOM"的场景
-        registry.addResourceHandler("/**")
+        // /console 与 /console/** 走 SPA fallback：命中文件返回文件，否则回退 index.html（no-cache）。
+        registry.addResourceHandler("/console", "/console/**")
                 .addResourceLocations("classpath:/static/")
                 .setCacheControl(CacheControl.noCache())
                 .resourceChain(cacheChain)
                 .addResolver(new PathResourceResolver() {
                     @Override
                     protected Resource getResource(@NonNull String resourcePath, @NonNull Resource location) throws java.io.IOException {
-                        if (resourcePath.startsWith("api/") || resourcePath.startsWith("actuator/")
-                                || resourcePath.startsWith("install/")) {
-                            return null;
-                        }
                         Resource requested = location.createRelative(resourcePath);
                         if (requested.exists() && requested.isReadable()) {
                             return requested;
@@ -107,5 +109,6 @@ public class WebConfig implements WebMvcConfigurer {
                         return indexHtml.exists() ? indexHtml : null;
                     }
                 });
+        // 根 / 与未知公开路径不再服务 admin SPA —— 由 LandingController 提供极简安装落地页。
     }
 }

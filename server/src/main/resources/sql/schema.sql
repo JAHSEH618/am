@@ -688,21 +688,18 @@ CREATE TABLE IF NOT EXISTS sys_config_audit
 --   与 AuthConfigSyncer / InsightConfigSyncer / CaptureConfigSyncer /
 --   DynamicScheduledTaskManager 的 seedIfAbsent 默认值一致。
 --
---   首次部署后请立即修改 auth.password、auth.admin_token。
---   默认后台账号：admin / admin
---   默认 X-Admin-Token：aiwatch-default-admin-token-0000
+--   鉴权三件套（auth.username/password/admin_token）不在此 seed —— 由 AuthConfigSyncer 启动时
+--   seedIfAbsent 注入：username/password 默认 admin，admin_token 为 32 位随机串（不再有公开固定默认值）。
+--   prod 下 AuthConfigStartupGuard 会拒绝以空/默认（admin / aiwatch-default-admin-token-0000）凭据启动。
 --
 --   insight.rubric_yaml 体积较大，由 RubricLoader 首次启动从
 --   classpath:insight/rubric-v3.0.yaml 灌入（不在本文件重复）。
 -- =====================================================================
 
--- sys_config：鉴权（category=auth）
-INSERT IGNORE INTO sys_config
-    (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
-VALUES
-    ('auth.username',    'admin',                              'string',  'auth', 0, '后台管理员用户名', 'seed', NOW(), NOW()),
-    ('auth.password',    'admin',                              'string',  'auth', 1, '后台管理员密码（明文存储；UI 上 admin 可见）。首次部署默认 admin，请立即修改', 'seed', NOW(), NOW()),
-    ('auth.admin_token', 'aiwatch-default-admin-token-0000',   'string',  'auth', 1, '/api/v1/admin/** 自动化通道的 X-Admin-Token 期望值（敏感字段）', 'seed', NOW(), NOW());
+-- sys_config：鉴权（category=auth）—— 不在此 seed。
+-- username/password/admin_token 由 AuthConfigSyncer.seedDefaults() 启动时注入：
+--   username/password 默认 admin；admin_token = 32 位随机串（不再有公开固定默认 token）。
+-- prod 下 AuthConfigStartupGuard 拒绝以空/默认凭据启动；遗留环境若仍是默认值，升级前请先轮换。
 
 -- sys_config：定时任务（category=scheduling）
 INSERT IGNORE INTO sys_config
@@ -738,7 +735,9 @@ VALUES
     ('insight.reaudit_message_threshold', '20',    'integer', 'insight', 0, '已审计会话再增长 N 条消息触发重审', 'seed', NOW(), NOW()),
     ('insight.audit_concurrency',         '8',     'integer', 'insight', 0, '审计 worker 并发数；外网网关建议 ≤ 4，自建本地模型可大', 'seed', NOW(), NOW()),
     ('insight.rubric_version',            'v3.0',  'string',  'insight', 0, 'Rubric YAML 语义版本（运维标记；不自动重审历史会话）', 'seed', NOW(), NOW()),
-    ('insight.audit_version',             'v3.0',  'string',  'insight', 0, '报告流水线版本号（写入 ai_session_audit；不自动重审历史会话）', 'seed', NOW(), NOW());
+    ('insight.audit_version',             'v3.0',  'string',  'insight', 0, '报告流水线版本号（写入 ai_session_audit；不自动重审历史会话）', 'seed', NOW(), NOW()),
+    ('insight.audit_scan_enabled',        'false', 'boolean', 'insight', 0, '后台洞察审计扫描器总开关；默认关，管理员在系统设置打开后开始清积压', 'seed', NOW(), NOW()),
+    ('insight.redact_enabled',            'true',  'boolean', 'insight', 0, 'LLM 外发脱敏开关；开=拼 Judge prompt 前对密钥/令牌打码', 'seed', NOW(), NOW());
 
 -- sys_config：会话采集限额（category=capture）
 INSERT IGNORE INTO sys_config
@@ -750,3 +749,15 @@ VALUES
     ('capture.max_parts_per_message',    '64',      'integer', 'capture', 0, '单条消息最多 content part 数', 'seed', NOW(), NOW()),
     ('capture.inline_blob_max_bytes',    '32768',   'integer', 'capture', 0, '内联 blob 上限（字节）', 'seed', NOW(), NOW()),
     ('capture.audit_message_max_chars',  '4000',    'integer', 'capture', 0, '洞察审计 prompt 单条消息字符上限', 'seed', NOW(), NOW());
+
+-- sys_config：安装端点（category=install）
+INSERT IGNORE INTO sys_config
+    (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
+VALUES
+    ('install.token', '', 'string', 'install', 1, '安装端点预共享令牌；非空则 /install/** 需带 ?t= 或 X-Install-Token，空=不启用（向后兼容）', 'seed', NOW(), NOW());
+
+-- sys_config：管理控制台（category=console）
+INSERT IGNORE INTO sys_config
+    (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
+VALUES
+    ('console.ip_allowlist', '', 'string', 'console', 0, '管理控制台 IP 白名单（逗号分隔，精确 IP 或前缀如 10.0.；留空=放行所有）。非空时仅这些来源可访问 /console/** 与 admin/dashboard 接口', 'seed', NOW(), NOW());

@@ -96,6 +96,14 @@ export interface DashboardOverview {
   latest_agent_version: string | null;
 }
 
+/** AI 渗透率（北极星）· 可选时间窗查询结果。 */
+export interface AiPenetration {
+  /** 0~100 整数百分比；-1 = 无数据。 */
+  percent: number;
+  /** 回显口径：today / 7d / 30d。 */
+  window: string;
+}
+
 /** 大屏洞察审计进度 · 与队列剩余同频（默认 10s） */
 export interface DashboardInsightAuditFast {
   stable_audited_session_count: number;

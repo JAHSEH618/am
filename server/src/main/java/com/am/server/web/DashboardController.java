@@ -12,9 +12,12 @@ import com.am.server.domain.session.WorkSession;
 import com.am.server.domain.session.WorkSessionRepository;
 import com.am.server.config.AgentProperties;
 import com.am.server.insight.config.InsightProperties;
+import com.am.server.service.AiPenetrationService;
 import com.am.server.service.EmployeeDisplayService;
 import com.am.server.service.InstallManifestService;
+import com.am.server.service.PenetrationWindow;
 import com.am.server.system.ActiveTargetTypesProvider;
+import com.am.server.web.dto.AiPenetrationDto;
 import com.am.server.web.dto.DashboardInsightAuditFastDto;
 import com.am.server.web.dto.DashboardInsightAuditSlowDto;
 import com.am.server.web.dto.DashboardOverviewDto;
@@ -79,6 +82,7 @@ public class DashboardController {
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
     private final InsightProperties insightProperties;
     private final AgentProperties agentProperties;
+    private final AiPenetrationService aiPenetrationService;
 
     @GetMapping("/overview")
     public R<DashboardOverviewDto> overview() {
@@ -136,8 +140,8 @@ public class DashboardController {
         // 今日累计开过的 AI 会话数 —— 单独字段，不再覆盖 activeAiSessions（曾经的 bug：
         // Math.max 把"今日早些时候跑过、现在已空闲"的会话计入"活跃"，导致仪表盘虚高）
         out.setTodayAiSessions((int) todaySessions);
-        // AI 渗透率：原基于 git_commit.ai_assisted 启发式，已下线；固定 -1，前端显示「—」。
-        out.setAiPenetrationPercent(-1);
+        // AI 渗透率（北极星）：首屏直出默认 30 天口径；前端切换窗口走 /dashboard/ai-penetration。
+        out.setAiPenetrationPercent(aiPenetrationService.compute(PenetrationWindow.D30));
 
         out.setTodayToolCalls(activeTypes.isEmpty()
                 ? 0L
@@ -146,6 +150,17 @@ public class DashboardController {
         out.setLatestAgentVersion(installManifestService.readPublishedClientVersion().orElse(null));
 
         return R.ok(out);
+    }
+
+    /**
+     * AI 渗透率（北极星）· 可选时间窗：today / 7d / 30d（默认 30d）。
+     *
+     * <p>口径见 {@link AiPenetrationService}：AI协助行 / 全部非merge行 × 100；无数据返回 -1。
+     */
+    @GetMapping("/ai-penetration")
+    public R<AiPenetrationDto> aiPenetration(@RequestParam(defaultValue = "30d") String window) {
+        PenetrationWindow w = PenetrationWindow.parse(window);
+        return R.ok(new AiPenetrationDto(aiPenetrationService.compute(w), window));
     }
 
     /**

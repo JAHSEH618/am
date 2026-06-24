@@ -104,15 +104,17 @@ GOOS=linux   GOARCH=amd64 go build -o bin/aiwatchd-linux-amd64     ./cmd/agent
 
 ## 客户端使用（员工侧）
 
-员工拿到 AIWatch **登录页 URL**（如 `http://aiwatch.example.com`）即可自助安装：
+员工拿到 AIWatch **安装页 URL**（即平台根地址，如 `http://aiwatch.example.com/`）即可自助安装。
+根路径 `/` 是面向员工的极简「安装落地页」——只生成安装命令，**不暴露任何后台页面/接口**
+（管理控制台已搬到 `/console`，见下文）：
 
-1. 打开登录页 → 左侧"安装客户端"面板填三项信息：**工号 / 姓名 / 部门（可选）**
-2. 选择当前系统 Tab（macOS / Linux / Windows）→ 点右上角"复制"
+1. 打开安装页 → 填三项信息：**公司邮箱 / 工号、姓名、部门**
+2. 选择当前系统 Tab（macOS / Linux / Windows）→ 点"复制"
 3. 粘贴到终端 / PowerShell 执行，**无需登录、无需 HR 提前录入**
 
 > v2.3 起员工自助注册：服务端在 `employee` 表无此 `user_code` 时按命令行携带的姓名/部门自动建一条 `ACTIVE` 记录；已存在的员工不会被覆盖（HR 校准的姓名/部门是事实来源）。
 
-登录页拼出来的命令长这样（工号 / 姓名 / 部门 / 服务端 URL 都已替员工填好）：
+安装页拼出来的命令长这样（工号 / 姓名 / 部门 / 服务端 URL 都已替员工填好）：
 
 ```bash
 # macOS / Linux
@@ -161,7 +163,10 @@ AIWATCH_USER=admin AIWATCH_PASSWORD=<管理员密码> \
 java -jar aiwatch-server-*.jar --spring.profiles.active=prod
 ```
 
-> **后台登录**：浏览器访问 `http://<host>:8080/` 会跳到 `/login` 页面；用 `AIWATCH_USER` / `AIWATCH_PASSWORD` 配置的账号登录即可（仅管理员；员工不需要也不应该登录后台）。
+> **后台入口**：管理控制台在 **`http://<host>:8080/console`**（根路径 `/` 是面向员工的公开安装落地页，
+> 不暴露后台 SPA / 路由 / 接口）。访问 `/console` 用 `AIWATCH_USER` / `AIWATCH_PASSWORD` 登录即可
+> （仅管理员；员工不需要也不应该登录后台）。可选 `console.ip_allowlist`（sys_config，留空=放行）把
+> `/console` 与 admin/dashboard 接口限制到管理员 IP 段，彻底隐藏后台。
 > 会话 7 天滑动失效，重启服务会让所有管理员重新登录。
 > agent 上报、安装包下载、`X-Admin-Token` 通道**不受登录影响**（白名单）。
 

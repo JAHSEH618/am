@@ -29,10 +29,12 @@ specs; `legacy/` is v1.x), `docs/golden-principles/`, and per-module `CLAUDE.md`
 cd agent && go test ./...
 cd agent && bash build-dist.sh                  # cross-compile 4 platforms into dist/install/
 
-# Backend (Spring Boot 3.2 / JDK 17). AGENTS.md says use local `gradle`, not ./gradlew, on this machine.
-cd server && gradle bootRun                      # dev profile, :8081, auto-imports sql/schema.sql
-cd server && gradle test                         # includes the ArchUnit boundary check
-cd server && gradle bootJar                      # build/libs/aiwatch-server-*.jar (SPA bundled in)
+# Backend (Spring Boot 3.2 / JDK 17). Use the wrapper ./gradlew (pinned Gradle 8.7).
+# The machine's global `gradle` is 9.2.x, which BREAKS the build: io.spring.dependency-management mutates
+# `runtimeOnly` after testRuntimeClasspath resolves -> `:test` / `bootJar` hard-fail. Always ./gradlew.
+cd server && ./gradlew bootRun                    # dev profile, :8081, auto-imports sql/schema.sql
+cd server && ./gradlew test                       # includes the ArchUnit boundary check
+cd server && ./gradlew bootJar                    # build/libs/aiwatch-server-*.jar (SPA bundled in)
 
 # Frontend (React 18 / Vite 5 / pnpm) — usually built by Gradle; only for live HMR:
 cd server/src/main/frontend && pnpm install && pnpm dev   # :5173, proxies /api -> backend
@@ -61,7 +63,8 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
 
 ## Cross-cutting things to get right
 
-- **`gradle`, not `./gradlew`** on this machine (per `AGENTS.md`), even though a wrapper exists.
+- **`./gradlew` (wrapper, Gradle 8.7), not the machine's `gradle`** — global gradle is 9.2.x and breaks
+  `:test`/`bootJar` (dependency-management plugin mutates `runtimeOnly` post-resolution). AGENTS.md updated.
 - **Schema is one idempotent file**: `server/src/main/resources/sql/schema.sql` (`hibernate.ddl-auto=none`,
   no Flyway). Additive columns also go through boot-time `*SchemaPatches` classes — never rely on auto-DDL.
 - **Layering is test-enforced**: persistence-model packages must not import HTTP-adapter packages
@@ -69,8 +72,16 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
 - **`daily_summary` (live) ≠ `usage_report` (legacy, no writer)**: the current report engine is insight's
   `analysis_report` via `POST /api/v1/admin/analysis/generate`. The README's "报告中心 / `UsageReportGenerator`
   / `reports/generate-*`" section is stale v1.x — don't chase it.
+- **Admin console lives at `/console`, not `/`** (Vite `base:/console/` + Router `basename`). Root `/`
+  serves a standalone public install landing (`resources/landing/install.html` via `LandingController`) that
+  exposes no admin SPA/routes — so employees fetching the installer can't browse the backend. `WebConfig`
+  serves the SPA under `/console/**`; `ConsoleAccessFilter` optionally IP-gates `/console`, `/api/v1/admin/**`,
+  `/api/v1/dashboard/**` via `console.ip_allowlist` (empty = open). `/install/**` is token-gateable via
+  `install.token` (`InstallTokenInterceptor`); installer scripts verify binary sha256 against `manifest.json`.
 - **Agent ↔ server auth is HMAC** (`X-Agent-*`, ±300 s window, nonce replay guard); **admin auth** is a
-  7-day session **or** `X-Admin-Token`. Employees never log into the backend.
+  7-day session **or** `X-Admin-Token`. Spring Security now requires `authenticated()` on `/api/v1/admin/**`
+  (X-Admin-Token bridged by `AdminTokenAuthenticationFilter`); the empty-token bypass is gone and
+  `AuthConfigStartupGuard` refuses prod boot on empty/default credentials. Employees never log into the backend.
 - **Agent env vars use the `AM_*` prefix**; server admin/db config uses `AIWATCH_*` / `DB_*`.
-- **Verify before claiming done**: `cd server && gradle test`, `cd agent && go test ./...`,
+- **Verify before claiming done**: `cd server && ./gradlew test`, `cd agent && go test ./...`,
   `./scripts/check-consistency.sh`.

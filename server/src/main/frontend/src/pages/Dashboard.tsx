@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Col, Input, Pagination, Row, Select, Space, Spin, Table, Tag, Progress, Typography } from 'antd';
+import { Card, Col, Input, Pagination, Row, Segmented, Select, Space, Spin, Table, Tag, Progress, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   ApiOutlined,
@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
+  fetchAiPenetration,
   fetchInsightAuditFast,
   fetchInsightAuditSlow,
   fetchOnline,
@@ -67,6 +68,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [insightAuditFast, setInsightAuditFast] = useState<DashboardInsightAuditFast | null>(null);
   const [insightAuditSlow, setInsightAuditSlow] = useState<DashboardInsightAuditSlow | null>(null);
+  // AI 渗透率（北极星）可选窗口：今日 / 7天 / 30天。首屏沿用 overview 的 30 天值，切换时单独拉。
+  const [penWindow, setPenWindow] = useState<'today' | '7d' | '30d'>('30d');
+  const [penPct, setPenPct] = useState<number | undefined>(undefined);
   const [agentPage, setAgentPage] = useState(1);
   const [agentPageSize, setAgentPageSize] = useState(50);
   /** 注册员工表筛选 */
@@ -138,6 +142,15 @@ export default function Dashboard() {
       window.clearInterval(id);
     };
   }, []);
+
+  // AI 渗透率：窗口切换时单独拉该口径的值（首屏由 overview 提供 30 天值，避免闪烁）。
+  useEffect(() => {
+    let alive = true;
+    fetchAiPenetration(penWindow)
+      .then((d) => { if (alive) setPenPct(d.percent); })
+      .catch(() => { /* 失败保留上一次/overview 的值 */ });
+    return () => { alive = false; };
+  }, [penWindow]);
 
   // 服务端 ingest 完成后推 session_changed / session_event。本地先 patch 在线表，
   // 再防抖拉 overview + online，保证 hero「活跃 AI 会话」、运行中 Agent 列与后端真值一致
@@ -284,21 +297,36 @@ export default function Dashboard() {
             />
           </Col>
           <Col xs={12} md={6}>
-            <HeroCard
-              label="AI 渗透率"
-              value={
-                overview && overview.ai_penetration_percent >= 0
-                  ? `${overview.ai_penetration_percent}%`
-                  : '—'
-              }
-              suffix={
-                overview && overview.ai_penetration_percent >= 0
-                  ? '北极星指标'
-                  : 'v2.1 接入 git_commit 后生效'
-              }
-              icon={<AimOutlined />}
-              tone="rose"
-            />
+            {(() => {
+              const penDisplay = penPct ?? (overview ? overview.ai_penetration_percent : -1);
+              const winLabel = penWindow === 'today' ? '今日' : penWindow === '7d' ? '近7天' : '近30天';
+              return (
+                <HeroCard
+                  label="AI 渗透率"
+                  value={penDisplay >= 0 ? `${penDisplay}%` : '—'}
+                  suffix={penDisplay >= 0 ? '北极星' : undefined}
+                  subnote={
+                    penDisplay >= 0
+                      ? `${winLabel} · AI 协助代码占比`
+                      : 'git_commit 与会话归因后生效'
+                  }
+                  icon={<AimOutlined />}
+                  tone="rose"
+                  extra={
+                    <Segmented
+                      size="small"
+                      value={penWindow}
+                      onChange={(v) => setPenWindow(v as 'today' | '7d' | '30d')}
+                      options={[
+                        { label: '今日', value: 'today' },
+                        { label: '7天', value: '7d' },
+                        { label: '30天', value: '30d' },
+                      ]}
+                    />
+                  }
+                />
+              );
+            })()}
           </Col>
         </Row>
 
@@ -626,9 +654,11 @@ interface HeroCardProps {
   onClick?: () => void;
   /** 无障碍名称（onClick 时建议传入） */
   ariaLabel?: string;
+  /** 右上角附加控件（如窗口选择器）。 */
+  extra?: React.ReactNode;
 }
 
-function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabel }: HeroCardProps) {
+function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabel, extra }: HeroCardProps) {
   const c = TONE_PALETTE[tone];
   const interactive = !!onClick;
   return (
@@ -639,6 +669,7 @@ function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabe
         background: c.bg,
         border: `1px solid ${c.ring}`,
         borderRadius: 8,
+        position: 'relative',
       }}
       className={`am-hero${interactive ? ' am-clickable' : ''}`}
       onClick={onClick}
@@ -656,6 +687,11 @@ function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabe
           : undefined
       }
     >
+      {extra != null && (
+        <div style={{ position: 'absolute', top: 8, right: 8 }} onClick={(e) => e.stopPropagation()}>
+          {extra}
+        </div>
+      )}
       <div className="am-hero-icon" style={{ color: c.fg }}>
         {icon}
       </div>

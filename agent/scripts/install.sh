@@ -54,6 +54,7 @@ ARG_USER_CODE=""
 ARG_USER_NAME=""
 ARG_DEPARTMENT=""
 ARG_SERVER_URL=""
+ARG_INSTALL_TOKEN=""
 ARG_CLEAN=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -66,6 +67,8 @@ while [ $# -gt 0 ]; do
         --department=*) ARG_DEPARTMENT="${1#*=}"; shift ;;
         --server-url)   ARG_SERVER_URL="${2:-}"; shift 2 ;;
         --server-url=*) ARG_SERVER_URL="${1#*=}"; shift ;;
+        --install-token)   ARG_INSTALL_TOKEN="${2:-}"; shift 2 ;;
+        --install-token=*) ARG_INSTALL_TOKEN="${1#*=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) err "unknown argument: $1"; usage; exit 2 ;;
     esac
@@ -76,6 +79,8 @@ AM_USER_CODE="${ARG_USER_CODE:-${AM_USER_CODE:-}}"
 AM_USER_NAME="${ARG_USER_NAME:-${AM_USER_NAME:-}}"
 AM_DEPARTMENT="${ARG_DEPARTMENT:-${AM_DEPARTMENT:-}}"
 AM_SERVER_URL="${ARG_SERVER_URL:-${AM_SERVER_URL:-}}"
+# 安装端点令牌：服务端 install.token 非空时，/install/** 需带 ?t=<token>（管理员下发命令时附带）
+AM_INSTALL_TOKEN="${ARG_INSTALL_TOKEN:-${AM_INSTALL_TOKEN:-}}"
 
 install_launchd() {
     local plist_dir="${HOME}/Library/LaunchAgents"
@@ -229,14 +234,17 @@ if [ "$ARG_CLEAN" -eq 1 ]; then
 fi
 
 binary_name="aiwatchd-${os}-${arch}"
-download_url="${AM_SERVER_URL}/install/${binary_name}"
+# 安装端点令牌：服务端 install.token 非空时需带 ?t=；空则普通 URL（向后兼容）
+tokq=""
+[ -n "$AM_INSTALL_TOKEN" ] && tokq="?t=${AM_INSTALL_TOKEN}"
+download_url="${AM_SERVER_URL}/install/${binary_name}${tokq}"
 
 # ---------- 3. 下载 ----------
 install_dir="${HOME}/.local/bin"
 install_path="${install_dir}/aiwatchd"
 mkdir -p "$install_dir"
 
-log "downloading ${download_url}"
+log "downloading ${AM_SERVER_URL}/install/${binary_name}"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 if ! curl -fsSL --retry 2 --connect-timeout 10 -o "$tmp" "$download_url"; then
@@ -246,10 +254,31 @@ fi
 
 size=$(wc -c < "$tmp" | tr -d ' ')
 if [ "$size" -lt 1048576 ]; then
-    err "downloaded file too small (${size} bytes); likely 404 / proxy error"
+    err "downloaded file too small (${size} bytes); likely 404 / proxy error / install-token 缺失"
     head -c 256 "$tmp" >&2 || true
     exit 1
 fi
+
+# ---------- 3.4 sha256 防篡改校验 ----------
+# 从 manifest.json 取该平台 sha256，与下载文件比对；不匹配立即中止（可能被 MITM 篡改）。
+sha256_of() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+    else echo ""; fi
+}
+manifest="$(curl -fsSL --retry 2 --connect-timeout 10 "${AM_SERVER_URL}/install/manifest.json${tokq}" 2>/dev/null || true)"
+expected_sha="$(printf '%s' "$manifest" | tr -d ' \n' \
+    | sed -n "s/.*\"${os}-${arch}\":{[^}]*\"sha256\":\"\([0-9a-fA-F]\{64\}\)\".*/\1/p" | head -n1)"
+actual_sha="$(sha256_of "$tmp")"
+if [ -z "$expected_sha" ]; then
+    err "无法从 manifest.json 获取 ${os}-${arch} 的 sha256；为安全起见中止安装（联系运维确认 manifest 可访问）"
+    exit 1
+fi
+if [ -z "$actual_sha" ] || [ "$actual_sha" != "$expected_sha" ]; then
+    err "二进制 sha256 校验失败（期望 ${expected_sha}，实际 ${actual_sha:-空}）；可能被篡改，已中止"
+    exit 1
+fi
+log "sha256 校验通过"
 
 mv "$tmp" "$install_path"
 trap - EXIT

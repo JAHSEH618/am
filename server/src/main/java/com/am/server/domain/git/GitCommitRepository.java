@@ -79,4 +79,32 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, Long> {
               AND NOT EXISTS (SELECT 1 FROM git_commit_file f WHERE f.commit_id = c.id)
             """, nativeQuery = true)
     List<GitCommit> findWithPathStatsButNoFiles();
+
+    /**
+     * AI 渗透率（北极星）：窗口 <code>[from, now]</code> 内，按行数口径返回
+     * <code>[AI协助行数, 全部非merge行数]</code>。
+     *
+     * <p>「AI 协助」判定：一条提交存在同 user_code、repo 轻归一化相等、且 commit_time 落在某有效
+     * ai_session 活动窗口 <code>[started_at-30min, last_activity+30min]</code> 内的会话。
+     * 分子分母都排除 merge 提交（<code>is_merge=0</code>）。
+     */
+    @Query(value = """
+            SELECT
+              COALESCE(SUM(CASE WHEN EXISTS (
+                  SELECT 1 FROM ai_session s
+                  WHERE s.user_code = c.user_code
+                    AND s.invalid_reason IS NULL
+                    AND s.repo_url IS NOT NULL
+                    AND LOWER(TRIM(TRAILING '/' FROM TRIM(TRAILING '.git' FROM s.repo_url)))
+                      = LOWER(TRIM(TRAILING '/' FROM TRIM(TRAILING '.git' FROM c.repo_url)))
+                    AND c.commit_time BETWEEN (s.started_at - INTERVAL 30 MINUTE)
+                                          AND (s.last_activity + INTERVAL 30 MINUTE)
+                ) THEN c.lines_added ELSE 0 END), 0) AS assisted_lines,
+              COALESCE(SUM(c.lines_added), 0) AS total_lines
+            FROM git_commit c
+            WHERE c.is_merge = 0
+              AND c.repo_url IS NOT NULL
+              AND c.commit_time >= :from
+            """, nativeQuery = true)
+    List<Object[]> aiPenetrationLines(@Param("from") LocalDateTime from);
 }

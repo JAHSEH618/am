@@ -32,13 +32,17 @@ class BoundaryTest {
                         .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
                         .importPackages("com.am.server");
 
+        // 注意写法：必须用 noClasses(...).should().dependOnClassesThat().resideInAnyPackage(HTTP)
+        // 这种「否定 + 正向依赖」形式。早期误写成 noClasses(...).onlyDependOnClassesThat()
+        // .resideOutsideOf(HTTP) 是个双重否定 bug——它会把所有「只依赖非 HTTP 类」的干净类
+        // 全判成违规（对正确分层的代码库永远失败）。
         ArchRule rule =
                 noClasses()
                         .that()
                         .resideInAnyPackage(PERSISTENCE_MODEL_PACKAGES)
                         .should()
-                        .onlyDependOnClassesThat()
-                        .resideOutsideOfPackages(HTTP_ADAPTER_PACKAGES)
+                        .dependOnClassesThat()
+                        .resideInAnyPackage(HTTP_ADAPTER_PACKAGES)
                         .because(
                                 "VIOLATION: persistence model imports HTTP adapter layer — domain cannot"
                                     + " depend on web/agent.api/insight.web/system.web packages. See"

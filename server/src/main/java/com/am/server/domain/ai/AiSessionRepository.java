@@ -821,6 +821,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
             LEFT JOIN ai_session_audit a ON a.ai_session_id = s.id
             WHERE s.id > :lastId
               AND s.invalid_reason IS NULL
+              AND s.total_messages > 0
               AND s.target_type IN (:types)
               AND (
                 COALESCE(s.insight_audit_status, 'NONE') IN ('NONE', 'PENDING', 'FAILED')
@@ -842,6 +843,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
             SELECT COUNT(*) FROM ai_session s
             LEFT JOIN ai_session_audit a ON a.ai_session_id = s.id
             WHERE s.invalid_reason IS NULL
+              AND s.total_messages > 0
               AND s.target_type IN (:types)
               AND (
                 COALESCE(s.insight_audit_status, 'NONE') IN ('NONE', 'PENDING', 'FAILED')
@@ -859,6 +861,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
             SELECT COUNT(*) FROM ai_session s
             INNER JOIN ai_session_audit a ON a.ai_session_id = s.id
             WHERE s.invalid_reason IS NULL
+              AND s.total_messages > 0
               AND s.target_type IN (:types)
               AND s.insight_audit_status = 'DONE'
               AND COALESCE(s.insight_reaudit_required, 0) = 0
@@ -871,6 +874,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     @Query(value = """
             SELECT COUNT(*) FROM ai_session s
             WHERE s.invalid_reason IS NULL
+              AND s.total_messages > 0
               AND s.target_type IN (:types)
             """, nativeQuery = true)
     long countValidSessionsForInsightTypes(@Param("types") List<String> types);

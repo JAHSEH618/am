@@ -46,6 +46,9 @@ public class InsightProperties {
     /** 审计并发 worker 数；每个 worker 串行调双 judge。 */
     private int auditConcurrency = 8;
 
+    /** LLM 外发脱敏：拼 Judge prompt 前对密钥/令牌打码。默认开。 */
+    private boolean redactEnabled = true;
+
     // ----- 后台表扫描审计（无第三方队列；游标见 auditScanCursorPath） -----
 
     /** 是否启用定时扫描 {@code ai_session} 并异步补全洞察审计。 */

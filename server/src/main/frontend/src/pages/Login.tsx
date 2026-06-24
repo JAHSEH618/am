@@ -140,6 +140,12 @@ function InstallPanel() {
   }, [status]);
 
   const origin = window.location.origin;
+  // 安全提示：控制台经明文 HTTP 访问时，安装命令、上报与登录都可能被中间人窥探/篡改。
+  // localhost / 127.0.0.1 属本地调试，不告警。
+  const isInsecureOrigin =
+    origin.startsWith('http://') &&
+    !origin.includes('localhost') &&
+    !origin.includes('127.0.0.1');
 
   // 三项必填校验：未通过时只渲染"模板",但 CommandBox 会阻止复制 / 选中,
   // 所以下面的占位符只是 UI 引导,实际不会变成可复制的"半成品命令"。
@@ -332,6 +338,15 @@ function InstallPanel() {
       {/* Step 2：OS Tab + 命令 */}
       <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <SectionLabel index={2} title="选择系统并复制命令" />
+        {isInsecureOrigin && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 8 }}
+            message="当前以明文 HTTP 访问，存在中间人风险"
+            description="安装命令、上报与登录在 HTTP 下可能被窃听/篡改。强烈建议为本平台配置 HTTPS（反向代理终止 TLS）后再分发安装命令。"
+          />
+        )}
         <Tabs
           activeKey={activeOS}
           onChange={(k) => setActiveOS(k as OS)}

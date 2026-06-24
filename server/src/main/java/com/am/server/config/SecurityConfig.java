@@ -1,10 +1,13 @@
 package com.am.server.config;
 
 import com.am.server.common.R;
+import com.am.server.system.auth.AuthConfigSyncer;
+import com.am.server.web.security.AdminTokenAuthenticationFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
@@ -43,6 +46,7 @@ public class SecurityConfig {
 
     private final AuthProperties authProperties;
     private final ObjectMapper objectMapper;
+    private final AuthConfigSyncer authConfigSyncer;
 
     /**
      * 用 DelegatingPasswordEncoder：yml 里的明文密码自动加 {noop} 前缀走明文比较；
@@ -105,8 +109,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/install/**").permitAll()
                         // 安装包 / 脚本：员工初装时还没登录账号
                         .requestMatchers("/install/**").permitAll()
-                        // X-Admin-Token 通道：自动化脚本用，AdminTokenInterceptor 自校验
-                        .requestMatchers("/api/v1/admin/**").permitAll()
+                        // admin 接口：必须已认证。X-Admin-Token 自动化通道由
+                        // AdminTokenAuthenticationFilter 在 Spring 层认成 ROLE_ADMIN；
+                        // 登录 session 走 UI 通道；二者皆无 → 401。AdminTokenInterceptor 二层兜底。
+                        .requestMatchers("/api/v1/admin/**").authenticated()
                         // actuator
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         // SPA 静态资源 + 入口；其它前端路由（/dashboard /people 等）不在 /api 下，由 anyRequest 放行
@@ -116,6 +122,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/**").authenticated()
                         // 其它（前端 React Router 路径）：放行让 SPA fallback 到 index.html
                         .anyRequest().permitAll())
+                // 防御纵深：合法 X-Admin-Token 在 Spring 层认成 ROLE_ADMIN，使 admin 路径可 authenticated()
+                .addFilterBefore(new AdminTokenAuthenticationFilter(authConfigSyncer),
+                        UsernamePasswordAuthenticationFilter.class)
+                // HSTS：强制浏览器后续走 HTTPS（TLS 仍建议反代终止）
+                .headers(h -> h.httpStrictTransportSecurity(hsts ->
+                        hsts.includeSubDomains(true).maxAgeInSeconds(31536000)))
                 .exceptionHandling(eh -> eh
                         .authenticationEntryPoint((req, resp, ex) -> {
                             // 复用业务包装格式 R{code,message,data}；前端 axios 401 拦截器统一处理跳登录

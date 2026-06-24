@@ -5,6 +5,12 @@
 # 构建产物
 agent/dist/
 server/build/
+server/.gradle/
+server/src/main/resources/static/
+
+# 工具本地缓存 / 中间产物（非源码，不入库）
+**/.impeccable/
+docs/superpowers/
 
 # 系统文件
 .DS_Store
