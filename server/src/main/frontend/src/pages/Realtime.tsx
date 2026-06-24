@@ -154,7 +154,7 @@ export default function Realtime() {
                       </Text>
                     )}
                     {a.current_model && (
-                      <Text type="secondary" style={{ fontSize: 12 }}>
+                      <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
                         {a.current_model}
                       </Text>
                     )}

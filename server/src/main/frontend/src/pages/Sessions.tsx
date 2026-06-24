@@ -337,7 +337,7 @@ export default function Sessions() {
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {/* 项目 / user_code 过滤来自项目透视页跳转，作为只读 banner 让用户能看到当前过滤态并一键清除 */}
       {(projectName || userCode) && (
-        <Card size="small" bodyStyle={{ padding: '8px 16px' }}>
+        <Card size="small" styles={{ body: { padding: '8px 16px' } }}>
           <Space size={12} wrap>
             {projectName && (
               <Space size={6}>
@@ -357,7 +357,7 @@ export default function Sessions() {
         </Card>
       )}
       {/* 工具栏卡片：所有筛选条件归一在这一行，宽度不会被 agent 类型数撑爆 */}
-      <Card size="small" bodyStyle={{ padding: '12px 16px' }}>
+      <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
         <div className="am-toolbar">
           <SourceFilter value={target} onChange={onTargetChange} targets={targets} width={200} />
           <Input.Search
@@ -440,7 +440,7 @@ export default function Sessions() {
             </span>
           </Space>
         }
-        bodyStyle={{ padding: 0 }}
+        styles={{ body: { padding: 0 } }}
       >
         <Table<AiSession>
           rowKey="id"

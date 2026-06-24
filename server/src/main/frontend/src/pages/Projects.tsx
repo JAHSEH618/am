@@ -132,6 +132,7 @@ export default function Projects() {
       title: '项目',
       dataIndex: 'project_name',
       key: 'project_name',
+      ellipsis: true,
       render: (v: string) => <Space><ProjectOutlined />{v}</Space>,
     },
     {
@@ -284,7 +285,7 @@ export default function Projects() {
           <Space direction="vertical" size={0}>
             <span>Git 提交明细 — {gitModalProject}</span>
             {gitModalRepo && (
-              <Text type="secondary" style={{ fontSize: 13, fontWeight: 'normal' }}>
+              <Text type="secondary" ellipsis={{ tooltip: true }} style={{ fontSize: 13, fontWeight: 'normal', maxWidth: 900 }}>
                 {gitModalRepo}
               </Text>
             )}
@@ -456,7 +457,11 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
       <Space>
         <ProjectOutlined />
         <span>项目详情 — {projectName}</span>
-        {s.repo_url && <Text type="secondary" style={{ fontSize: 12, fontWeight: 'normal' }}>{s.repo_url}</Text>}
+        {s.repo_url && (
+          <Text type="secondary" ellipsis={{ tooltip: true }} style={{ fontSize: 12, fontWeight: 'normal', maxWidth: 360 }}>
+            {s.repo_url}
+          </Text>
+        )}
       </Space>
     }>
       <Row gutter={16}>

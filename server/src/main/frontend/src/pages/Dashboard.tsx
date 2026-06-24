@@ -305,7 +305,7 @@ export default function Dashboard() {
         <InsightAuditProgressCard fast={insightAuditFast} slow={insightAuditSlow} />
 
         {/* 次级指标：紧凑 metric list（不再每项一张白卡） */}
-        <Card size="small" title="今日运营指标" bodyStyle={{ padding: '12px 20px' }}>
+        <Card size="small" title="今日运营指标" styles={{ body: { padding: '12px 20px' } }}>
           <Row gutter={[24, 0]}>
             <Col xs={24} md={12} lg={8}>
               <MetricRow
@@ -341,7 +341,9 @@ export default function Dashboard() {
               </span>
             </Space>
           }
-          bodyStyle={{ padding: 0 }}
+          styles={{ body: { padding: 0 } }}
+          // 与上方「速览 KPI 群组」拉开一档（16+8≈24px）：从这里起进入"下钻明细"区。
+          style={{ marginTop: 8 }}
         >
           <div className="am-agent-filter">
             <div className="am-agent-filter-inner">
@@ -539,7 +541,8 @@ function InsightAuditProgressCard(props: {
   const loadingSlow = slow === null;
 
   return (
-    <Card style={{ marginBottom: 16 }}>
+    // 外层 Space(size=16) 已负责区块间距；不要再叠 marginBottom，否则此卡下方变成 32px、上方 16px 的不对称留白。
+    <Card>
       {/* 结构与分析报告页「报告生成中」卡片一致：标题区 → Progress → 说明段落 */}
       <Space align="start" size={14} style={{ marginBottom: 14 }}>
         <FundProjectionScreenOutlined
@@ -631,7 +634,7 @@ function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabe
   return (
     <Card
       size="small"
-      bodyStyle={{ padding: 16, cursor: interactive ? 'pointer' : undefined }}
+      styles={{ body: { padding: 16, cursor: interactive ? 'pointer' : undefined } }}
       style={{
         background: c.bg,
         border: `1px solid ${c.ring}`,

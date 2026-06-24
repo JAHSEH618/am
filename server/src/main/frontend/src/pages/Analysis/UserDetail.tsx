@@ -457,9 +457,9 @@ function TopUsageSection({ title, items }: { title: string; items?: NameValuePai
           size="small"
           dataSource={list}
           renderItem={(item) => (
-            <List.Item style={{ padding: '4px 0' }}>
-              <span>{item.name}</span>
-              <span>{item.value}</span>
+            <List.Item style={{ padding: '4px 0', gap: 12 }}>
+              <span className="am-break" style={{ minWidth: 0 }}>{item.name}</span>
+              <span style={{ flexShrink: 0 }}>{item.value}</span>
             </List.Item>
           )}
         />

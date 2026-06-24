@@ -381,7 +381,7 @@ function AgentCard({
         background: isEnabled ? '#ffffff' : '#f8fafc',
         transition: 'all .2s',
       }}
-      bodyStyle={{ padding: 16 }}
+      styles={{ body: { padding: 16 } }}
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         {/* 头部：色块 + 名称 + 状态 Badge */}
@@ -648,7 +648,7 @@ function ScheduledTaskCard({
         borderColor: task.enabled ? '#cbd5e1' : '#e2e8f0',
         background: task.enabled ? '#ffffff' : '#f8fafc',
       }}
-      bodyStyle={{ padding: 16 }}
+      styles={{ body: { padding: 16 } }}
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         {/* 头部 */}
@@ -2119,7 +2119,18 @@ function AuditPanel() {
       width: 120,
       render: (v: string | null) =>
         v ? (
-          <Tag style={{ background: '#f1f5f9', border: 'none', color: '#475569' }}>{v}</Tag>
+          <Tag
+            className="am-break"
+            style={{
+              background: '#f1f5f9',
+              border: 'none',
+              color: '#475569',
+              maxWidth: '100%',
+              whiteSpace: 'normal',
+            }}
+          >
+            {v}
+          </Tag>
         ) : (
           <Text type="secondary">—</Text>
         ),
@@ -2141,7 +2152,7 @@ function AuditPanel() {
       <Card
         size="small"
         style={{ marginBottom: 12 }}
-        bodyStyle={{ padding: '12px 16px' }}
+        styles={{ body: { padding: '12px 16px' } }}
       >
         <Space wrap>
           <Select

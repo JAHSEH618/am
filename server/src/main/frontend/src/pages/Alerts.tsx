@@ -84,7 +84,7 @@ export default function Alerts() {
             width: 80,
             render: (v) => <Tag color={LEVEL_COLOR[v] || 'default'}>{v}</Tag>,
           },
-          { title: '类型', dataIndex: 'alert_type', width: 200 },
+          { title: '类型', dataIndex: 'alert_type', width: 200, ellipsis: true },
           { title: '员工', dataIndex: 'user_display', width: 160, ellipsis: true },
           { title: 'Agent', dataIndex: 'agent_id', width: 200, ellipsis: true },
           { title: '消息', dataIndex: 'message', ellipsis: true },

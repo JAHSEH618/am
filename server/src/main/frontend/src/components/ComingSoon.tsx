@@ -26,7 +26,7 @@ const { Paragraph } = Typography;
 export default function ComingSoon({ title, subTitle, milestone, highlights }: ComingSoonProps) {
   return (
     <Card
-      bodyStyle={{ padding: 0 }}
+      styles={{ body: { padding: 0 } }}
       style={{ minHeight: 360, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
     >
       <Result

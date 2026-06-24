@@ -307,7 +307,9 @@ export default function SessionDetail() {
           <Descriptions.Item label="模型">{session.model || '-'}</Descriptions.Item>
           <Descriptions.Item label="项目">{session.project_name || '-'}</Descriptions.Item>
           <Descriptions.Item label="分支">{session.git_branch || '-'}</Descriptions.Item>
-          <Descriptions.Item label="仓库">{session.repo_url || '-'}</Descriptions.Item>
+          <Descriptions.Item label="仓库">
+            <span className="am-break">{session.repo_url || '-'}</span>
+          </Descriptions.Item>
           <Descriptions.Item label="工作目录" span={3}>
             <Text code style={{ wordBreak: 'break-all' }}>{session.cwd || '-'}</Text>
           </Descriptions.Item>
@@ -586,6 +588,9 @@ function MessageBubble({
             <Paragraph
               style={{
                 whiteSpace: 'pre-wrap',
+                // 无空格长 token 也折行，避免长 URL / 路径 / JSON 横向撑破消息容器
+                overflowWrap: 'anywhere',
+                wordBreak: 'break-word',
                 margin: 0,
                 fontSize: 13,
                 fontStyle: m.role === 'thinking' ? 'italic' : 'normal',

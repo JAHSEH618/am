@@ -402,7 +402,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
 
       </div>
 
-      <div style={{ ...panelStyle, display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'stretch' }}>
+      <div style={{ ...panelStyle, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', alignItems: 'stretch' }}>
         <div style={{ ...cellDivider, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={sectionHeadStyle}>
             <MetricLabel name="team_percentiles" />

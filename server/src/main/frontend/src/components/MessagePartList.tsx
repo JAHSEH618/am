@@ -236,6 +236,10 @@ function TextBlock({ text, mono, italic }: { text: string; mono?: boolean; itali
       <Paragraph
         style={{
           whiteSpace: 'pre-wrap',
+          // 保留换行的同时，让无空格的长 token（URL / 路径 / 哈希 / 压缩 JSON）也能折行，
+          // 否则单行会横向撑破会话详情容器。
+          overflowWrap: 'anywhere',
+          wordBreak: 'break-word',
           margin: '4px 0 0',
           fontSize: 13,
           fontFamily: mono ? 'ui-monospace, Menlo, monospace' : undefined,

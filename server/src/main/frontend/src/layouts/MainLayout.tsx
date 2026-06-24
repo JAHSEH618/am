@@ -142,7 +142,10 @@ export default function MainLayout() {
         />
       </Sider>
 
-      <Layout>
+      {/* 右侧主列是外层 Layout(row) 的 flex 子项；必须允许其收缩到 0，
+          否则任意超宽子内容（宽表格 / 长不可断字符串 / pre 块）会把它撑出视口，
+          形成整页横向滚动（即"越界"）。min-width:0 是消除该问题的根因修复。 */}
+      <Layout style={{ minWidth: 0 }}>
         <Header
           style={{
             display: 'flex',
@@ -170,25 +173,52 @@ export default function MainLayout() {
             {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </span>
 
-          {/* 动态页名：跟随路由变化，不再写死 "Cursor · Claude Code · Codex CLI" */}
-          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2 }}>
-            <span style={{ fontSize: 16, fontWeight: 600, color: '#0f172a' }}>
+          {/* 动态页名：跟随路由变化，不再写死 "Cursor · Claude Code · Codex CLI"。
+              min-width:0 + 单行省略：副标题再长也只在自身宽度内截断，绝不挤飞右侧操作区。 */}
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              lineHeight: 1.2,
+              minWidth: 0,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 16,
+                fontWeight: 600,
+                color: '#0f172a',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {currentPage?.title || 'AIWatch'}
             </span>
             {currentPage?.subtitle && (
-              <span style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: '#94a3b8',
+                  marginTop: 2,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={currentPage.subtitle}
+              >
                 {currentPage.subtitle}
               </span>
             )}
           </div>
 
-          <span style={{ flex: 1 }} />
+          <span style={{ flex: 1, minWidth: 16 }} />
 
           {/* 右上角操作区：
               - 「支持 N 种 Agent」chip：信息展示（动态来自 monitor_target）
               - 「安装客户端」入口已下沉到登录页（左侧 Tab）：员工拿到命令的链路是
                 "找运维 → 拿登录页 URL → 自助粘贴命令"，管理员后台不再放显眼的安装按钮。 */}
-          <Space size={8}>
+          <Space size={8} style={{ flexShrink: 0 }}>
             {targetCount > 0 && (
               <Tooltip title="支持监控的 Agent 类型数（来源：monitor_target 字典）">
                 <span
@@ -240,7 +270,11 @@ export default function MainLayout() {
           </Space>
         </Header>
 
-        <Content style={{ padding: 24, minHeight: 0 }}>
+        {/* min-width:0 让内容区可随主列收缩；overflow-x:clip 作为最后兜底，
+            把任何漏网的横向溢出限制在内容区内，绝不冒泡成整页横向滚动条。
+            （clip 不像 hidden 那样会牵连纵向轴，页面纵向滚动仍由 body 承担；
+            宽表格的横向滚动发生在 .ant-table-body 自身，不受这里影响。） */}
+        <Content style={{ padding: 24, minHeight: 0, minWidth: 0, overflowX: 'clip' }}>
           <Outlet />
         </Content>
       </Layout>
