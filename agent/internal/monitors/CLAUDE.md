@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this package is
+
+`monitors/` is the **data-collection layer** of `aiwatchd`: one sub-package per AI tool, each
+reading that tool's local session store and turning it into a uniform `monitor.Snapshot`.
+This is the most intricate part of the agent — adding support for a new tool happens here.
+
+Orchestration (polling, cursors, transmission) lives one level up in
+[`../reporter/`](../reporter/) and the contract types in [`../monitor/`](../monitor/); the
+server whitelist that can disable a monitor lives in [`../monitorpolicy/`](../monitorpolicy/).
+
+## The Provider contract
+
+Every monitor implements `monitor.Provider` (defined in `../monitor/provider.go`):
+
+```go
+Type() string                                    // unique code: "cursor","claude","codex","hermes","openclaw","openharness"
+TargetVersion() string                           // version of the monitored tool
+IsInstalled() bool                               // cheap fs check — status/logging only, NOT used to gate Snapshot
+Snapshot(ctx) (monitor.Snapshot, error)          // best-effort; return empty Snapshot on error, never fail hard
+```
+
+Optional interfaces a provider may also implement:
+- `LookbackSetter.SetLookback(d)` — switch scan window between `DefaultLookback` (48h) and
+  `BootstrapLookback` (30d). All six session monitors implement it; `gitlog` does not.
+- `AccountProvider.Account()` — report the tool's logged-in account (email/tier). Only `cursor` does.
+
+`Snapshot` returns `[]monitor.Session`. The wire model lives in `../monitor/provider.go`:
+`Session` carries identity (`SessionID`, `Cwd`, `GitBranch`, `Model`), counters
+(`UserMessages`/`AssistantMessages`/`InputTokens`/`OutputTokens`/cache tokens), `RecentMessages`,
+`RecentTools`, and **`ActivityDeltas`** — fine-grained `(EventTime, InputTokensDelta,
+OutputTokensDelta, MessagesDelta, Source, SourceRef)` increments that drive incremental upstream
+reporting. The server reconstructs `SESSION_OPEN / TOKEN_DELTA / MESSAGE_DELTA / TOOL_CALL` events
+from these (those event names are a server-side concept, not emitted here).
+
+## The monitors at a glance
+
+| Monitor | Data source | Parse strategy |
+| --- | --- | --- |
+| `cursor/` | SQLite `~/Library/Application Support/Cursor/.../state.vscdb` (WAL) | `PRAGMA data_version` fast-path skips full SQL on idle ticks; concurrent `buildParsedSession`; in-memory `(sessionID, lastBubbleAt)` cache |
+| `claude/` | JSONL `~/.claude/projects/<enc>/*.jsonl` + `subagents/*.jsonl` | `common.FileCache` mtime/offset + `ScanJSONL` from offset + parallel parse; merges subagent child sessions into parent |
+| `codex/` | JSONL `~/.codex/sessions/<date>/*.jsonl` + index | same FileCache/ScanJSONL/parallel pattern as claude |
+| `openclaw/` | JSONL `~/.openclaw/agents/<a>/sessions/*.jsonl` | byte-for-byte the same pattern as claude (identical protocol) |
+| `hermes/` | SQLite `~/.hermes/state.db` | persistent RO conn + `PRAGMA data_version` fast-path; full table scan per tick (small dataset); tokens **estimated** |
+| `openharness/` | JSON `~/.openharness/data/sessions/<hash>/session-*.json` | no cache, full re-read per tick; interpolates time for undated msgs; tokens **estimated** |
+| `gitlog/` | on-disk git repos | **not a `Provider`** — driven by `reporter.GitLogReporter`; streams `git log` per repo filtered by author email, persists its own per-repo commit cursor |
+
+## Shared semantics — `common/`
+
+Reuse these before hand-rolling anything; they encode contracts the server depends on:
+- `jsonl.go` — `FileCache[V]`, `ScanJSONL`, `RunParallelParse` (incremental JSONL ingestion).
+- `status.go` — `ResolveActivity` collapses raw provider state + recent tools into the **10 canonical
+  statuses** (`idle, waiting, thinking, compacting, reading, writing, running, searching, browsing,
+  spawning`); `NormalizeToolName` maps tool names to canonical (Read/Write/Bash/…). Timeout windows
+  scale with report interval via `ConfigureActivityTimeouts`.
+- `extid.go` — `SyntheticMessageID` / `SyntheticMessageIDByTime` build dedup keys when the source has
+  no native message id (hermes, openharness). **Stability is critical**: the server dedups on
+  `(ai_session_id, external_message_id)`, so an unstable key causes duplicates or dropped messages.
+- `subagent_merge.go` — collapse child sessions into the parent (only claude emits them today).
+- `text.go` — `EstimateTokens` (≈chars/4) for sources without real token counts; `Truncate` (UTF-8 safe).
+- `worktree.go`, `activity_delta.go`.
+
+## Adding a new monitor
+
+1. Create `monitors/<tool>/` with a `Provider` implementing the four required methods.
+2. Register it in `../../cmd/agent/main.go` `buildProviders()` (providers are a static list there —
+   there is no env-based enable/disable; runtime gating is the server `monitorpolicy` whitelist).
+3. Implement `LookbackSetter` if the source is time-windowed; `AccountProvider` if it exposes an account.
+4. Reuse `common/` utilities — especially `ScanJSONL`/`FileCache` for JSONL sources and `ResolveActivity`
+   for status, so behavior matches the other monitors.
+
+## Gotchas
+
+- **Cursor WAL fast-path** (`cursor/provider.go`): naive mtime checks fail because Cursor touches the WAL
+  even when idle. The provider holds a long-lived RO connection and checks `PRAGMA data_version` — keep
+  that connection open and read-only. This drops idle ticks from ~17s to ~50ms.
+- **Cursor path is macOS-hardcoded**; on Windows/Linux the provider returns an empty snapshot gracefully.
+- **Cursor message-cursor schema version**: bumping the dedup/ID synthesis rules requires bumping
+  `CursorSchemaVersion` in `../reporter/cursors.go`, which nukes stored cursors and forces a 30d backfill.
+- **No negative-token guard here** — providers trust wire counts; validation/caps are server-side.
+- `IsInstalled()` is for status output only; `Snapshot` is always called and must self-handle a missing source.

@@ -1,0 +1,57 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`aiwatch-web` — the admin console SPA. React 18 + Vite 5 + TypeScript 5 (strict) + Ant Design 5,
+ECharts for charts, axios for HTTP. Package manager is **pnpm 9** (`packageManager` in `package.json`).
+
+## How it's built and served
+
+This SPA is **not deployed standalone** — it is bundled into the Spring jar. `vite.config.ts` sets
+`build.outDir` to `../resources/static/`, and `server/build.gradle`'s `frontendBuild` task (which
+`processResources` depends on) runs `pnpm run build` during the backend build using a Gradle-managed
+Node/pnpm. So `gradle bootJar` always ships a fresh bundle; you rarely build the frontend by hand.
+
+At runtime Spring serves `static/index.html` as the SPA fallback for any non-`/api/**`, non-`/actuator/**`
+path (see `com.am.server.config.WebConfig`), and forces `no-cache` on `index.html` so clients don't pin a
+stale bundle after an upgrade.
+
+## Local development
+
+```bash
+pnpm install
+pnpm dev        # vite dev server on :5173, proxies /api -> http://127.0.0.1:8080
+pnpm build      # tsc -b && vite build  -> ../resources/static/
+pnpm lint       # eslint . --ext ts,tsx
+```
+
+Note the dev proxy targets **:8080**, but `gradle bootRun` (dev profile) listens on **:8081** — point
+the proxy at whichever port your backend is actually on, or run the backend on 8080.
+
+## Architecture
+
+- **Routing** (`src/App.tsx`, React Router v6): every route except `/login` is wrapped by `RequireAuth` +
+  `MainLayout` (sidebar + header). Heavy pages (`Analysis`, `Projects`, `ModelsTools`, `SystemSettings`,
+  `SessionDetail`) are `lazy()`-loaded. Main routes: `/dashboard`, `/realtime`, `/sessions[/:id]`,
+  `/people[/:userCode]`, `/analysis`, `/projects`, `/models-tools`, `/alerts`, `/system`; several legacy
+  paths (`/cost`, `/tools`, `/reports`, `/me`) redirect.
+- **API layer** (`src/api/client.ts`): one axios instance, `baseURL: /api/v1`, `withCredentials: true`
+  (session-cookie auth — there is no token in the browser). Every backend response is the envelope
+  `R<T> = { code, data, message }`; use the `unwrap<T>()` helper, which throws on non-zero `code` and
+  surfaces a toast. A response interceptor redirects to `/login?from=<path>` on HTTP 401. `src/api/types.ts`
+  holds the DTO interfaces. All endpoint wrappers live here — add new calls to this file, not ad-hoc in pages.
+- **Auth state** (`src/auth.ts` + `RequireAuth`): `localStorage` holds only the username for fast UI gating;
+  the cookie is the real session, re-validated async via `GET /auth/me`.
+- **Realtime** (`src/hooks/useSse.ts`): wraps `EventSource` on `/api/v1/dashboard/stream` for live dashboard
+  updates; auto-reconnects.
+- **Styling** (`src/styles/global.css` + AntD `ConfigProvider` theme in `src/main.tsx`): design tokens
+  (primary `#2563eb`, 8pt spacing, `tnum` tabular numbers, sticky table headers) — prefer these over ad-hoc CSS.
+
+## Gotchas
+
+- **BFCache**: `src/main.tsx` listens for `pageshow`/`persisted` and reloads, because back/forward cache
+  restores stale DOM that React won't re-init.
+- `src/utils/dom.ts purgeStrayPortals()` removes orphaned AntD Modal/Drawer masks across route transitions —
+  call it when a modal-heavy page can leave masks behind.
+- TS is strict with `noUnusedLocals`/`noUnusedParameters`; the `@/*` path alias maps to `src/*`.
+- ECharts / xlsx / antd are split into separate Vite chunks (see `vite.config.ts`) — keep those imports lazy.
