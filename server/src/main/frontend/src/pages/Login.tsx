@@ -45,8 +45,8 @@ function detectOS(): OS {
   return 'linux';
 }
 
-// 工号规范：纯字母 + 数字（如 SXF3631），录入框已强制大写
-const USER_CODE_RE = /^[A-Z0-9]{2,32}$/;
+// 公司邮箱（如 xxxx@hisuntech.com），录入框不做强制大写
+const USER_CODE_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,63}$/;
 
 export default function Login() {
   const navigate = useNavigate();
@@ -144,7 +144,7 @@ function InstallPanel() {
   // 三项必填校验：未通过时只渲染"模板",但 CommandBox 会阻止复制 / 选中,
   // 所以下面的占位符只是 UI 引导,实际不会变成可复制的"半成品命令"。
   const cmdShell = useMemo(() => {
-    const code = trimmedCode || '<工号>';
+    const code = trimmedCode || '<公司邮箱>';
     const name = trimmedName || '<姓名>';
     const dept = trimmedDept || '<部门>';
     return [
@@ -158,7 +158,7 @@ function InstallPanel() {
   }, [trimmedCode, trimmedName, trimmedDept, baseUrl, origin]);
 
   const cmdPwsh = useMemo(() => {
-    const code = trimmedCode || '<工号>';
+    const code = trimmedCode || '<公司邮箱>';
     const name = trimmedName || '<姓名>';
     const dept = trimmedDept || '<部门>';
     return [
@@ -287,24 +287,24 @@ function InstallPanel() {
         <Form layout="vertical" component="div" style={{ marginTop: 8 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
             <Form.Item
-              label="工号"
+              label="公司邮箱"
               required
               validateStatus={trimmedCode && !userCodeValid ? 'error' : ''}
               help={
                 trimmedCode && !userCodeValid
-                  ? '2-32 位字母 + 数字'
+                  ? '请输入有效的公司邮箱'
                   : undefined
               }
               style={{ marginBottom: 0 }}
             >
               <Input
-                placeholder="如 SXF3631"
+                placeholder="如 xxxx@hisuntech.com"
                 value={userCode}
-                onChange={(e) => setUserCode(e.target.value.toUpperCase())}
-                onBlur={(e) => setUserCode(e.target.value.toUpperCase().trim())}
-                maxLength={32}
+                onChange={(e) => setUserCode(e.target.value)}
+                onBlur={(e) => setUserCode(e.target.value.trim())}
+                maxLength={64}
                 allowClear
-                style={{ textTransform: 'uppercase', letterSpacing: 0.5, fontFamily: 'SFMono-Regular, Consolas, Menlo, monospace' }}
+                style={{ letterSpacing: 0.5, fontFamily: 'SFMono-Regular, Consolas, Menlo, monospace' }}
               />
             </Form.Item>
             <Form.Item label="姓名" required style={{ marginBottom: 0 }}>
@@ -478,7 +478,7 @@ function CommandBox({ cmd, disabled }: { cmd: string; disabled: boolean }) {
       }}
     >
       <Tooltip
-        title={disabled ? '请先填完工号 / 姓名 / 部门' : copied ? '已复制' : '复制命令'}
+        title={disabled ? '请先填写公司邮箱 / 姓名 / 部门' : copied ? '已复制' : '复制命令'}
         placement="left"
       >
         <Button
