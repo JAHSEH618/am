@@ -29,6 +29,9 @@ spring:
     init:
       mode: always
       schema-locations: classpath:sql/schema.sql
+      # 必须显式声明 UTF-8：schema.sql 含中文 description 种子，JDK17 脚本读取默认走
+      # 平台字符集（Linux/LANG=C 为 ASCII/Latin-1），不指定会把中文导成乱码。
+      encoding: UTF-8
       continue-on-error: false
   jpa:
     show-sql: true

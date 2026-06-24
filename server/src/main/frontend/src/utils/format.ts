@@ -219,6 +219,8 @@ export function targetTypeLabel(
     case 'hermes': return 'Hermes Agent';
     case 'openclaw': return 'OpenClaw';
     case 'openharness': return 'OpenHarness';
+    case 'opencode': return 'OpenCode';
+    case 'kimicode': return 'Kimi Code';
     default: return t || '-';
   }
 }
@@ -236,6 +238,8 @@ export function targetTypeColor(
     case 'hermes': return 'purple';
     case 'openclaw': return 'orange';
     case 'openharness': return 'cyan';
+    case 'opencode': return 'blue';
+    case 'kimicode': return 'gold';
     default: return 'default';
   }
 }

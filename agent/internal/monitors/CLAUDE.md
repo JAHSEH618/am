@@ -17,7 +17,7 @@ server whitelist that can disable a monitor lives in [`../monitorpolicy/`](../mo
 Every monitor implements `monitor.Provider` (defined in `../monitor/provider.go`):
 
 ```go
-Type() string                                    // unique code: "cursor","claude","codex","hermes","openclaw","openharness"
+Type() string                                    // unique code: "cursor","claude","codex","hermes","openclaw","openharness","opencode","kimicode"
 TargetVersion() string                           // version of the monitored tool
 IsInstalled() bool                               // cheap fs check — status/logging only, NOT used to gate Snapshot
 Snapshot(ctx) (monitor.Snapshot, error)          // best-effort; return empty Snapshot on error, never fail hard
@@ -25,7 +25,7 @@ Snapshot(ctx) (monitor.Snapshot, error)          // best-effort; return empty Sn
 
 Optional interfaces a provider may also implement:
 - `LookbackSetter.SetLookback(d)` — switch scan window between `DefaultLookback` (48h) and
-  `BootstrapLookback` (30d). All six session monitors implement it; `gitlog` does not.
+  `BootstrapLookback` (30d). All eight session monitors implement it; `gitlog` does not.
 - `AccountProvider.Account()` — report the tool's logged-in account (email/tier). Only `cursor` does.
 
 `Snapshot` returns `[]monitor.Session`. The wire model lives in `../monitor/provider.go`:
@@ -46,6 +46,8 @@ from these (those event names are a server-side concept, not emitted here).
 | `openclaw/` | JSONL `~/.openclaw/agents/<a>/sessions/*.jsonl` | byte-for-byte the same pattern as claude (identical protocol) |
 | `hermes/` | SQLite `~/.hermes/state.db` | persistent RO conn + `PRAGMA data_version` fast-path; full table scan per tick (small dataset); tokens **estimated** |
 | `openharness/` | JSON `~/.openharness/data/sessions/<hash>/session-*.json` | no cache, full re-read per tick; interpolates time for undated msgs; tokens **estimated** |
+| `opencode/` | SQLite `~/.local/share/opencode/opencode.db` (WAL, XDG path on all OS) | persistent RO conn + `PRAGMA data_version` fast-path like hermes; `session`/`message`/`part` tri-table; tokens are **real** columns. Legacy `storage/*.json` generations not yet parsed |
+| `kimicode/` | JSONL `~/.kimi-code/sessions/<workDirKey>/<sessionId>/agents/*/wire.jsonl` (+ legacy `~/.kimi`) | FileCache/ScanJSONL like codex; merges main+subagent `wire.jsonl` per `sessionId`; tokens from `StatusUpdate.token_usage` (**real**); message text is heuristic **pending a real sample** |
 | `gitlog/` | on-disk git repos | **not a `Provider`** — driven by `reporter.GitLogReporter`; streams `git log` per repo filtered by author email, persists its own per-repo commit cursor |
 
 ## Shared semantics — `common/`

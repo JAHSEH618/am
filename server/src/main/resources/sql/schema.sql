@@ -258,13 +258,24 @@ CREATE TABLE IF NOT EXISTS monitor_target
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '监控目标字典';
 
 -- 字典种子（与 agent/internal/monitors/<type>/ 各 Provider 一一对应）
-INSERT IGNORE INTO monitor_target(type_code, type_name, enabled, display_color, sort_no, description, created_time, updated_time) VALUES
+-- 用 ON DUPLICATE KEY UPDATE 重新对齐 description/type_name/display_color/sort_no（皆为种子托管、无 UI 可改），
+-- 但刻意不回写 enabled —— 保留管理员在「Agent 列表」里的启停状态。
+-- 这样即便历史库里 description 因导入字符集问题成了乱码，下次启动 sql.init 会用 UTF-8 重新刷正。
+INSERT INTO monitor_target(type_code, type_name, enabled, display_color, sort_no, description, created_time, updated_time) VALUES
 ('cursor',      'Cursor',         1, 'geekblue', 10, '读取 Cursor 本地 state.vscdb（SQLite）；macOS 在 ~/Library/Application Support/Cursor/...，Windows 在 %APPDATA%\\Cursor/...，Linux 在 ~/.config/Cursor/...', NOW(), NOW()),
 ('claude',      'Claude Code',    1, 'magenta',  20, '读取用户主目录下 ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl 解析 Claude Code 会话（macOS / Windows / Linux）',                       NOW(), NOW()),
 ('codex',       'Codex CLI',      1, 'green',    30, '读取用户主目录下 ~/.codex/sessions/**/rollout-*.jsonl 解析 OpenAI Codex CLI 会话（macOS / Windows / Linux）',                  NOW(), NOW()),
 ('hermes',      'Hermes Agent',   1, 'purple',   40, '读取 ~/.hermes/state.db（SQLite sessions+messages）解析 Hermes Agent；Windows 需 WSL2（官方不支持原生 Windows）',           NOW(), NOW()),
 ('openclaw',    'OpenClaw',       1, 'orange',   50, '读取 ~/.openclaw/agents/<agent>/sessions/*.jsonl 解析 OpenClaw 会话（macOS / Windows / Linux）',                      NOW(), NOW()),
-('openharness', 'OpenHarness',    1, 'cyan',     60, '读取 ~/.openharness/data/sessions/<userhash>/session-*.json 解析 OpenHarness 会话（macOS / Windows / Linux）',                          NOW(), NOW());
+('openharness', 'OpenHarness',    1, 'cyan',     60, '读取 ~/.openharness/data/sessions/<userhash>/session-*.json 解析 OpenHarness 会话（macOS / Windows / Linux）',                          NOW(), NOW()),
+('opencode',    'OpenCode',       1, 'blue',     70, '读取 ~/.local/share/opencode/opencode.db（SQLite/WAL）解析 sst/opencode 会话（macOS / Windows / Linux 均走 XDG ~/.local/share）',          NOW(), NOW()),
+('kimicode',    'Kimi Code',      1, 'gold',     80, '读取 ~/.kimi-code/sessions/<...>/agents/*/wire.jsonl（兼容 legacy ~/.kimi）解析 Moonshot Kimi Code CLI 会话（macOS / Windows / Linux）', NOW(), NOW())
+ON DUPLICATE KEY UPDATE
+    type_name     = VALUES(type_name),
+    display_color = VALUES(display_color),
+    sort_no       = VALUES(sort_no),
+    description   = VALUES(description),
+    updated_time  = NOW();
 
 
 -- =====================================================================

@@ -36,7 +36,9 @@ import (
 	"github.com/am/aiwatch-agent/internal/monitors/codex"
 	"github.com/am/aiwatch-agent/internal/monitors/cursor"
 	"github.com/am/aiwatch-agent/internal/monitors/hermes"
+	"github.com/am/aiwatch-agent/internal/monitors/kimicode"
 	"github.com/am/aiwatch-agent/internal/monitors/openclaw"
+	"github.com/am/aiwatch-agent/internal/monitors/opencode"
 	"github.com/am/aiwatch-agent/internal/monitors/openharness"
 	"github.com/am/aiwatch-agent/internal/registrar"
 	"github.com/am/aiwatch-agent/internal/reporter"
@@ -291,6 +293,8 @@ func buildProviders(watchDir string) []monitor.Provider {
 		hermes.New(watchDir),
 		openclaw.New(watchDir),
 		openharness.New(watchDir),
+		opencode.New(watchDir),
+		kimicode.New(watchDir),
 	}
 }
 

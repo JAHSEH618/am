@@ -594,7 +594,10 @@ function InsightAuditProgressCard(props: {
         strokeWidth={10}
         strokeLinecap="round"
         showInfo={total > 0}
-        format={(p) => `${p}%（${stable} / ${total}）`}
+        // 仅在进度条尾部显示百分比；明细 stable/total 由下方说明段承载。
+        // 若把「（83 / 485）」塞进 line Progress 的 format，文本宽度远超 AntD 预留的
+        // .ant-progress-text 宽度，会溢出卡片右边界（见越界截图）。
+        format={(p) => `${p}%`}
         aria-label="洞察审计完成比例"
       />
 
