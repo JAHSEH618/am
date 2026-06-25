@@ -32,8 +32,13 @@ func Now() LocalTime { return LocalTime(time.Now()) }
 func (t LocalTime) Time() time.Time { return time.Time(t) }
 
 // MarshalJSON 自定义序列化，截到秒。
+//
+// 必须先 .Local() 归一到本机时区再格式化：部分 monitor（claude/codex/cursor 等）
+// 从工具会话文件解析出的时间戳带 UTC（…Z），若直接 Format 会输出 UTC 墙钟数字、
+// 且不带时区；服务端按 LocalDateTime 字面入库，再用本机(Asia/Shanghai) now 比对，
+// 会把每个会话都误判为已过期 5min → AiSessionStaleCloser 全部置 idle（大盘「活跃会话=0」）。
 func (t LocalTime) MarshalJSON() ([]byte, error) {
-	s := time.Time(t).Format(`"2006-01-02T15:04:05"`)
+	s := time.Time(t).Local().Format(`"2006-01-02T15:04:05"`)
 	return []byte(s), nil
 }
 
