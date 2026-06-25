@@ -505,35 +505,35 @@ public class AiSessionController {
         if (from == null && to == null) {
             if (roleFilters == null) {
                 return R.ok(PageDto.of(
-                        messageRepository.findByAiSessionIdOrderByConversationOrderAsc(id, pageable),
+                        messageRepository.findByAiSessionIdOrderByConversationOrderDesc(id, pageable),
                         AiSessionMessageDto::of));
             }
             if (roleFilters.size() == 1) {
                 return R.ok(PageDto.of(
-                        messageRepository.findByAiSessionIdAndRoleOrderByConversationOrderAsc(
+                        messageRepository.findByAiSessionIdAndRoleOrderByConversationOrderDesc(
                                 id, roleFilters.get(0), pageable),
                         AiSessionMessageDto::of));
             }
             return R.ok(PageDto.of(
-                    messageRepository.findByAiSessionIdAndRoleInOrderByConversationOrderAsc(
+                    messageRepository.findByAiSessionIdAndRoleInOrderByConversationOrderDesc(
                             id, roleFilters, pageable),
                     AiSessionMessageDto::of));
         }
         LocalDateTime[] window = resolveWindow(from, to, null);
         if (roleFilters == null) {
             return R.ok(PageDto.of(
-                    messageRepository.findByAiSessionIdAndMessageTimeWindowOrderByConversationOrderAsc(
+                    messageRepository.findByAiSessionIdAndMessageTimeWindowOrderByConversationOrderDesc(
                             id, window[0], window[1], pageable),
                     AiSessionMessageDto::of));
         }
         if (roleFilters.size() == 1) {
             return R.ok(PageDto.of(
-                    messageRepository.findByAiSessionIdAndRoleInWindowOrderByConversationOrderAsc(
+                    messageRepository.findByAiSessionIdAndRoleInWindowOrderByConversationOrderDesc(
                             id, roleFilters.get(0), window[0], window[1], pageable),
                     AiSessionMessageDto::of));
         }
         return R.ok(PageDto.of(
-                messageRepository.findByAiSessionIdAndRoleInWindowOrderByConversationOrderAsc(
+                messageRepository.findByAiSessionIdAndRoleInWindowOrderByConversationOrderDesc(
                         id, roleFilters, window[0], window[1], pageable),
                 AiSessionMessageDto::of));
     }

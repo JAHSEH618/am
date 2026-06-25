@@ -36,15 +36,15 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
 
     Page<AiSessionMessage> findByAiSessionIdOrderBySequenceNoAsc(Long aiSessionId, Pageable pageable);
 
-    /** 详情页默认排序：对话顺序优先，其次时间与入库序号。 */
+    /** 详情页默认排序：最新在前（对话顺序倒序 → 时间 → 入库序号），免翻页即可看最新聊天。 */
     @Query("""
         SELECT m FROM AiSessionMessage m
         WHERE m.aiSessionId = :sessionId
-        ORDER BY COALESCE(m.conversationOrder, 2147483647) ASC,
-                 m.messageTime ASC,
-                 m.sequenceNo ASC
+        ORDER BY COALESCE(m.conversationOrder, 2147483647) DESC,
+                 m.messageTime DESC,
+                 m.sequenceNo DESC
         """)
-    Page<AiSessionMessage> findByAiSessionIdOrderByConversationOrderAsc(
+    Page<AiSessionMessage> findByAiSessionIdOrderByConversationOrderDesc(
             @Param("sessionId") Long sessionId, Pageable pageable);
 
     @Modifying
@@ -102,11 +102,11 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         SELECT m FROM AiSessionMessage m
         WHERE m.aiSessionId = :sessionId
           AND m.messageTime >= :from AND m.messageTime < :to
-        ORDER BY COALESCE(m.conversationOrder, 2147483647) ASC,
-                 m.messageTime ASC,
-                 m.sequenceNo ASC
+        ORDER BY COALESCE(m.conversationOrder, 2147483647) DESC,
+                 m.messageTime DESC,
+                 m.sequenceNo DESC
         """)
-    Page<AiSessionMessage> findByAiSessionIdAndMessageTimeWindowOrderByConversationOrderAsc(
+    Page<AiSessionMessage> findByAiSessionIdAndMessageTimeWindowOrderByConversationOrderDesc(
             @Param("sessionId") Long sessionId,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to,
@@ -126,11 +126,11 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         SELECT m FROM AiSessionMessage m
         WHERE m.aiSessionId = :sessionId
           AND LOWER(m.role) = LOWER(:role)
-        ORDER BY COALESCE(m.conversationOrder, 2147483647) ASC,
-                 m.messageTime ASC,
-                 m.sequenceNo ASC
+        ORDER BY COALESCE(m.conversationOrder, 2147483647) DESC,
+                 m.messageTime DESC,
+                 m.sequenceNo DESC
         """)
-    Page<AiSessionMessage> findByAiSessionIdAndRoleOrderByConversationOrderAsc(
+    Page<AiSessionMessage> findByAiSessionIdAndRoleOrderByConversationOrderDesc(
             @Param("sessionId") Long sessionId, @Param("role") String role, Pageable pageable);
 
     /** 详情页「仅用户消息」+ 时间窗 */
@@ -153,11 +153,11 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         WHERE m.aiSessionId = :sessionId
           AND LOWER(m.role) = LOWER(:role)
           AND m.messageTime >= :from AND m.messageTime < :to
-        ORDER BY COALESCE(m.conversationOrder, 2147483647) ASC,
-                 m.messageTime ASC,
-                 m.sequenceNo ASC
+        ORDER BY COALESCE(m.conversationOrder, 2147483647) DESC,
+                 m.messageTime DESC,
+                 m.sequenceNo DESC
         """)
-    Page<AiSessionMessage> findByAiSessionIdAndRoleInWindowOrderByConversationOrderAsc(
+    Page<AiSessionMessage> findByAiSessionIdAndRoleInWindowOrderByConversationOrderDesc(
             @Param("sessionId") Long sessionId,
             @Param("role") String role,
             @Param("from") LocalDateTime from,
@@ -169,11 +169,11 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         SELECT m FROM AiSessionMessage m
         WHERE m.aiSessionId = :sessionId
           AND LOWER(m.role) IN :roles
-        ORDER BY COALESCE(m.conversationOrder, 2147483647) ASC,
-                 m.messageTime ASC,
-                 m.sequenceNo ASC
+        ORDER BY COALESCE(m.conversationOrder, 2147483647) DESC,
+                 m.messageTime DESC,
+                 m.sequenceNo DESC
         """)
-    Page<AiSessionMessage> findByAiSessionIdAndRoleInOrderByConversationOrderAsc(
+    Page<AiSessionMessage> findByAiSessionIdAndRoleInOrderByConversationOrderDesc(
             @Param("sessionId") Long sessionId,
             @Param("roles") Collection<String> roles,
             Pageable pageable);
@@ -183,11 +183,11 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         WHERE m.aiSessionId = :sessionId
           AND LOWER(m.role) IN :roles
           AND m.messageTime >= :from AND m.messageTime < :to
-        ORDER BY COALESCE(m.conversationOrder, 2147483647) ASC,
-                 m.messageTime ASC,
-                 m.sequenceNo ASC
+        ORDER BY COALESCE(m.conversationOrder, 2147483647) DESC,
+                 m.messageTime DESC,
+                 m.sequenceNo DESC
         """)
-    Page<AiSessionMessage> findByAiSessionIdAndRoleInWindowOrderByConversationOrderAsc(
+    Page<AiSessionMessage> findByAiSessionIdAndRoleInWindowOrderByConversationOrderDesc(
             @Param("sessionId") Long sessionId,
             @Param("roles") Collection<String> roles,
             @Param("from") LocalDateTime from,
