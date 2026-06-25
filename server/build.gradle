@@ -14,6 +14,12 @@ java {
     }
 }
 
+// 源码含中文字面量（如 monitor_target 种子 description）：强制 javac 以 UTF-8 读源码，
+// 否则非 UTF-8 locale 的构建机（CI/容器）会把中文编坏，重新引入"乱码"。
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
 repositories {
     // mavenLocal 优先：开发机离线 fallback，不影响生产构建（生产仍走 mavenCentral）
     mavenLocal()
