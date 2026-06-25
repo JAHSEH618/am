@@ -60,7 +60,7 @@ COPY agent/ ./
 ENV CGO_ENABLED=0
 # 国内构建慢可解开下一行使用国内代理：
 ENV GOPROXY=https://goproxy.cn,direct
-RUN VERSION=1.0.14 bash build-dist.sh    # 产物在 dist/install/
+RUN VERSION=1.0.15 bash build-dist.sh    # 产物在 dist/install/
 
 ##############################################
 # Stage 3: 运行时镜像
