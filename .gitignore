@@ -14,3 +14,8 @@ docs/superpowers/
 
 # 系统文件
 .DS_Store
+
+# AI agent skills（skills CLI 安装产物 / Claude Code 本地链接，非产品代码，本地可用即可）
+.agents/
+skills-lock.json
+.claude/skills/
