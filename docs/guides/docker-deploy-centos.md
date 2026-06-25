@@ -60,6 +60,30 @@ sudo systemctl enable --now docker
 docker version && docker compose version    # 验证
 ```
 
+### 4.1 配置镜像加速器（国内构建必看）
+
+方案 A 构建期要拉 Docker Hub 基础镜像（`golang` / `eclipse-temurin` / `mysql`），国内直连常失败，需给 Docker 配 `registry-mirrors`。
+
+> ⚠️ **别用失效地址**：百度 `mirror.baidubce.com`、中科大 `docker.mirrors.ustc.edu.cn` 等多个老牌公共加速器已停服或限内网。配了死地址会报 `lookup <域名> … no such host`，构建在拉基础镜像那步直接中断（见 11. 排错 FAQ）。最稳的是**阿里云个人加速器**：登录[容器镜像服务控制台](https://cr.console.aliyun.com/) → 镜像加速器，复制专属地址（形如 `https://<你的ID>.mirror.aliyuncs.com`）。
+
+```bash
+# 把第 1 行换成你的阿里云专属地址；后两个为当前常用公共镜像，按需增删
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "registry-mirrors": [
+    "https://<你的ID>.mirror.aliyuncs.com",
+    "https://docker.m.daocloud.io",
+    "https://docker.1panel.live"
+  ]
+}
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart docker
+docker info | grep -A4 "Registry Mirrors"     # 确认已生效
+```
+
+> 配之前可先 `getent hosts docker.m.daocloud.io` 确认域名能解析，避免又配上一个失效地址。公共加速器时有时无，失败时优先换阿里云个人加速器，或退回 6. 方案 B（外网机出镜像 `docker save` → 生产机 `docker load`）。
+
 ---
 
 ## 5. 方案 A：一体化 Docker 构建（推荐，需外网）
@@ -213,6 +237,7 @@ docker compose up -d --build      # 改了代码后重建并启动
 
 | 现象 | 排查 |
 | ---- | ---- |
+| 构建报 `lookup mirror.baidubce.com … no such host` / 拉 `golang`·`eclipse-temurin` 基础镜像失败 | Docker 的 `registry-mirrors` 指向了失效的加速器（百度镜像已停服）。改 `/etc/docker/daemon.json` 换成可用地址（见 4.1），`sudo systemctl daemon-reload && sudo systemctl restart docker` 后重建 |
 | 构建卡在下载 Node/Gradle | 网络问题。方案 A 需外网；国内可在 Dockerfile 解开 `GOPROXY`，或改用方案 B |
 | server 起不来、报连不上库 | 确认 `.env` 的 `DB_URL` host 是 `mysql`（compose 服务名）、账号密码与 MySQL 一致；`docker compose logs mysql` 看库是否就绪 |
 | 中文乱码 | 确认 `DB_URL` 的 `characterEncoding=UTF-8`（不是 utf8mb4），MySQL 启动参数为 `utf8mb4` |
