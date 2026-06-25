@@ -1,0 +1,232 @@
+// zcode 的 SQLite 查询：session 主表 + message/part 聚合，全部只读。
+// 与 opencode 同款（PRAGMA data_version 快路径 + 三表扫描），差异见 querySessions / fillRecent。
+// gz
+package zcode
+
+import (
+	"database/sql"
+	"time"
+
+	"github.com/am/aiwatch-agent/internal/monitor"
+	"github.com/am/aiwatch-agent/internal/monitors/common"
+
+	_ "modernc.org/sqlite"
+)
+
+// openDBRO 只读打开 db.sqlite。WAL 由 SQLite 自行读取；mode=ro 不竞争 zcode 进程的写入
+// （与 opencode.openDBRO / cursor / hermes 同款）。
+func openDBRO(path string) (*sql.DB, error) {
+	return sql.Open("sqlite", path+"?mode=ro&_pragma=busy_timeout(2000)")
+}
+
+// readDataVersionFast 用 Provider 持久化的 RO 连接读 PRAGMA data_version（与 opencode 同款 fast path）。
+// zcode 未写库时直接复用上次解析结果，省掉 session+message+part 三表扫描。失败返回 0 退化全扫描。
+func (p *Provider) readDataVersionFast(path string) int64 {
+	p.pragmaMu.Lock()
+	defer p.pragmaMu.Unlock()
+	if p.pragmaDB == nil {
+		db, err := openDBRO(path)
+		if err != nil {
+			return 0
+		}
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+		db.SetConnMaxIdleTime(0)
+		p.pragmaDB = db
+	}
+	var dv int64
+	if err := p.pragmaDB.QueryRow("PRAGMA data_version").Scan(&dv); err != nil {
+		_ = p.pragmaDB.Close()
+		p.pragmaDB = nil
+		return 0
+	}
+	return dv
+}
+
+// querySessions 读出 (cutoff, now] 内有更新、且未归档的 session，并填充消息聚合。
+//
+// 与 opencode 不同：session 表没有 token / model 列，故这里只取标识 + 时间，
+// token / model 由 fillRecent 从 message.data 累加 / 提取。
+func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
+	cutoffMs := cutoff.UnixMilli()
+	rows, err := db.Query(`
+		SELECT id, IFNULL(project_id,''), IFNULL(directory,''), IFNULL(title,''), IFNULL(version,''),
+		       IFNULL(time_created,0), IFNULL(time_updated,0)
+		FROM session
+		WHERE IFNULL(time_archived,0)=0
+		  AND IFNULL(time_updated, time_created) >= ?
+		ORDER BY IFNULL(time_updated,0) DESC
+	`, cutoffMs)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*parsedSession, 0, 16)
+	for rows.Next() {
+		var (
+			id, projectID, dir, title, version string
+			createdMs, updatedMs               int64
+		)
+		if err := rows.Scan(&id, &projectID, &dir, &title, &version, &createdMs, &updatedMs); err != nil {
+			continue
+		}
+		ps := &parsedSession{
+			SessionID:    id,
+			ProjectID:    projectID,
+			Directory:    dir,
+			Title:        title,
+			Version:      version,
+			StartedAt:    fromEpochMs(createdMs),
+			LastActivity: fromEpochMs(updatedMs),
+		}
+		if ps.LastActivity.IsZero() {
+			ps.LastActivity = ps.StartedAt
+		}
+		out = append(out, ps)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for _, ps := range out {
+		fillRecent(db, ps)
+	}
+	return out, nil
+}
+
+// fillRecent 把单 session 的 message/part 装配成 RecentMessages / RecentTools / ActivityDeltas，
+// 统计 user / assistant 消息数，并从 assistant message.data.tokens 累加会话 token 总量
+//（zcode session 表无 token 列，这是会话总量的唯一来源；与 ActivityDelta 的逐 turn 增量同源，
+// 保证 Session 总量 == 各 TOKEN_DELTA 之和这一服务端不变式）。
+func fillRecent(db *sql.DB, ps *parsedSession) {
+	partsByMsg := loadParts(db, ps.SessionID)
+
+	rows, err := db.Query(`
+		SELECT id, IFNULL(time_created,0), data
+		FROM message
+		WHERE session_id=?
+		ORDER BY IFNULL(time_created,0), id
+	`, ps.SessionID)
+	if err != nil {
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	msgs := make([]monitor.Message, 0, 64)
+	tools := make([]monitor.Tool, 0, maxRecentTools)
+	for rows.Next() {
+		var (
+			id        string
+			createdMs int64
+			rawData   []byte
+		)
+		if err := rows.Scan(&id, &createdMs, &rawData); err != nil {
+			continue
+		}
+		md := parseMessageData(rawData)
+		eventTime := fromEpochMs(createdMs)
+		if eventTime.IsZero() {
+			eventTime = fromEpochMs(md.Time.Created)
+		}
+		ts := monitor.LocalTime(eventTime)
+
+		parts, toolNames := buildParts(partsByMsg[id])
+		for _, tn := range toolNames {
+			tools = append(tools, monitor.Tool{Name: tn, Timestamp: ts})
+		}
+
+		switch md.Role {
+		case "user":
+			ps.UserMessages++
+			if len(parts) > 0 {
+				msg := monitor.Message{ExternalMessageID: id, Role: "user", ContentParts: parts, Timestamp: ts}
+				monitor.FinalizeMessage(&msg)
+				msgs = append(msgs, msg)
+			}
+			common.AppendActivityDelta(&ps.ActivityDeltas, eventTime, id, common.ActivitySourceUserTurn, 0, 0, 1)
+		case "assistant":
+			ps.AssistantMessages++
+			if ps.Model == "" && md.ModelID != "" {
+				ps.Model = md.ModelID
+			}
+			if len(parts) > 0 {
+				msg := monitor.Message{ExternalMessageID: id, Role: "assistant", ContentParts: parts, Timestamp: ts}
+				monitor.FinalizeMessage(&msg)
+				msgs = append(msgs, msg)
+			}
+			// zcode 的 tokens.input 是「含缓存的总输入」——step-finish part 实测 total == input+output，
+			// 且 cache.read 恒 ≤ input，说明 cache.read/write 是 input 的子集（非另算）。
+			// 这里拆成不相交的「净输入 + cache_read + cache_write」，与 opencode 上报口径对齐
+			//（opencode 的 input 列本就是非缓存净输入），避免服务端把 input+cache 重复计。
+			cacheR := md.Tokens.Cache.Read
+			cacheW := md.Tokens.Cache.Write
+			freshIn := md.Tokens.Input - cacheR - cacheW
+			if freshIn < 0 {
+				freshIn = 0 // 反常数据兜底；正常 input ≥ cache.read+cache.write
+			}
+			ps.InputTokens += freshIn
+			ps.OutputTokens += md.Tokens.Output
+			ps.ReasoningTokens += md.Tokens.Reasoning
+			ps.CacheRead += cacheR
+			ps.CacheCreate += cacheW
+
+			completed := fromEpochMs(md.Time.Completed)
+			if completed.IsZero() {
+				completed = eventTime
+			}
+			// ActivityDelta 合并口径：in = 净输入 + cache（= 总输入 md.Tokens.Input），out = output + reasoning。
+			in := freshIn + cacheR + cacheW
+			out := md.Tokens.Output + md.Tokens.Reasoning
+			common.AppendActivityDelta(&ps.ActivityDeltas, completed, id, common.ActivitySourceAssistantTurn, in, out, 1)
+		}
+	}
+
+	if len(msgs) > maxRecentMessages {
+		msgs = msgs[len(msgs)-maxRecentMessages:]
+	}
+	if len(tools) > maxRecentTools {
+		tools = tools[len(tools)-maxRecentTools:]
+	}
+	ps.RecentMessages = msgs
+	ps.RecentTools = tools
+	if n := len(tools); n > 0 {
+		ps.CurrentTool = tools[n-1].Name
+	}
+}
+
+// loadParts 一次性读出某 session 全部 part，按 message_id 分组（保持 part 顺序）。
+func loadParts(db *sql.DB, sessionID string) map[string][][]byte {
+	rows, err := db.Query(`
+		SELECT message_id, data
+		FROM part
+		WHERE session_id=?
+		ORDER BY message_id, id
+	`, sessionID)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	byMsg := make(map[string][][]byte)
+	for rows.Next() {
+		var (
+			msgID   string
+			rawData []byte
+		)
+		if err := rows.Scan(&msgID, &rawData); err != nil {
+			continue
+		}
+		cp := make([]byte, len(rawData))
+		copy(cp, rawData)
+		byMsg[msgID] = append(byMsg[msgID], cp)
+	}
+	return byMsg
+}
+
+func fromEpochMs(ms int64) time.Time {
+	if ms <= 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
+}

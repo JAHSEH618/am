@@ -17,7 +17,7 @@ server whitelist that can disable a monitor lives in [`../monitorpolicy/`](../mo
 Every monitor implements `monitor.Provider` (defined in `../monitor/provider.go`):
 
 ```go
-Type() string                                    // unique code: "cursor","claude","codex","hermes","openclaw","openharness","opencode","kimicode"
+Type() string                                    // unique code: "cursor","claude","codex","hermes","openclaw","openharness","opencode","kimicode","zcode"
 TargetVersion() string                           // version of the monitored tool
 IsInstalled() bool                               // cheap fs check — status/logging only, NOT used to gate Snapshot
 Snapshot(ctx) (monitor.Snapshot, error)          // best-effort; return empty Snapshot on error, never fail hard
@@ -48,6 +48,7 @@ from these (those event names are a server-side concept, not emitted here).
 | `openharness/` | JSON `~/.openharness/data/sessions/<hash>/session-*.json` | no cache, full re-read per tick; interpolates time for undated msgs; tokens **estimated** |
 | `opencode/` | SQLite `~/.local/share/opencode/opencode.db` (WAL, XDG path on all OS) | persistent RO conn + `PRAGMA data_version` fast-path like hermes; `session`/`message`/`part` tri-table; tokens are **real** columns. Legacy `storage/*.json` generations not yet parsed |
 | `kimicode/` | JSONL `~/.kimi-code/sessions/<workDirKey>/<sessionId>/agents/*/wire.jsonl` (+ legacy `~/.kimi`) | FileCache/ScanJSONL like codex; merges main+subagent `wire.jsonl` per `sessionId`; tokens from `StatusUpdate.token_usage` (**real**); message text is heuristic **pending a real sample** |
+| `zcode/` | SQLite `~/.zcode/cli/db/db.sqlite` (WAL, home-dir `~/.zcode` on macOS+Windows, confirmed) | Z Code (z.ai GLM agent) — OpenCode-derived `session`/`message`/`part` tri-table; persistent RO conn + `PRAGMA data_version` fast-path like opencode. **No token/model columns**: tokens from `message.data.tokens` (**real**), model from assistant `modelID`. zcode `tokens.input` *includes* cache (`total==input+output`), so input is split into disjoint fresh+cache to match opencode's convention. `tool` part = `{type:"tool", tool:"<Name>", state:{…}}` (confirmed); `reasoning`→thinking, `step-finish`/`step-start` ignored. Richer `model_usage`/`turn_usage`/`tool_usage` tables exist for future metrics |
 | `gitlog/` | on-disk git repos | **not a `Provider`** — driven by `reporter.GitLogReporter`; streams `git log` per repo filtered by author email, persists its own per-repo commit cursor |
 
 ## Shared semantics — `common/`

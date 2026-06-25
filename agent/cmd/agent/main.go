@@ -40,6 +40,7 @@ import (
 	"github.com/am/aiwatch-agent/internal/monitors/openclaw"
 	"github.com/am/aiwatch-agent/internal/monitors/opencode"
 	"github.com/am/aiwatch-agent/internal/monitors/openharness"
+	"github.com/am/aiwatch-agent/internal/monitors/zcode"
 	"github.com/am/aiwatch-agent/internal/registrar"
 	"github.com/am/aiwatch-agent/internal/reporter"
 	"github.com/am/aiwatch-agent/internal/uninstall"
@@ -295,6 +296,7 @@ func buildProviders(watchDir string) []monitor.Provider {
 		openharness.New(watchDir),
 		opencode.New(watchDir),
 		kimicode.New(watchDir),
+		zcode.New(watchDir),
 	}
 }
 

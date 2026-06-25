@@ -269,7 +269,8 @@ INSERT INTO monitor_target(type_code, type_name, enabled, display_color, sort_no
 ('openclaw',    'OpenClaw',       1, 'orange',   50, '读取 ~/.openclaw/agents/<agent>/sessions/*.jsonl 解析 OpenClaw 会话（macOS / Windows / Linux）',                      NOW(), NOW()),
 ('openharness', 'OpenHarness',    1, 'cyan',     60, '读取 ~/.openharness/data/sessions/<userhash>/session-*.json 解析 OpenHarness 会话（macOS / Windows / Linux）',                          NOW(), NOW()),
 ('opencode',    'OpenCode',       1, 'blue',     70, '读取 ~/.local/share/opencode/opencode.db（SQLite/WAL）解析 sst/opencode 会话（macOS / Windows / Linux 均走 XDG ~/.local/share）',          NOW(), NOW()),
-('kimicode',    'Kimi Code',      1, 'gold',     80, '读取 ~/.kimi-code/sessions/<...>/agents/*/wire.jsonl（兼容 legacy ~/.kimi）解析 Moonshot Kimi Code CLI 会话（macOS / Windows / Linux）', NOW(), NOW())
+('kimicode',    'Kimi Code',      1, 'gold',     80, '读取 ~/.kimi-code/sessions/<...>/agents/*/wire.jsonl（兼容 legacy ~/.kimi）解析 Moonshot Kimi Code CLI 会话（macOS / Windows / Linux）', NOW(), NOW()),
+('zcode',       'Z Code',         1, 'volcano',  90, '读取 ~/.zcode/cli/db/db.sqlite（SQLite/WAL，OpenCode 派生的 session/message/part 三表）解析 Z Code（z.ai GLM 编码 Agent）会话（macOS / Windows / Linux 均在 ~/.zcode）', NOW(), NOW())
 ON DUPLICATE KEY UPDATE
     type_name     = VALUES(type_name),
     display_color = VALUES(display_color),

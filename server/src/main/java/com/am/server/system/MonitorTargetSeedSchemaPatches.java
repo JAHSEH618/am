@@ -86,6 +86,8 @@ public class MonitorTargetSeedSchemaPatches {
                     "读取 ~/.local/share/opencode/opencode.db（SQLite/WAL）解析 sst/opencode 会话（macOS / Windows / Linux 均走 XDG ~/.local/share）"),
             new Seed("kimicode", "Kimi Code", "gold", 80,
                     "读取 ~/.kimi-code/sessions/<...>/agents/*/wire.jsonl（兼容 legacy ~/.kimi）解析 Moonshot Kimi Code CLI 会话（macOS / Windows / Linux）"),
+            new Seed("zcode", "Z Code", "volcano", 90,
+                    "读取 ~/.zcode/cli/db/db.sqlite（SQLite/WAL，OpenCode 派生的 session/message/part 三表）解析 Z Code（z.ai GLM 编码 Agent）会话（macOS / Windows / Linux 均在 ~/.zcode）"),
     };
 
     @Bean

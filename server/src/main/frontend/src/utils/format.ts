@@ -221,6 +221,7 @@ export function targetTypeLabel(
     case 'openharness': return 'OpenHarness';
     case 'opencode': return 'OpenCode';
     case 'kimicode': return 'Kimi Code';
+    case 'zcode': return 'Z Code';
     default: return t || '-';
   }
 }
@@ -240,6 +241,7 @@ export function targetTypeColor(
     case 'openharness': return 'cyan';
     case 'opencode': return 'blue';
     case 'kimicode': return 'gold';
+    case 'zcode': return 'volcano';
     default: return 'default';
   }
 }
