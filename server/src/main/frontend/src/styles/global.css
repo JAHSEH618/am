@@ -35,10 +35,148 @@
   --am-color-info: #2563eb;
 
   /* 表面分层：从最低到最高 */
-  --am-bg-page: #f5f7fa;
+  --am-bg-page: #f4f5f8;
   --am-bg-card: #ffffff;
-  --am-border-subtle: #eef0f4;
-  --am-border-strong: #e2e6ed;
+  --am-border-subtle: rgba(15, 23, 42, 0.06);
+  --am-border-strong: rgba(15, 23, 42, 0.12);
+
+  /* —— Apple-native v2：墨色层级（高对比，行文 ≥ 4.5:1）—— */
+  --am-ink: #1d1f26;            /* 标题 / 数据：近黑 */
+  --am-ink-2: #44464f;          /* 正文 / 主要标签 ≈ 8.4:1 */
+  --am-ink-3: #6a6c75;          /* 次级标签 / 说明 ≈ 4.9:1 */
+  --am-ink-4: #8a8c94;          /* 仅用于大字/弱提示（不承载关键信息）*/
+
+  /* —— 苹果式连续圆角 —— */
+  --am-r-sm: 8px;
+  --am-r-md: 12px;
+  --am-r-lg: 16px;
+  --am-r-xl: 22px;
+
+  /* —— Liquid Glass 材质 —— */
+  --am-glass-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.66));
+  --am-glass-blur: saturate(180%) blur(22px);
+  --am-glass-hairline: rgba(15, 23, 42, 0.08);
+  --am-glass-highlight: rgba(255, 255, 255, 0.7);
+
+  /* —— 分层投影（接触 + 环境，叠加内高光）—— */
+  --am-shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 14px -6px rgba(15, 23, 42, 0.10);
+  --am-shadow-2: 0 2px 6px rgba(15, 23, 42, 0.06), 0 14px 34px -10px rgba(15, 23, 42, 0.16);
+  --am-shadow-pop: 0 8px 24px -6px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08);
+  --am-inner-hi: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+
+  /* —— 苹果缓动 + 时长 —— */
+  --am-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --am-dur: 0.2s;
+
+  /* —— 品牌强调（与 BrandIcon 同源的靛→紫渐变，仅供字标这一处）—— */
+  --am-brand-grad: linear-gradient(118deg, #4f46e5 0%, #7c3aed 52%, #6366f1 100%);
+
+  /* z-index 语义层级 */
+  --am-z-sticky: 100;
+  --am-z-header: 200;
+  --am-z-dropdown: 1050;
+}
+
+/* =====================================================================
+ * Apple-native "Liquid Glass" 材质层（v2 升级）
+ *   设计取舍：玻璃只上 chrome（侧栏 / 顶栏 / 浮层）——苹果正是在这些地方用
+ *   半透磨砂材质折射底层壁纸；数据卡片 / 表格保持不透明白底，数字与状态色
+ *   的可读性、可信度不打折。底层柔光背景给玻璃提供可折射的色彩。
+ * ===================================================================== */
+
+/* 侧栏：竖向磨砂玻璃，右缘发丝线 + 左内高光；吸顶定高，与玻璃顶栏组成固定框架 */
+.am-app-sider.ant-layout-sider {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow: hidden auto;
+  background: var(--am-glass-bg) !important;
+  -webkit-backdrop-filter: var(--am-glass-blur);
+  backdrop-filter: var(--am-glass-blur);
+  border-right: 1px solid var(--am-glass-hairline) !important;
+  box-shadow: inset -1px 0 0 var(--am-glass-highlight);
+}
+.am-app-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶栏：吸顶玻璃条，内容从其下滑过时产生真实折射（苹果工具栏质感）*/
+.am-app-header.ant-layout-header {
+  position: sticky;
+  top: 0;
+  z-index: var(--am-z-header);
+  background: var(--am-glass-bg) !important;
+  -webkit-backdrop-filter: var(--am-glass-blur);
+  backdrop-filter: var(--am-glass-blur);
+  border-bottom: 1px solid var(--am-glass-hairline) !important;
+  box-shadow: var(--am-inner-hi);
+}
+
+/* 浮层（用户菜单 / 下拉 / 气泡 / 选择器面板）：同款玻璃，苹果菜单质感 */
+.ant-dropdown .ant-dropdown-menu,
+.ant-popover-inner,
+.ant-select-dropdown,
+.ant-picker-dropdown .ant-picker-panel-container {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.78)) !important;
+  -webkit-backdrop-filter: var(--am-glass-blur);
+  backdrop-filter: var(--am-glass-blur);
+  border: 1px solid var(--am-glass-hairline);
+  box-shadow: var(--am-shadow-pop), var(--am-inner-hi) !important;
+}
+
+/* 卡片：不透明白底 + 发丝边 + 分层投影 + 顶部内高光（数据可读优先）*/
+.ant-card {
+  border: 1px solid var(--am-border-subtle);
+  box-shadow: var(--am-shadow-1), var(--am-inner-hi);
+  transition: box-shadow var(--am-dur) var(--am-ease),
+    transform var(--am-dur) var(--am-ease), border-color var(--am-dur) var(--am-ease);
+}
+
+/* 主按钮：苹果式高光 + 柔影，hover 微亮、active 微沉 */
+.ant-btn-primary {
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition: transform var(--am-dur) var(--am-ease), box-shadow var(--am-dur) var(--am-ease),
+    filter var(--am-dur) var(--am-ease);
+}
+.ant-btn-primary:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.ant-btn-primary:active {
+  transform: translateY(0.5px);
+  filter: brightness(0.98);
+}
+
+/* 字标：唯一一处渐变字（与 BrandIcon 同源）；只在侧栏品牌位，不碰数据/标签 */
+.am-wordmark {
+  background: var(--am-brand-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+  font-size: 16px;
+}
+
+/* 统一收敛动效曲线（让全站过渡都走苹果缓动）*/
+.ant-menu-item,
+.ant-tag,
+.ant-btn {
+  transition-timing-function: var(--am-ease) !important;
+}
+
+/* 无障碍：尊重"减少动态"——关掉过渡/动画，避免眩晕 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* ===== 防越界安全网（桌面宽屏）=====
@@ -78,13 +216,22 @@ body,
   padding: 0;
   height: 100%;
   font-family:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
-    'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI',
+    'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
   font-size: var(--am-fs-md);
+  letter-spacing: -0.006em; /* 苹果式微紧排版，更精致 */
+  color: var(--am-ink-2);
   font-feature-settings: 'tnum'; /* 数字等宽：防止数据表格抖动 */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: var(--am-bg-page);
+  text-rendering: optimizeLegibility;
+  /* 底层柔光背景：给玻璃 chrome 提供可折射的克制色彩；数据卡覆盖其上，读数不受扰 */
+  background:
+    radial-gradient(1200px 760px at 6% -12%, rgba(99, 102, 241, 0.10), transparent 60%),
+    radial-gradient(1080px 720px at 104% -6%, rgba(139, 92, 246, 0.085), transparent 56%),
+    radial-gradient(980px 760px at 52% 120%, rgba(56, 189, 248, 0.06), transparent 62%),
+    var(--am-bg-page);
+  background-attachment: fixed;
 }
 
 /* 滚动条克制化：默认窄，hover 才显形 */
@@ -122,12 +269,18 @@ body,
 
 /* 卡片 hover 微反馈：dashboard 上的可点击卡片用 .am-clickable */
 .am-clickable {
-  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+  transition: box-shadow var(--am-dur) var(--am-ease), border-color var(--am-dur) var(--am-ease),
+    transform var(--am-dur) var(--am-ease);
   cursor: pointer;
 }
 .am-clickable:hover {
   border-color: var(--am-border-strong);
-  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+  transform: translateY(-2px);
+  box-shadow: var(--am-shadow-2), var(--am-inner-hi);
+}
+.am-clickable:active {
+  transform: translateY(0);
+  box-shadow: var(--am-shadow-1);
 }
 
 /* Dashboard：顶部 4 张 Hero 卡同高（列 stretch + 卡片撑满） */
@@ -147,39 +300,54 @@ body,
   position: relative;
   overflow: hidden;
   min-height: 132px;
+  border-radius: var(--am-r-lg) !important; /* 苹果连续大圆角，盖过内联 8 */
+  box-shadow: var(--am-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+/* 顶部柔光内沿：苹果材质"被照亮"的高光边，叠在语义底色之上 */
+.am-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 82% at 12% -12%, rgba(255, 255, 255, 0.55), transparent 56%);
+  pointer-events: none;
+}
+.am-hero > .ant-card-body {
+  position: relative; /* 抬到高光之上 */
 }
 .am-hero .am-hero-icon {
   position: absolute;
-  right: 12px;
+  right: 14px;
   top: 12px;
-  opacity: 0.18;
-  font-size: 56px;
+  opacity: 0.16;
+  font-size: 58px;
   pointer-events: none;
 }
 .am-hero-label {
   font-size: var(--am-fs-sm);
-  color: rgba(15, 23, 42, 0.55);
-  margin-bottom: 6px;
+  color: var(--am-ink-3);
+  font-weight: 500;
+  margin-bottom: 8px;
 }
 .am-hero-value {
-  font-size: var(--am-fs-2xl);
-  font-weight: 600;
-  color: rgba(15, 23, 42, 0.92);
-  line-height: 1.15;
+  font-size: 30px;
+  font-weight: 650;
+  color: var(--am-ink);
+  line-height: 1.08;
+  letter-spacing: -0.022em;
   font-variant-numeric: tabular-nums;
 }
 .am-hero-suffix {
   font-size: var(--am-fs-sm);
-  color: rgba(15, 23, 42, 0.5);
+  color: var(--am-ink-3);
   margin-left: 6px;
-  font-weight: 400;
+  font-weight: 500;
 }
 .am-hero-subnote {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: var(--am-fs-sm);
-  color: rgba(15, 23, 42, 0.5);
+  color: var(--am-ink-3);
   font-weight: 400;
-  line-height: 1.3;
+  line-height: 1.35;
 }
 
 /* metric list：次级指标紧凑形态（一行一个） */
@@ -195,10 +363,11 @@ body,
   border-bottom: 0;
 }
 .am-metric-row > .am-metric-label {
-  color: rgba(15, 23, 42, 0.6);
+  color: var(--am-ink-3);
 }
 .am-metric-row > .am-metric-value {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--am-ink);
   font-variant-numeric: tabular-nums;
 }
 
@@ -221,14 +390,15 @@ body,
   margin-bottom: 16px;
 }
 .am-page-title {
-  font-size: var(--am-fs-xl);
-  font-weight: 600;
-  color: rgba(15, 23, 42, 0.92);
+  font-size: 22px;
+  font-weight: 680;
+  color: var(--am-ink);
+  letter-spacing: -0.02em; /* 苹果大标题式收紧 */
   margin: 0;
 }
 .am-page-subtitle {
   font-size: var(--am-fs-sm);
-  color: rgba(15, 23, 42, 0.5);
+  color: var(--am-ink-3);
 }
 
 /* 注册员工列：离线状态用叠在姓名上的朱红小印章（轻微倾斜） */

@@ -88,6 +88,7 @@ export default function MainLayout() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
+        className="am-app-sider"
         theme="light"
         collapsible
         collapsed={collapsed}
@@ -98,10 +99,6 @@ export default function MainLayout() {
         trigger={null}
         width={216}
         collapsedWidth={64}
-        style={{
-          borderRight: '1px solid var(--am-border-subtle)',
-          transition: 'width .2s',
-        }}
       >
         {/* Logo 区：折叠态显示观测眼标，展开态 AW 字标 + 产品名 */}
         <div
@@ -127,7 +124,7 @@ export default function MainLayout() {
           ) : (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <BrandIcon variant="monogram" size={26} />
-              AIWatch
+              <span className="am-wordmark">AIWatch</span>
             </span>
           )}
         </div>
@@ -147,11 +144,11 @@ export default function MainLayout() {
           形成整页横向滚动（即"越界"）。min-width:0 是消除该问题的根因修复。 */}
       <Layout style={{ minWidth: 0 }}>
         <Header
+          className="am-app-header"
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 12,
-            borderBottom: '1px solid var(--am-border-subtle)',
           }}
         >
           {/* 折叠按钮：用 hitarea 包一下，避免 16px 图标点不准 */}

@@ -22,18 +22,25 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
     colorSuccess: '#10b981',
     colorWarning: '#f59e0b',
     colorError: '#ef4444',
-    colorBgLayout: '#f5f7fa',
+    // Layout 表面交给 global.css 的 Liquid Glass 材质层接管（透明 → 露出底层柔光背景）
+    colorBgLayout: 'transparent',
     colorBgContainer: '#ffffff',
-    colorBorder: '#e2e6ed',
-    colorBorderSecondary: '#eef0f4',
-    borderRadius: 6,
-    borderRadiusLG: 8,
-    borderRadiusSM: 4,
+    colorBorder: 'rgba(15, 23, 42, 0.10)',
+    colorBorderSecondary: 'rgba(15, 23, 42, 0.06)',
+    // 苹果式连续大圆角：卡片 14 / 控件 8 / 紧凑 6
+    borderRadius: 8,
+    borderRadiusLG: 14,
+    borderRadiusSM: 6,
     fontSize: 14,
     fontSizeSM: 13,
     fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
+      "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
     controlHeight: 32,
+    // 苹果分层投影：贴地接触阴影 + 柔和环境阴影（替掉 AntD 默认偏灰单层投影）
+    boxShadow:
+      '0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px -6px rgba(15, 23, 42, 0.12)',
+    boxShadowSecondary:
+      '0 2px 4px rgba(15, 23, 42, 0.05), 0 16px 40px -12px rgba(15, 23, 42, 0.18)',
   },
   components: {
     // 卡片：默认带极淡分割，标题区缩到 12px padding 才不至于"标题占半个卡片"
@@ -52,17 +59,19 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
       cellPaddingBlockSM: 8,
     },
     Layout: {
-      headerBg: '#ffffff',
+      // 透明：实际表面由 global.css 的 .am-app-sider / .am-app-header 玻璃材质绘制
+      headerBg: 'transparent',
       headerHeight: 56,
       headerPadding: '0 20px',
-      siderBg: '#ffffff',
-      bodyBg: '#f5f7fa',
+      siderBg: 'transparent',
+      bodyBg: 'transparent',
     },
     Menu: {
-      itemBorderRadius: 6,
+      itemBorderRadius: 8,
       itemMarginInline: 8,
-      itemSelectedBg: '#eef2ff',
-      itemSelectedColor: '#2563eb',
+      itemHeight: 38,
+      itemSelectedBg: 'rgba(37, 99, 235, 0.10)',
+      itemSelectedColor: '#1d4ed8',
     },
     Tag: {
       defaultBg: '#f1f5f9',
