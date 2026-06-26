@@ -31,7 +31,23 @@ public class AgentProperties {
 
     /**
      * 单次 /report 推进 work_session 在线/活跃秒数的上限（秒）。
-     * 默认 120，与 2min 上报间隔一致（旧 10s tick 时代为 30）。
+     * 默认 120，与空闲上报间隔同量级（旧 10s tick 时代为 30）。
      */
     private long perReportCapSeconds = 120L;
+
+    /**
+     * 下发给客户端的「空闲基线」上报间隔（毫秒）。register 与每次 /report 响应都会带上，
+     * 客户端据此动态调整 tick 节奏（见 {@code reporter.go} 的 mergeReportCadence）。
+     *
+     * <p>默认 45s（旧 120s）：把"刚开始干活 → 第一条活动出现"的冷启动最坏延迟从 ~2min 砍到 ~45s。
+     * 空闲 payload 是游标增量、很小，团队规模下额外负载可忽略。ops 可经 {@code aiwatch.agent.report-interval-ms} 调。
+     */
+    private long reportIntervalMs = 45_000L;
+
+    /**
+     * 下发给客户端的「活跃时段」快速上报间隔（毫秒）。客户端收到响应 {@code active=true} 时切到此节奏。
+     *
+     * <p>默认 8s（旧 15s）：稳态下每条事件最坏延迟 15s→8s，更贴近"实时"。客户端硬下限 5s。
+     */
+    private long activeReportIntervalMs = 8_000L;
 }

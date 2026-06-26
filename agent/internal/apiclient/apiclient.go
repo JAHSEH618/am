@@ -124,6 +124,11 @@ type ReportSummary struct {
 	Messages      int                   `json:"messages"`
 	Active        bool                  `json:"active"`
 	MonitorPolicy *config.MonitorPolicy `json:"monitor_policy,omitempty"`
+	// 服务端下发的当前上报节奏（毫秒）。0 表示老服务端未带该字段，客户端忽略、维持现状。
+	// 客户端 honor 这两个值动态调 tick（见 reporter.mergeReportCadence）——ops 调服务端
+	// aiwatch.agent.{report,active-report}-interval-ms 后，存量 agent 无需重装即在下个 /report 生效。
+	ReportIntervalMs       int64 `json:"report_interval_ms,omitempty"`
+	ActiveReportIntervalMs int64 `json:"active_report_interval_ms,omitempty"`
 }
 
 // CommitReportSummary 与服务端 GitCommitIngestService 返回值对齐。

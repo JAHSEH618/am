@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/am/aiwatch-agent/internal/apiclient"
 	"github.com/am/aiwatch-agent/internal/config"
 )
 
@@ -46,16 +47,56 @@ func TestNextIntervalFollowsActive(t *testing.T) {
 	const fast = 15 * time.Second
 	const slow = 120 * time.Second
 	r := &Reporter{}
+	r.setCadence(slow.Milliseconds(), fast.Milliseconds())
 
-	if got := r.nextInterval(fast, slow); got != slow {
-		t.Errorf("idle (zero value) nextInterval = %s, want %s", got, slow)
+	if got := r.nextInterval(); got != slow {
+		t.Errorf("idle nextInterval = %s, want %s", got, slow)
 	}
 	r.lastActive.Store(true)
-	if got := r.nextInterval(fast, slow); got != fast {
+	if got := r.nextInterval(); got != fast {
 		t.Errorf("active nextInterval = %s, want %s", got, fast)
 	}
 	r.lastActive.Store(false)
-	if got := r.nextInterval(fast, slow); got != slow {
+	if got := r.nextInterval(); got != slow {
 		t.Errorf("back-to-idle nextInterval = %s, want %s", got, slow)
+	}
+}
+
+// mergeReportCadence：老服务端不下发字段时不动现状；下发时 honor 并夹取；只发其一时另一保留。
+func TestMergeReportCadence(t *testing.T) {
+	r := &Reporter{}
+	r.setCadence((120 * time.Second).Milliseconds(), (15 * time.Second).Milliseconds())
+
+	// 老服务端：两字段都 0 → 维持现状，不误清成默认。
+	r.mergeReportCadence(&apiclient.ReportSummary{})
+	if got := r.baseIntervalMs.Load(); got != 120_000 {
+		t.Errorf("zero summary changed base to %dms, want 120000", got)
+	}
+	if got := r.activeIntervalMs.Load(); got != 15_000 {
+		t.Errorf("zero summary changed active to %dms, want 15000", got)
+	}
+
+	// 下发新节奏：honor 之。
+	r.mergeReportCadence(&apiclient.ReportSummary{ReportIntervalMs: 45_000, ActiveReportIntervalMs: 8_000})
+	if got := r.baseIntervalMs.Load(); got != 45_000 {
+		t.Errorf("base after merge = %dms, want 45000", got)
+	}
+	if got := r.activeIntervalMs.Load(); got != 8_000 {
+		t.Errorf("active after merge = %dms, want 8000", got)
+	}
+
+	// 只下发 active：base 保留 45000。
+	r.mergeReportCadence(&apiclient.ReportSummary{ActiveReportIntervalMs: 6_000})
+	if got := r.baseIntervalMs.Load(); got != 45_000 {
+		t.Errorf("base should stay 45000 when only active pushed, got %dms", got)
+	}
+	if got := r.activeIntervalMs.Load(); got != 6_000 {
+		t.Errorf("active after partial merge = %dms, want 6000", got)
+	}
+
+	// active 下发 1s → 夹到下限 5s（不破亚秒下限）。
+	r.mergeReportCadence(&apiclient.ReportSummary{ActiveReportIntervalMs: 1_000})
+	if got := r.activeIntervalMs.Load(); got != minActiveReportInterval.Milliseconds() {
+		t.Errorf("active 1s should clamp to floor %s, got %dms", minActiveReportInterval, got)
 	}
 }

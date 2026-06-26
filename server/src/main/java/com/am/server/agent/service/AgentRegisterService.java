@@ -4,6 +4,7 @@ import com.am.server.agent.api.AgentRegisterRequest;
 import com.am.server.agent.api.AgentRegisterResponse;
 import com.am.server.common.BizException;
 import com.am.server.common.ErrorCode;
+import com.am.server.config.AgentProperties;
 import com.am.server.domain.agent.AgentDevice;
 import com.am.server.domain.agent.AgentDeviceRepository;
 import com.am.server.domain.employee.Employee;
@@ -38,27 +39,17 @@ public class AgentRegisterService {
     private static final Logger log = LoggerFactory.getLogger(AgentRegisterService.class);
 
     /**
-     * 服务端下发给客户端的默认上报间隔。
-     *
-     * <p>推广期默认 2min：在减轻服务端压力与大盘可见延迟之间折中。
-     * 客户端 cfg.report_interval_ms 取此值并落盘到 config.json，后续 tick 全部按这个节奏跑。
+     * 上报间隔（空闲基线 / 活跃快报）改由 {@link AgentProperties} 承载，ops 可经
+     * {@code aiwatch.agent.report-interval-ms} / {@code active-report-interval-ms} 调而无需重新编译。
+     * register 与每次 /report 响应都下发当前值，客户端动态 honor（见 reporter.go 的 mergeReportCadence）。
      */
-    private static final long DEFAULT_REPORT_INTERVAL_MS = 120_000L;
-
-    /**
-     * 服务端下发给客户端的「活跃时段」快速上报间隔。
-     *
-     * <p>自适应上报：客户端收到上报响应 {@code active=true}（有非 idle 且近 5min 活动的会话）时，
-     * tick 节奏切到此值（默认 15s），让大盘 / 实时页近实时；空闲回落 {@link #DEFAULT_REPORT_INTERVAL_MS}，
-     * 不抬高全员空闲负载。仅在新装 / 重注册时下发，老 agent 用客户端内置默认。
-     */
-    private static final long DEFAULT_ACTIVE_REPORT_INTERVAL_MS = 15_000L;
     private static final long DEFAULT_TIMESTAMP_WINDOW_MS = 300_000L;
 
     private final EmployeeRepository employeeRepository;
     private final AgentDeviceRepository deviceRepository;
     private final EmployeeDisplayService employeeDisplayService;
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
+    private final AgentProperties agentProperties;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Transactional
@@ -125,8 +116,8 @@ public class AgentRegisterService {
         return AgentRegisterResponse.builder()
                 .agentId(device.getAgentId())
                 .agentSecret(device.getAgentSecret())
-                .reportIntervalMs(DEFAULT_REPORT_INTERVAL_MS)
-                .activeReportIntervalMs(DEFAULT_ACTIVE_REPORT_INTERVAL_MS)
+                .reportIntervalMs(agentProperties.getReportIntervalMs())
+                .activeReportIntervalMs(agentProperties.getActiveReportIntervalMs())
                 .timestampWindowMs(DEFAULT_TIMESTAMP_WINDOW_MS)
                 .monitorPolicy(activeTargetTypesProvider.snapshotAgentPolicy())
                 .build();

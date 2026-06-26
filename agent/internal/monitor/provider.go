@@ -110,6 +110,22 @@ type LookbackSetter interface {
 	SetLookback(d time.Duration)
 }
 
+// WatchHints 可选扩展：Provider 暴露"会话数据落盘位置"的文件 / 目录路径，供 reporter 的
+// 文件级活动监听（见 reporter/watcher.go）做 mtime 轮询。任一路径的 mtime 推进即视为"有新活动"，
+// reporter 立刻补一个 tick——把"空闲基线节奏下，刚开始干活 → 第一条活动出现"的冷启动延迟从
+// 一个基线间隔（默认 45s）压到 ~一个轮询周期（默认 2s）。
+//
+// <p>实现要求：
+//   - 返回的应是"写入频繁、能代表活动"的路径：JSONL 会话目录根 / SQLite 的 -wal 文件等。
+//   - best-effort：路径不存在不要紧，watcher 会 stat 失败时跳过；返回 nil 表示该 provider 不参与监听。
+//   - 要轻量、可频繁调用（watcher 只在构造时取一次 hints）。
+//
+// <p>当前由 cursor / claude / codex 三个主力 Provider 实现；其余 provider 不实现时，
+// reporter 通过类型断言安全跳过——它们仍按定时 tick 上报，只是不享受文件级加速。
+type WatchHints interface {
+	WatchHints() []string
+}
+
 // Account 监控目标的登录账号信息。
 //
 //	Provider             所属监控目标 type_code（cursor / claude / ...）

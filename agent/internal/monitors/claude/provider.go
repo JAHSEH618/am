@@ -63,6 +63,16 @@ func (p *Provider) SetLookback(d time.Duration) {
 	p.lookback = d
 }
 
+// WatchHints 暴露 claude 会话目录根（~/.claude/projects），供 reporter 文件级监听做 mtime 轮询
+// 加速冷启动（见 monitor.WatchHints）。watcher 会按有界深度递归取该目录下最新 mtime。
+func (p *Provider) WatchHints() []string {
+	root := projectsDir()
+	if root == "" {
+		return nil
+	}
+	return []string{root}
+}
+
 func (p *Provider) Type() string { return TypeCode }
 
 // IsInstalled 以 ~/.claude/projects 目录是否存在判断 Claude Code 是否安装。

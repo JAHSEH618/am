@@ -58,6 +58,19 @@ func (p *Provider) SetLookback(d time.Duration) {
 	p.lookback = d
 }
 
+// WatchHints 暴露 codex 会话目录（~/.codex/sessions）与索引文件，供 reporter 文件级监听做 mtime
+// 轮询加速冷启动（见 monitor.WatchHints）。
+func (p *Provider) WatchHints() []string {
+	var hints []string
+	if d := sessionsDir(); d != "" {
+		hints = append(hints, d)
+	}
+	if f := sessionIndexPath(); f != "" {
+		hints = append(hints, f)
+	}
+	return hints
+}
+
 func (p *Provider) Type() string { return TypeCode }
 
 // IsInstalled 以 ~/.codex/sessions 目录是否存在判断 Codex CLI 是否安装。

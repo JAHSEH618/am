@@ -75,6 +75,13 @@ type Reporter struct {
 	// 用 atomic 防御未来可能的并发触发，零额外成本。
 	lastActive atomic.Bool
 
+	// baseIntervalMs / activeIntervalMs 是当前生效的自适应节奏（毫秒）：空闲基线 / 活跃快报。
+	// Run 启动时按 cfg 初始化；之后每个成功 tick 的 mergeReportCadence 会按服务端 /report 响应
+	// 下发的值刷新（下个 tick 即生效），让 ops 调服务端节奏后存量 agent 无需重装即变速。
+	// nextInterval 读它们决定下个 tick 间隔；atomic 以容未来并发触发（如文件 watch 触发的 tick）。
+	baseIntervalMs   atomic.Int64
+	activeIntervalMs atomic.Int64
+
 	// v2.8 新增：bootstrap 模式标志。
 	// true  = 启动时 cursors 为空，已把所有 LookbackSetter provider 切到无穷窗口；
 	//         本字段在 backfillPending 第一次归零 + 上报成功的 tick 末被复位。
@@ -155,6 +162,9 @@ func (r *Reporter) Run(ctx context.Context) error {
 	}
 	intervalMs := interval.Milliseconds()
 	common.ConfigureActivityTimeouts(intervalMs)
+	// 初始化动态节奏（下个 tick 起每次成功上报都会按服务端下发刷新）。ConfigureActivityTimeouts
+	// 故意只在启动按基线锁定一次，不随 cadence 抖动，避免 active↔idle 反馈震荡。
+	r.setCadence(intervalMs, r.cfg.ActiveReportIntervalMs)
 	all := r.registry.All()
 	installed := make([]string, 0, len(all))
 	for _, p := range all {
@@ -169,16 +179,25 @@ func (r *Reporter) Run(ctx context.Context) error {
 	// 自适应 cadence：fast = 活跃时段快报间隔（默认 15s / 服务端可下发），永不超过 interval 基线。
 	// 状态判定窗口（ConfigureActivityTimeouts 上面已按 interval 基线缩放）保持稳定，不随 cadence 抖动，
 	// 否则会出现 active→idle→active 的反馈震荡。
-	fast := resolveActiveInterval(r.cfg.ActiveReportIntervalMs, interval)
+	fast := time.Duration(r.activeIntervalMs.Load()) * time.Millisecond
 	logger.Infof("reporter started: interval=%s active_interval=%s report_timeout=%s providers=%d installed=%d %v registered=%v cursors=%d outbox_pending=%d bootstrap=%v",
 		interval, fast, r.cfg.ReportTimeout(), len(all), len(installed), installed, r.cfg.IsRegistered(), r.cursors.Size(), pending, r.bootstrap)
 
 	if err := r.tickOnce(ctx); err != nil {
 		logger.Warnf("first report failed: %v", err)
 	}
+	lastTick := time.Now()
 
-	// 首 tick 后即按 active 信号决定下个间隔；每个 tick 末 Reset 一次，使 cadence 跟随活跃度。
-	ticker := time.NewTicker(r.nextInterval(fast, interval))
+	// 文件级活动监听：空闲基线节奏下，hint 路径 mtime 一推进就补一个 tick，把冷启动延迟压到
+	// ~一个轮询周期。没有任何 provider 暴露 hint 时 newActivityWatcher 返回 nil，不启动。
+	triggerCh := make(chan struct{}, 1)
+	if w := newActivityWatcher(r.registry, triggerCh); w != nil {
+		go w.run(ctx)
+	}
+
+	// 首 tick 后即按 active 信号决定下个间隔；每个 tick 末 Reset 一次，使 cadence 跟随活跃度
+	// 与服务端下发的最新节奏（mergeReportCadence 已在 tickOnce 成功路径刷新过 atomic）。
+	ticker := time.NewTicker(r.nextInterval())
 	defer ticker.Stop()
 
 	for {
@@ -190,7 +209,19 @@ func (r *Reporter) Run(ctx context.Context) error {
 			if err := r.tickOnce(ctx); err != nil {
 				logger.Warnf("report failed: %v", err)
 			}
-			ticker.Reset(r.nextInterval(fast, interval))
+			lastTick = time.Now()
+			ticker.Reset(r.nextInterval())
+		case <-triggerCh:
+			// watcher 触发：限流到至少 minActiveReportInterval 一次，避免活跃期把快报节奏冲成轮询
+			// 风暴——真正价值是空闲→活跃的首次加速。距上次 tick 太近就丢弃本次信号。
+			if time.Since(lastTick) < minActiveReportInterval {
+				continue
+			}
+			if err := r.tickOnce(ctx); err != nil {
+				logger.Warnf("watch-triggered report failed: %v", err)
+			}
+			lastTick = time.Now()
+			ticker.Reset(r.nextInterval())
 		}
 	}
 }
@@ -215,12 +246,52 @@ func resolveActiveInterval(cfgActiveMs int64, slow time.Duration) time.Duration 
 	return fast
 }
 
-// nextInterval 按最近一次上报的 active 信号选择下个 tick 间隔。
-func (r *Reporter) nextInterval(fast, slow time.Duration) time.Duration {
+// nextInterval 按最近一次上报的 active 信号选择下个 tick 间隔，读取当前动态节奏 atomic。
+func (r *Reporter) nextInterval() time.Duration {
 	if r.lastActive.Load() {
-		return fast
+		return time.Duration(r.activeIntervalMs.Load()) * time.Millisecond
 	}
-	return slow
+	return time.Duration(r.baseIntervalMs.Load()) * time.Millisecond
+}
+
+// setCadence 归一化并存储自适应节奏。baseMs<=0 用内置默认；activeMs 经 resolveActiveInterval
+// 夹到 [minActiveReportInterval, base]（fast 不应比基线还慢，也不破亚秒下限）。
+// 返回较旧值是否发生变化，供 mergeReportCadence 决定要不要打日志。
+func (r *Reporter) setCadence(baseMs, activeMs int64) (changed bool) {
+	base := time.Duration(baseMs) * time.Millisecond
+	if base <= 0 {
+		base = time.Duration(config.DefaultReportIntervalMs) * time.Millisecond
+	}
+	fast := resolveActiveInterval(activeMs, base)
+	newBase := base.Milliseconds()
+	newFast := fast.Milliseconds()
+	oldBase := r.baseIntervalMs.Swap(newBase)
+	oldFast := r.activeIntervalMs.Swap(newFast)
+	return oldBase != newBase || oldFast != newFast
+}
+
+// mergeReportCadence 把服务端在 /report 响应里下发的节奏 honor 到本地，下个 tick 即生效。
+// 这样 ops 调服务端 aiwatch.agent.{report,active-report}-interval-ms 后，存量 agent 无需重装即变速——
+// 弥补「register 下发的 interval 落盘 config.json 后，老 agent 不再刷新」的缺口。
+//
+// <p>两字段都 <=0 视为「老服务端未下发该字段」，整体跳过、不动现状（不把现有节奏误清成默认）；
+// 只下发其一时另一个保留当前生效值。仅在上报成功路径调用，避免瞬态网络抖动改节奏。
+func (r *Reporter) mergeReportCadence(summary *apiclient.ReportSummary) {
+	if summary == nil || (summary.ReportIntervalMs <= 0 && summary.ActiveReportIntervalMs <= 0) {
+		return
+	}
+	base := summary.ReportIntervalMs
+	if base <= 0 {
+		base = r.baseIntervalMs.Load()
+	}
+	active := summary.ActiveReportIntervalMs
+	if active <= 0 {
+		active = r.activeIntervalMs.Load()
+	}
+	if r.setCadence(base, active) {
+		logger.Infof("report cadence updated from server: base=%dms active=%dms",
+			r.baseIntervalMs.Load(), r.activeIntervalMs.Load())
+	}
 }
 
 // ensureRegistered 在每个 tick 入口调用：
@@ -464,6 +535,8 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 自适应 cadence 信号：记录服务端本次判定的 active，供 Run 决定下个 tick 间隔。
 	// 仅成功路径更新——失败 / overlap-skip 的 tick 不改 cadence，避免瞬态网络抖动拖慢活跃上报。
 	r.lastActive.Store(summary.Active)
+	// honor 服务端下发的最新节奏（若有变化，下个 ticker.Reset 即采用）。
+	r.mergeReportCadence(summary)
 
 	payloadMsgCount := countSnapshotMessages(monitors)
 	_ = payloadMsgCount // 保留计数供后续诊断；dedupe replay 快进已禁用。

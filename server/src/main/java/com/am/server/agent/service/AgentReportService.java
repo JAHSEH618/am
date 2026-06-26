@@ -9,6 +9,7 @@ import com.am.server.agent.ingest.MonitorRouter;
 import com.am.server.agent.security.SignatureContext;
 import com.am.server.common.BizException;
 import com.am.server.common.ErrorCode;
+import com.am.server.config.AgentProperties;
 import com.am.server.domain.agent.AgentDevice;
 import com.am.server.domain.agent.AgentDeviceRepository;
 import com.am.server.system.ActiveTargetTypesProvider;
@@ -38,6 +39,7 @@ public class AgentReportService {
     private final MonitorRouter monitorRouter;
     private final WorkSessionService workSessionService;
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
+    private final AgentProperties agentProperties;
 
     @Autowired
     @Lazy
@@ -86,15 +88,24 @@ public class AgentReportService {
                 totalEvents,
                 totalMessages,
                 anyActive,
-                activeTargetTypesProvider.snapshotAgentPolicy());
+                activeTargetTypesProvider.snapshotAgentPolicy(),
+                agentProperties.getReportIntervalMs(),
+                agentProperties.getActiveReportIntervalMs());
     }
 
+    /**
+     * 上报响应体。除 active 信号外，每次都回带当前的上报节奏（空闲基线 / 活跃快报），
+     * 客户端 honor 这两个值动态调 tick（见 reporter.go mergeReportCadence）——这样 ops 调
+     * {@link AgentProperties} 后无需员工重装，存量 agent 在下一次 /report 即生效。
+     */
     public record ReportSummary(
             int sessions,
             int events,
             int messages,
             boolean active,
-            MonitorAgentPolicyDto monitorPolicy) {
+            MonitorAgentPolicyDto monitorPolicy,
+            long reportIntervalMs,
+            long activeReportIntervalMs) {
     }
 
     /** 设备心跳单独短事务；monitor ingest 按会话独立提交，避免 bootstrap 大包长时间占锁。 */

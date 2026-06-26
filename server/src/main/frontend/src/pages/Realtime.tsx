@@ -22,7 +22,9 @@ import StatusDot from '../components/StatusDot';
 import { clickableRowProps } from '../utils/table';
 
 const { Text } = Typography;
-const ONLINE_REFRESH_MS = 5_000;
+// SSE 健康时只做兜底慢轮询（活跃期由 SSE 增量 + scheduleOnlineRefresh 保鲜）；断线时回退快轮询。
+const ONLINE_POLL_CONNECTED_MS = 30_000;
+const ONLINE_POLL_FALLBACK_MS = 5_000;
 const MAX_EVENTS = 100;
 
 interface FlowEvent extends AiSessionEvent {
@@ -47,28 +49,6 @@ export default function Realtime() {
         // 忽略；5s polling 会兜底
       }
     }, 400);
-  }, []);
-
-  // 周期拉 online 表；SSE 触发时防抖补拉，保证卡片 status / active / last_seen 与后端一致
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      try {
-        const data = await fetchOnline();
-        if (!alive) return;
-        setAgents(data);
-      } catch {
-        // 忽略，错误会由全局拦截器提示
-      } finally {
-        if (alive) setLoading(false);
-      }
-    };
-    tick();
-    const id = window.setInterval(tick, ONLINE_REFRESH_MS);
-    return () => {
-      alive = false;
-      window.clearInterval(id);
-    };
   }, []);
 
   const onSessionEvent = useCallback((data: string) => {
@@ -121,7 +101,31 @@ export default function Realtime() {
     [onSessionEvent, onSessionChanged],
   );
 
-  useSse('/api/v1/dashboard/stream', handlers);
+  const { connected } = useSse('/api/v1/dashboard/stream', handlers);
+
+  // 周期拉 online 表，保证卡片 status / active / last_seen 与后端一致：
+  // SSE 健康时只做 30s 兜底慢轮询（活跃期由 SSE 增量 + scheduleOnlineRefresh 保鲜，新上线 agent 在任一
+  // SSE 事件触发的补拉里也会出现）；SSE 断线时回退 5s 快轮询。connected 变化即重建定时器并立即补拉一次。
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const data = await fetchOnline();
+        if (!alive) return;
+        setAgents(data);
+      } catch {
+        // 忽略，错误会由全局拦截器提示
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, connected ? ONLINE_POLL_CONNECTED_MS : ONLINE_POLL_FALLBACK_MS);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [connected]);
 
   return (
     <Row gutter={[16, 16]}>

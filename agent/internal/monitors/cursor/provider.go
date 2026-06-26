@@ -205,6 +205,17 @@ func (p *Provider) SetLookback(d time.Duration) {
 	p.lookback = d
 }
 
+// WatchHints 暴露 cursor globalStorage 的 state.vscdb 及其 -wal（SQLite WAL 每次写入都会刷新 -wal 的
+// mtime，是最灵敏的活动信号），供 reporter 文件级监听做 mtime 轮询加速冷启动（见 monitor.WatchHints）。
+// workspaceStorage 树较大、轮询成本高，暂不纳入——globalStorage 已覆盖主聊天写入信号。
+func (p *Provider) WatchHints() []string {
+	db := stateDBPath()
+	if db == "" {
+		return nil
+	}
+	return []string{db, db + "-wal"}
+}
+
 func (p *Provider) Type() string { return TypeCode }
 
 // IsInstalled 以 state.vscdb 是否存在判断 Cursor 是否安装。
