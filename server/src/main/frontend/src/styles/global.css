@@ -32,6 +32,10 @@
   --am-fw-semibold: 600;
   --am-fw-bold: 680;
 
+  /* 等宽字族（SF Mono 优先）—— 与 tokens.ts fontMono 同源。供 DOM 内联 mono 文本（哈希 /
+     路径 / JSON / diff）统一引用，取代各处手写的 'ui-monospace, Menlo' 等离散写法。 */
+  --am-font-mono: 'SF Mono', SFMono-Regular, ui-monospace, 'Menlo', 'Consolas', monospace;
+
   /* 间距 scale (8pt rhythm)，需要在非 antd 元素上保持节奏感时使用 */
   --am-sp-1: 4px;
   --am-sp-2: 8px;
@@ -41,24 +45,24 @@
   --am-sp-6: 32px;
   --am-sp-8: 48px;
 
-  /* —— 品牌主色阶 (indigo) —— 单一强调色，与 logo / 字标同源 —— */
-  --am-indigo-50: #eef2ff;
-  --am-indigo-100: #e0e7ff;
-  --am-indigo-200: #c7d2fe;
-  --am-indigo-300: #a5b4fc;
-  --am-indigo-400: #818cf8;
-  --am-indigo-500: #6366f1;
-  --am-indigo-600: #4f46e5; /* primary */
-  --am-indigo-700: #4338ca;
-  --am-indigo-800: #3730a3;
-  --am-brand: #4f46e5;
-  --am-brand-fg: #4338ca;
-  --am-brand-bg: #eef2ff;
-  --am-brand-border: #c7d2fe;
+  /* —— 品牌主色阶 = cobalt 钴蓝（v4 去紫）—— 单一强调色，与 logo / 字标同源 —— */
+  --am-indigo-50: #eef4ff;
+  --am-indigo-100: #dbe8ff;
+  --am-indigo-200: #bdd4ff;
+  --am-indigo-300: #8fb4ff;
+  --am-indigo-400: #5a8cf8;
+  --am-indigo-500: #2e6bf0;
+  --am-indigo-600: #1a52dc; /* primary (cobalt 钴蓝) */
+  --am-indigo-700: #1644b6;
+  --am-indigo-800: #163a90;
+  --am-brand: #1a52dc;
+  --am-brand-fg: #1644b6;
+  --am-brand-bg: #eef4ff;
+  --am-brand-border: #bdd4ff;
 
   /* 语义状态色：base（圆点/描边）+ fg（达标文字）+ bg（浅底）+ border（浅描边） */
   --am-color-idle: #94a3b8;
-  --am-color-running: #6366f1;
+  --am-color-running: #2e6bf0;
   --am-success: #10b981;
   --am-success-fg: #047857;
   --am-success-bg: #ecfdf5;
@@ -71,8 +75,8 @@
   --am-error-fg: #dc2626;
   --am-error-bg: #fef2f2;
   --am-error-border: #fecaca;
-  --am-info: #6366f1; /* was #2563eb → 收敛到品牌靛 */
-  --am-info-fg: #4338ca;
+  --am-info: #2e6bf0; /* 收敛到品牌钴蓝 */
+  --am-info-fg: #1644b6;
 
   /* 分类强调色（消息角色 / 分区图标 / 图表系列；非状态语义）—— 与 tokens.ts accent 同源 */
   --am-sky: #0ea5e9;
@@ -140,8 +144,8 @@
   --am-dur: 0.2s;
   --am-dur-slow: 0.32s;
 
-  /* —— 品牌强调（与 BrandIcon 同源的靛→紫渐变，仅供字标这一处）—— */
-  --am-brand-grad: linear-gradient(118deg, #4f46e5 0%, #7c3aed 52%, #6366f1 100%);
+  /* —— 品牌强调（与 BrandIcon 同源的钴蓝→azure→cyan 渐变，仅供字标这一处）—— */
+  --am-brand-grad: linear-gradient(118deg, #1a52dc 0%, #2e6bf0 48%, #18b5d8 100%);
 
   /* z-index 语义层级 */
   --am-z-sticky: 100;
@@ -208,13 +212,13 @@
 
 /* 主按钮：苹果式高光 + 柔影，hover 微亮、active 微沉（靛紫主色调） */
 .ant-btn-primary {
-  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: 0 1px 2px rgba(26, 82, 220, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   transition: transform var(--am-dur) var(--am-ease), box-shadow var(--am-dur) var(--am-ease),
     filter var(--am-dur) var(--am-ease);
 }
 .ant-btn-primary:hover {
   filter: brightness(1.06);
-  box-shadow: 0 6px 16px -3px rgba(79, 70, 229, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: 0 6px 16px -3px rgba(26, 82, 220, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 .ant-btn-primary:active {
   transform: translateY(0.5px);
@@ -248,9 +252,9 @@
   border-radius: var(--am-r-md);
 }
 
-/* 文本选区：品牌靛紫淡调，呼应整体强调色 */
+/* 文本选区：品牌钴蓝淡调，呼应整体强调色 */
 ::selection {
-  background: rgba(79, 70, 229, 0.16);
+  background: rgba(26, 82, 220, 0.16);
 }
 
 /* 无障碍：尊重"减少动态"——关掉过渡/动画，避免眩晕 */
@@ -313,9 +317,9 @@ body,
   text-rendering: optimizeLegibility;
   /* 底层柔光背景：给玻璃 chrome 提供可折射的克制色彩；数据卡覆盖其上，读数不受扰 */
   background:
-    radial-gradient(1200px 760px at 6% -12%, rgba(99, 102, 241, 0.10), transparent 60%),
-    radial-gradient(1080px 720px at 104% -6%, rgba(139, 92, 246, 0.085), transparent 56%),
-    radial-gradient(980px 760px at 52% 120%, rgba(56, 189, 248, 0.06), transparent 62%),
+    radial-gradient(1200px 760px at 6% -12%, rgba(26, 82, 220, 0.10), transparent 60%),
+    radial-gradient(1080px 720px at 104% -6%, rgba(46, 107, 240, 0.08), transparent 56%),
+    radial-gradient(980px 760px at 52% 120%, rgba(24, 181, 216, 0.055), transparent 62%),
     var(--am-bg-page);
   background-attachment: fixed;
 }

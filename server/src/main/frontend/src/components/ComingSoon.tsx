@@ -1,4 +1,5 @@
 import { Card, Result, Tag, Typography } from 'antd';
+import { ToolOutlined } from '@ant-design/icons';
 import type { ReactNode } from 'react';
 
 /**
@@ -31,9 +32,9 @@ export default function ComingSoon({ title, subTitle, milestone, highlights }: C
     >
       <Result
         status="info"
-        icon={<span style={{ fontSize: 56 }}>🛠️</span>}
+        icon={<ToolOutlined style={{ fontSize: 56, color: 'var(--am-ink-3)' }} />}
         title={
-          <span style={{ fontSize: 20, fontWeight: 600 }}>
+          <span style={{ fontSize: 'var(--am-fs-xl)', fontWeight: 600 }}>
             {title || '即将上线'}
             <Tag color="processing" style={{ marginLeft: 12 }}>{milestone}</Tag>
           </span>

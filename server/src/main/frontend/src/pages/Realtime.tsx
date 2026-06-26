@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Card, Col, List, Row, Space, Tag, Typography } from 'antd';
+import { Card, Col, List, Row, Space, Spin, Tag, Typography } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { fetchOnline } from '../api/client';
 import type { AiSession, AiSessionEvent, OnlineAgent } from '../api/types';
@@ -17,6 +17,7 @@ import {
   STALE_VISUAL_THRESHOLD_SECONDS,
 } from '../utils/format';
 import StatusDot from '../components/StatusDot';
+import { clickableRowProps } from '../utils/table';
 
 const { Text } = Typography;
 const ONLINE_REFRESH_MS = 5_000;
@@ -31,6 +32,8 @@ export default function Realtime() {
   const [agents, setAgents] = useState<OnlineAgent[]>([]);
   const [events, setEvents] = useState<FlowEvent[]>([]);
   const [sessionsById, setSessionsById] = useState<Record<number, AiSession>>({});
+  // 首屏占位：在线表第一次 fetchOnline 落地前别让左卡闪「暂无在线 Agent」。
+  const [loading, setLoading] = useState(true);
 
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleOnlineRefresh = useCallback(() => {
@@ -54,6 +57,8 @@ export default function Realtime() {
         setAgents(data);
       } catch {
         // 忽略，错误会由全局拦截器提示
+      } finally {
+        if (alive) setLoading(false);
       }
     };
     tick();
@@ -113,58 +118,68 @@ export default function Realtime() {
   return (
     <Row gutter={[16, 16]}>
       <Col xs={24} lg={14}>
-        <Card title={<Space><Badge status="processing" />实时活动</Space>} size="small">
-          <List
-            dataSource={agents}
-            locale={{ emptyText: '暂无在线 Agent' }}
-            grid={{ gutter: 12, xs: 1, sm: 2, md: 2, lg: 2, xl: 3 }}
-            renderItem={(a) => (
-              <List.Item>
-                <Card
-                  size="small"
-                  hoverable
-                  onClick={() => navigate(`/sessions?user_code=${a.user_code}`)}
-                  title={
-                    <Space>
-                      <Badge status={a.active ? 'processing' : 'default'} />
-                      <Text strong>{a.user_display || a.user_code}</Text>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{a.hostname}</Text>
-                    </Space>
-                  }
-                  extra={<Text type="secondary" style={{ fontSize: 12 }}>{formatTimeFromNow(a.last_seen_time)}</Text>}
-                  styles={{ body: { padding: 12 } }}
-                >
-                  <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                    <Space>
-                      {/* last_activity 超过阈值时仅做视觉灰化；status 以 DB 为准 */}
-                      <StatusDot
-                        status={a.current_status}
-                        stale={a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS}
-                        pulse={a.stale_since_seconds <= STALE_VISUAL_THRESHOLD_SECONDS && a.current_status !== 'idle'}
-                      />
-                      <Text type={a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS ? 'secondary' : undefined}>
-                        {statusLabel(a.current_status)}
-                      </Text>
-                      {a.current_tool && isToolStatus(a.current_status) && a.stale_since_seconds <= STALE_VISUAL_THRESHOLD_SECONDS && (
-                        <Tag color="blue">{a.current_tool}</Tag>
+        <Spin spinning={loading && agents.length === 0}>
+          <Card title={<Space><StatusDot color="var(--am-brand)" pulse />实时活动</Space>} size="small">
+            <List
+              dataSource={agents}
+              locale={{ emptyText: '暂无在线 Agent' }}
+              grid={{ gutter: 12, xs: 1, sm: 2, md: 2, lg: 2, xl: 3 }}
+              renderItem={(a) => (
+                <List.Item>
+                  <Card
+                    size="small"
+                    className="am-clickable"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => navigate(`/sessions?user_code=${a.user_code}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/sessions?user_code=${a.user_code}`);
+                      }
+                    }}
+                    title={
+                      <Space>
+                        {/* 标题区唯一的活跃脉冲圆点（active 时脉冲）；下方 body 圆点只承载状态色+灰化，不重复脉冲 */}
+                        <StatusDot status={a.current_status} pulse={a.active} />
+                        <Text strong>{a.user_display || a.user_code}</Text>
+                        <Text type="secondary" style={{ fontSize: 12 }}>{a.hostname}</Text>
+                      </Space>
+                    }
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{formatTimeFromNow(a.last_seen_time)}</Text>}
+                    styles={{ body: { padding: 12 } }}
+                  >
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      <Space>
+                        {/* last_activity 超过阈值时仅做视觉灰化；status 以 DB 为准。脉冲已由标题圆点承载，这里不再叠加 */}
+                        <StatusDot
+                          status={a.current_status}
+                          stale={a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS}
+                        />
+                        <Text type={a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS ? 'secondary' : undefined}>
+                          {statusLabel(a.current_status)}
+                        </Text>
+                        {a.current_tool && isToolStatus(a.current_status) && a.stale_since_seconds <= STALE_VISUAL_THRESHOLD_SECONDS && (
+                          <Tag color="blue">{a.current_tool}</Tag>
+                        )}
+                      </Space>
+                      {a.project_name && (
+                        <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
+                          {a.project_name}{a.branch_name ? ` @${a.branch_name}` : ''}
+                        </Text>
+                      )}
+                      {a.current_model && (
+                        <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
+                          {a.current_model}
+                        </Text>
                       )}
                     </Space>
-                    {a.project_name && (
-                      <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
-                        {a.project_name}{a.branch_name ? ` @${a.branch_name}` : ''}
-                      </Text>
-                    )}
-                    {a.current_model && (
-                      <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
-                        {a.current_model}
-                      </Text>
-                    )}
-                  </Space>
-                </Card>
-              </List.Item>
-            )}
-          />
-        </Card>
+                  </Card>
+                </List.Item>
+              )}
+            />
+          </Card>
+        </Spin>
       </Col>
 
       <Col xs={24} lg={10}>
@@ -177,10 +192,7 @@ export default function Realtime() {
               renderItem={(e) => {
                 const sess = sessionsById[e.ai_session_id];
                 return (
-                  <List.Item
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => navigate(`/sessions/${e.ai_session_id}`)}
-                  >
+                  <List.Item {...clickableRowProps(() => navigate(`/sessions/${e.ai_session_id}`))}>
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>
                       <Space wrap>
                         <Tag color={eventTypeColor(e.event_type)}>{eventTypeLabel(e.event_type)}</Tag>

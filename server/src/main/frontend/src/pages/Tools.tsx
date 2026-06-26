@@ -6,7 +6,8 @@ import ReactECharts from 'echarts-for-react';
 import { fetchToolStats } from '../api/client';
 import type { ToolStat } from '../api/types';
 import { categoryAxisGridLeft } from '../utils/chartAxis';
-import { semantic } from '../styles/tokens';
+import { ink, semantic } from '../styles/tokens';
+import { NUM_STYLE } from '../utils/table';
 
 const { RangePicker } = DatePicker;
 
@@ -41,25 +42,39 @@ export default function Tools({ from: fromProp, to: toProp, embedded }: ToolsPro
 
   const option = useMemo(() => {
     const labels = data.map((d) => d.tool_name);
+    // 空态：无命令数据时渲染居中占位字，避免只剩坐标轴空架子（与 ModelsTools 占比图同款）
+    if (labels.length === 0) {
+      return {
+        graphic: {
+          type: 'text',
+          left: 'center',
+          top: 'middle',
+          style: { text: '暂无数据', fill: ink[3], fontSize: 14 },
+        },
+        xAxis: { type: 'value', show: false },
+        yAxis: { type: 'category', show: false, data: [] },
+        series: [],
+      };
+    }
     return {
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-    grid: { left: categoryAxisGridLeft(labels), right: 20, top: 16, bottom: 30 },
-    xAxis: { type: 'value' },
-    yAxis: {
-      type: 'category',
-      data: [...labels].reverse(),
-      axisLabel: { fontSize: 12 },
-    },
-    series: [
-      {
-        name: '次数',
-        type: 'bar',
-        data: data.map((d) => d.count).reverse(),
-        itemStyle: { color: semantic.brand.base },
-        barMaxWidth: 18,
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      grid: { left: categoryAxisGridLeft(labels), right: 20, top: 16, bottom: 30 },
+      xAxis: { type: 'value' },
+      yAxis: {
+        type: 'category',
+        data: [...labels].reverse(),
+        axisLabel: { fontSize: 12 },
       },
-    ],
-  };
+      series: [
+        {
+          name: '次数',
+          type: 'bar',
+          data: data.map((d) => d.count).reverse(),
+          itemStyle: { color: semantic.brand.base },
+          barMaxWidth: 18,
+        },
+      ],
+    };
   }, [data]);
 
   return (
@@ -91,12 +106,14 @@ export default function Tools({ from: fromProp, to: toProp, embedded }: ToolsPro
           dataSource={data}
           loading={loading}
           pagination={false}
+          locale={{ emptyText: '所选时间窗内暂无命令调用' }}
+          scroll={{ x: 580 }}
           columns={[
-            { title: '排名', width: 60, render: (_, __, i) => i + 1 },
-            { title: '命令', dataIndex: 'tool_name' },
-            { title: '次数', dataIndex: 'count', width: 120 },
-            { title: '员工数', dataIndex: 'user_count', width: 100 },
-            { title: '会话数', dataIndex: 'session_count', width: 100 },
+            { title: '排名', width: 60, onCell: () => ({ style: NUM_STYLE }), render: (_, __, i) => i + 1 },
+            { title: '命令', dataIndex: 'tool_name', ellipsis: true },
+            { title: '次数', dataIndex: 'count', width: 120, onCell: () => ({ style: NUM_STYLE }) },
+            { title: '员工数', dataIndex: 'user_count', width: 100, onCell: () => ({ style: NUM_STYLE }) },
+            { title: '会话数', dataIndex: 'session_count', width: 100, onCell: () => ({ style: NUM_STYLE }) },
           ]}
         />
       </Card>

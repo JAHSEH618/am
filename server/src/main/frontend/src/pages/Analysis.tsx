@@ -9,16 +9,17 @@ import {
   Input,
   Layout,
   List,
-  Pagination,
   Popconfirm,
   Progress,
   Space,
   Spin,
+  Table,
   Tag,
   Tooltip,
   Typography,
   message,
 } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
@@ -40,6 +41,7 @@ import TeamOverview from './Analysis/TeamOverview';
 import UserDetail from './Analysis/UserDetail';
 import MetricLabel from './Analysis/MetricLabel';
 import { BUCKET_META, WATCHLIST_META } from './Analysis/constants';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
 
 dayjs.extend(isoWeek);
 
@@ -298,7 +300,7 @@ export default function Analysis() {
                 </Button>
               </Tooltip>
             )}
-            <Text type="secondary" style={{ fontSize: 11, lineHeight: 1.45 }}>
+            <Text type="secondary" style={{ fontSize: 12, lineHeight: 1.45 }}>
               默认本自然周；同窗口复用已有结果，强制重跑将重新审计。
             </Text>
           </Space>
@@ -373,12 +375,12 @@ export default function Analysis() {
                     </Text>
                     <Tag
                       color={statusColor(item.status)}
-                      style={{ margin: 0, fontSize: 10, lineHeight: '16px' }}
+                      style={{ margin: 0, fontSize: 12, lineHeight: '16px' }}
                     >
                       {statusLabel(item.status)}
                     </Tag>
                   </div>
-                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 2 }}>
                     {item.status === 'completed'
                       ? `${item.active_user_count ?? 0}人 · ${item.total_session_count ?? 0}会话`
                       : `${item.audited_count}/${item.total_count}`}
@@ -412,6 +414,7 @@ export default function Analysis() {
         {!currentProgress && !detailLoading && (
           <Card>
             <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
               description={
                 <>
                   当前时间窗（{range[0].format('YYYY-MM-DD')} ~ {range[1].format('YYYY-MM-DD')}）
@@ -474,9 +477,10 @@ export default function Analysis() {
               style={{
                 marginTop: 20,
                 border: '1px solid var(--am-border)',
-                borderRadius: 12,
+                borderRadius: 'var(--am-r-md)',
                 overflow: 'hidden',
                 background: 'var(--am-bg-card)',
+                boxShadow: 'var(--am-shadow-1), var(--am-inner-hi)',
               }}
             >
               <div
@@ -591,7 +595,7 @@ function renderHeader(
       }}
     >
       <div>
-        <Title level={4} style={{ margin: 0, fontWeight: 600 }}>
+        <Title level={4} style={{ margin: 0 }}>
           {detail.window_from} ~ {detail.window_to} 分析报告
         </Title>
         <Text type="secondary" style={{ fontSize: 13, marginTop: 4, display: 'block' }}>
@@ -627,99 +631,140 @@ function UserListTable({
     setPage(1);
   }, [users]);
 
-  const pagedUsers = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return users.slice(start, start + pageSize);
-  }, [users, page, pageSize]);
+  const columns: ColumnsType<AnalysisReportUser> = [
+    {
+      title: '员工',
+      dataIndex: 'user_display',
+      key: 'employee',
+      fixed: 'left',
+      width: 160,
+      ellipsis: true,
+      render: (_: string | undefined, u) => (
+        <span>
+          <strong>{u.user_display || u.user_code}</strong>
+          {u.insufficient_data && (
+            <Tag color="default" style={{ marginLeft: 6, fontSize: 12 }}>
+              样本不足
+            </Tag>
+          )}
+        </span>
+      ),
+    },
+    {
+      title: <MetricLabel name="composite_bucket" />,
+      key: 'composite_bucket',
+      width: 96,
+      align: 'center',
+      render: (_: unknown, u) =>
+        u.composite_bucket ? (
+          <Tag color={BUCKET_META[u.composite_bucket].color} style={{ marginInlineEnd: 0 }}>
+            {BUCKET_META[u.composite_bucket].label}
+          </Tag>
+        ) : (
+          EMPTY_DASH
+        ),
+    },
+    {
+      title: <MetricLabel name="ai_active_hours_list" />,
+      key: 'ai_active_hours',
+      width: 112,
+      align: 'center',
+      render: (_: unknown, u) => <span style={NUM_STYLE}>{u.ai_active_hours.toFixed(1)}</span>,
+    },
+    {
+      title: <MetricLabel name="ai_commit_count" />,
+      key: 'ai_commit_count',
+      width: 104,
+      align: 'center',
+      render: (_: unknown, u) => <span style={NUM_STYLE}>{u.ai_commit_count}</span>,
+    },
+    {
+      title: <MetricLabel name="high_difficulty_ratio" />,
+      key: 'high_difficulty_ratio',
+      width: 124,
+      align: 'center',
+      render: (_: unknown, u) => <span style={NUM_STYLE}>{fmtPct(u.high_difficulty_ratio)}</span>,
+    },
+    {
+      title: <MetricLabel name="ai_commits_per_active_hour" />,
+      key: 'ai_commits_per_active_hour',
+      width: 120,
+      align: 'center',
+      render: (_: unknown, u) => (
+        <span style={NUM_STYLE}>
+          {u.ai_commits_per_active_hour == null ? '—' : u.ai_commits_per_active_hour.toFixed(2)}
+        </span>
+      ),
+    },
+    {
+      title: <MetricLabel name="commit_revert_rate" />,
+      key: 'commit_revert_rate',
+      width: 112,
+      align: 'center',
+      render: (_: unknown, u) => <span style={NUM_STYLE}>{fmtPct(u.commit_revert_rate)}</span>,
+    },
+    {
+      title: <MetricLabel name="watchlist_flags" />,
+      key: 'watchlist_flags',
+      width: 220,
+      render: (_: unknown, u) => {
+        const flags = u.watchlist_flags ?? [];
+        if (flags.length === 0) return EMPTY_DASH;
+        return flags.map((f) => (
+          <Tooltip
+            key={f}
+            title={WATCHLIST_META[f]?.help ?? '无说明'}
+            overlayStyle={{ maxWidth: 360 }}
+          >
+            <Tag
+              color={WATCHLIST_META[f]?.color ?? 'default'}
+              style={{ marginRight: 2, cursor: 'help' }}
+            >
+              {WATCHLIST_META[f]?.label ?? f}
+            </Tag>
+          </Tooltip>
+        ));
+      },
+    },
+    {
+      title: '',
+      key: 'action',
+      width: 72,
+      align: 'center',
+      render: () => (
+        <Button type="link" size="small">
+          详情
+        </Button>
+      ),
+    },
+  ];
 
-  if (users.length === 0) {
-    return <Empty description="无匹配员工" />;
-  }
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', fontSize: 13 }}>
-        <thead>
-          <tr style={{ color: 'var(--am-ink-3)', borderBottom: '1px solid var(--am-border)' }}>
-            <th style={{ textAlign: 'left', padding: '8px 6px' }}>员工</th>
-            <th><MetricLabel name="composite_bucket" /></th>
-            <th><MetricLabel name="ai_active_hours_list" /></th>
-            <th><MetricLabel name="ai_commit_count" /></th>
-            <th><MetricLabel name="high_difficulty_ratio" /></th>
-            <th><MetricLabel name="ai_commits_per_active_hour" /></th>
-            <th><MetricLabel name="commit_revert_rate" /></th>
-            <th><MetricLabel name="watchlist_flags" /></th>
-            <th style={{ width: 60 }}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {pagedUsers.map((u) => (
-              <tr
-                key={u.user_code}
-                style={{ borderBottom: '1px solid var(--am-border-subtle)', cursor: 'pointer' }}
-                onClick={() => onPick(u)}
-              >
-                <td style={{ padding: '8px 6px' }}>
-                  <strong>{u.user_display || u.user_code}</strong>
-                  {u.insufficient_data && (
-                    <Tag style={{ marginLeft: 6, fontSize: 11 }} color="default">
-                      样本不足
-                    </Tag>
-                  )}
-                </td>
-                <td style={{ textAlign: 'center' }}>
-                  {u.composite_bucket ? (
-                    <Tag color={BUCKET_META[u.composite_bucket].color}>
-                      {BUCKET_META[u.composite_bucket].label}
-                    </Tag>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-                <td style={{ textAlign: 'center' }}>{u.ai_active_hours.toFixed(1)}</td>
-                <td style={{ textAlign: 'center' }}>{u.ai_commit_count}</td>
-                <td style={{ textAlign: 'center' }}>{fmtPct(u.high_difficulty_ratio)}</td>
-                <td style={{ textAlign: 'center' }}>
-                  {u.ai_commits_per_active_hour == null
-                    ? '—'
-                    : u.ai_commits_per_active_hour.toFixed(2)}
-                </td>
-                <td style={{ textAlign: 'center' }}>{fmtPct(u.commit_revert_rate)}</td>
-                <td style={{ textAlign: 'center' }}>
-                  {(u.watchlist_flags ?? []).map((f) => (
-                    <Tooltip
-                      key={f}
-                      title={WATCHLIST_META[f]?.help ?? '无说明'}
-                      overlayStyle={{ maxWidth: 360 }}
-                    >
-                      <Tag color={WATCHLIST_META[f]?.color ?? 'default'} style={{ marginRight: 2, cursor: 'help' }}>
-                        {WATCHLIST_META[f]?.label ?? f}
-                      </Tag>
-                    </Tooltip>
-                  ))}
-                </td>
-                <td>
-                  <Button size="small" type="link">详情</Button>
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-        <Pagination
-          size="small"
-          current={page}
-          pageSize={pageSize}
-          total={users.length}
-          showSizeChanger
-          showTotal={(t) => `共 ${t} 人`}
-          pageSizeOptions={['10', '20', '50', '100']}
-          onChange={(p, ps) => {
-            setPage(p);
-            if (ps !== pageSize) setPageSize(ps);
-          }}
-        />
-      </div>
-    </div>
+    <Table<AnalysisReportUser>
+      className="am-sticky-table"
+      size="small"
+      rowKey="user_code"
+      dataSource={users}
+      columns={columns}
+      scroll={{ x: 1120 }}
+      locale={{
+        emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无匹配员工" />,
+      }}
+      onRow={(u) => clickableRowProps(() => onPick(u))}
+      pagination={{
+        current: page,
+        pageSize,
+        total: users.length,
+        showSizeChanger: true,
+        showTotal: (t) => `共 ${t} 人`,
+        pageSizeOptions: ['10', '20', '50', '100'],
+        size: 'small',
+        onChange: (p, ps) => {
+          setPage(p);
+          if (ps !== pageSize) setPageSize(ps);
+        },
+      }}
+    />
   );
 }
 

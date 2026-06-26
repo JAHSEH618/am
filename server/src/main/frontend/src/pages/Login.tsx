@@ -25,6 +25,7 @@ import type { InstallStatus } from '../api/types';
 import { setCurrentUser } from '../auth';
 import { BrandIcon } from '../components/brand/BrandIcon';
 import { purgeStrayPortals } from '../utils/dom';
+import { semantic, surface } from '../styles/tokens';
 
 /**
  * 登录页 + 客户端自助安装入口
@@ -80,10 +81,12 @@ export default function Login() {
     <div
       style={{
         minHeight: '100vh',
+        // 与 global.css body 同源的柔光底：钴蓝 / azure / cyan 三层径向晕染叠在页底色上（无紫）
         background:
-          'radial-gradient(1200px 600px at 10% 0%, #ede9fe 0%, transparent 60%),' +
-          'radial-gradient(900px 500px at 100% 100%, #dbeafe 0%, transparent 55%),' +
-          'linear-gradient(180deg, #f8fafc 0%, var(--am-brand-bg) 100%)',
+          'radial-gradient(1200px 760px at 6% -12%, rgba(26, 82, 220, 0.10), transparent 60%),' +
+          'radial-gradient(1080px 720px at 104% -6%, rgba(46, 107, 240, 0.08), transparent 56%),' +
+          'radial-gradient(980px 760px at 52% 120%, rgba(24, 181, 216, 0.055), transparent 62%),' +
+          'var(--am-bg-page)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -222,10 +225,10 @@ function InstallPanel() {
       style={{
         flex: '1.6 1 0',
         minWidth: 0,
-        background: '#ffffff',
-        borderRadius: 16,
-        boxShadow: '0 12px 40px rgba(15,23,42,.06), 0 2px 6px rgba(15,23,42,.04)',
-        border: '1px solid rgba(15,23,42,.05)',
+        background: 'var(--am-bg-card)',
+        borderRadius: 'var(--am-r-lg)',
+        boxShadow: 'var(--am-shadow-2), var(--am-inner-hi)',
+        border: '1px solid var(--am-border-subtle)',
         padding: '32px 36px 28px',
         display: 'flex',
         flexDirection: 'column',
@@ -234,7 +237,7 @@ function InstallPanel() {
     >
       <header style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <BrandIcon variant="monogram" size={30} style={{ boxShadow: '0 4px 10px rgba(99,102,241,.35)' }} />
+          <BrandIcon variant="monogram" size={30} style={{ boxShadow: '0 4px 10px rgba(46,107,240,.30)' }} />
           <Typography.Title level={3} style={{ margin: 0, color: 'var(--am-ink)', fontWeight: 700 }}>
             AIWatch
           </Typography.Title>
@@ -243,7 +246,7 @@ function InstallPanel() {
             style={{
               marginLeft: 4,
               borderRadius: 999,
-              fontSize: 11,
+              fontSize: 12,
               padding: '0 10px',
               border: 'none',
             }}
@@ -310,7 +313,7 @@ function InstallPanel() {
                 onBlur={(e) => setUserCode(e.target.value.trim())}
                 maxLength={64}
                 allowClear
-                style={{ letterSpacing: 0.5, fontFamily: 'SFMono-Regular, Consolas, Menlo, monospace' }}
+                style={{ fontFamily: 'var(--am-font-mono)' }}
               />
             </Form.Item>
             <Form.Item label="姓名" required style={{ marginBottom: 0 }}>
@@ -475,12 +478,14 @@ function CommandBox({ cmd, disabled }: { cmd: string; disabled: boolean }) {
       {...guardHandlers}
       style={{
         position: 'relative',
-        background: '#0b1220',
-        color: disabled ? '#475569' : '#e2e8f0',
+        background: surface.canvasDark,
+        // 深色画布上没有可用的「亮文字」令牌：禁用态用占位符档 ink-5（连同整块 0.6 透明再压一档），
+        // 启用态用一抹浅 slate 让命令清晰可读（on-dark 例外，全站仅此命令块）。
+        color: disabled ? 'var(--am-ink-5)' : '#e2e8f0',
         padding: '16px 64px 16px 18px',
-        borderRadius: 10,
-        fontFamily: 'SFMono-Regular, Consolas, Menlo, monospace',
-        fontSize: 12.5,
+        borderRadius: 'var(--am-r-sm)',
+        fontFamily: 'var(--am-font-mono)',
+        fontSize: 13,
         lineHeight: 1.75,
         whiteSpace: 'pre',
         overflowX: 'auto',
@@ -489,7 +494,7 @@ function CommandBox({ cmd, disabled }: { cmd: string; disabled: boolean }) {
         WebkitUserSelect: disabled ? 'none' : 'text',
         cursor: disabled ? 'not-allowed' : 'text',
         opacity: disabled ? 0.6 : 1,
-        transition: 'opacity .15s',
+        transition: 'opacity var(--am-dur-fast) var(--am-ease)',
       }}
     >
       <Tooltip
@@ -501,12 +506,12 @@ function CommandBox({ cmd, disabled }: { cmd: string; disabled: boolean }) {
           size="small"
           disabled={disabled}
           onClick={onCopy}
-          icon={copied ? <CheckCircleTwoTone twoToneColor="#22c55e" /> : <CopyOutlined />}
+          icon={copied ? <CheckCircleTwoTone twoToneColor={semantic.success.base} /> : <CopyOutlined />}
           style={{
             position: 'absolute',
             right: 8,
             top: 8,
-            color: copied ? 'var(--am-success)' : '#94a3b8',
+            color: copied ? 'var(--am-success)' : 'var(--am-ink-4)',
             background: 'rgba(15,23,42,.6)',
             border: '1px solid rgba(148,163,184,.2)',
           }}
@@ -536,10 +541,10 @@ function LoginPanel({ submitting, authError, onFinish }: LoginPanelProps) {
         flex: '1 1 0',
         minWidth: 360,
         maxWidth: 420,
-        background: '#ffffff',
-        borderRadius: 16,
-        boxShadow: '0 12px 40px rgba(15,23,42,.06), 0 2px 6px rgba(15,23,42,.04)',
-        border: '1px solid rgba(15,23,42,.05)',
+        background: 'var(--am-bg-card)',
+        borderRadius: 'var(--am-r-lg)',
+        boxShadow: 'var(--am-shadow-2), var(--am-inner-hi)',
+        border: '1px solid var(--am-border-subtle)',
         padding: '40px 36px',
         display: 'flex',
         flexDirection: 'column',
@@ -572,7 +577,7 @@ function LoginPanel({ submitting, authError, onFinish }: LoginPanelProps) {
           <Input.Password prefix={<LockOutlined />} autoComplete="current-password" size="large" />
         </Form.Item>
         {authError && (
-          <div style={{ color: 'var(--am-error-fg)', fontSize: 12, marginBottom: 16 }}>{authError}</div>
+          <div role="alert" style={{ color: 'var(--am-error-fg)', fontSize: 12, marginBottom: 16 }}>{authError}</div>
         )}
         <Button type="primary" htmlType="submit" block size="large" loading={submitting}>
           登 录

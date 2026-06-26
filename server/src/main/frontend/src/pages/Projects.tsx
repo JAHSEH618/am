@@ -133,6 +133,7 @@ export default function Projects() {
       title: '项目',
       dataIndex: 'project_name',
       key: 'project_name',
+      width: 240,
       ellipsis: true,
       render: (v: string) => <Space><ProjectOutlined />{v}</Space>,
     },
@@ -140,6 +141,7 @@ export default function Projects() {
       title: '会话数',
       dataIndex: 'session_count',
       key: 'session_count',
+      width: 110,
       sorter: (a, b) => a.session_count - b.session_count,
       render: (v: number, row) => (
         <Button
@@ -162,6 +164,7 @@ export default function Projects() {
         </Space>
       ),
       key: 'messages_pair',
+      width: 130,
       sorter: (a, b) =>
         (a.user_message_count + a.assistant_message_count) -
         (b.user_message_count + b.assistant_message_count),
@@ -181,6 +184,7 @@ export default function Projects() {
         </Space>
       ),
       key: 'tokens_pair',
+      width: 170,
       sorter: (a, b) =>
         a.input_tokens + a.output_tokens - (b.input_tokens + b.output_tokens),
       render: (_: unknown, row: ProjectSummary) => (
@@ -193,11 +197,13 @@ export default function Projects() {
       title: '参与员工',
       dataIndex: 'user_count',
       key: 'user_count',
+      width: 110,
     },
     {
       title: 'Git 提交',
       dataIndex: 'git_commit_count',
       key: 'git_commit_count',
+      width: 120,
       sorter: (a, b) => a.git_commit_count - b.git_commit_count,
       render: (v: number, row) => {
         if (v > 0 && row.repo_url) {
@@ -222,12 +228,15 @@ export default function Projects() {
       title: 'Top 模型',
       dataIndex: 'top_model',
       key: 'top_model',
+      width: 170,
+      ellipsis: true,
       render: (v: string | null) => v ? <Tag>{v}</Tag> : <Text type="secondary">-</Text>,
     },
     {
       title: '最后活跃',
       dataIndex: 'last_activity',
       key: 'last_activity',
+      width: 170,
       render: (v: string | null) => formatTime(v),
     },
   ];
@@ -235,7 +244,7 @@ export default function Projects() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card size="small">
-        <Space wrap>
+        <div className="am-toolbar">
           <Text type="secondary">时间窗：</Text>
           <RangePicker
             value={range}
@@ -243,26 +252,28 @@ export default function Projects() {
             allowClear={false}
             disabledDate={(d) => d.isAfter(dayjs(), 'day')}
           />
-        </Space>
+        </div>
       </Card>
 
       <Card size="small" title={`项目列表（${list.length}）`}>
-        <Spin spinning={loadingList}>
-          <Table<ProjectSummary>
-            rowKey="project_name"
-            size="middle"
-            columns={columns}
-            dataSource={list}
-            pagination={{ pageSize: 20, showSizeChanger: false }}
-            onRow={(row) => ({
-              onClick: () => setSelected(row.project_name),
-              style: {
-                cursor: 'pointer',
-                background: row.project_name === selected ? 'var(--am-brand-bg)' : undefined,
-              },
-            })}
-          />
-        </Spin>
+        <Table<ProjectSummary>
+          rowKey="project_name"
+          size="middle"
+          loading={loadingList}
+          columns={columns}
+          dataSource={list}
+          scroll={{ x: 1220 }}
+          className="am-sticky-table"
+          locale={{ emptyText: '当前时间窗内暂无项目活动' }}
+          pagination={{ pageSize: 20, showSizeChanger: false }}
+          onRow={(row) => ({
+            onClick: () => setSelected(row.project_name),
+            style: {
+              cursor: 'pointer',
+              background: row.project_name === selected ? 'var(--am-brand-bg)' : undefined,
+            },
+          })}
+        />
       </Card>
 
       {!selected && list.length > 0 && !loadingList && (
@@ -467,17 +478,22 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
     }>
       <Row gutter={16}>
         <Col xs={12} md={6}>
-          {/* "会话数"做成可点击数字，跳到 Sessions 列表的项目过滤态 */}
-          <div>
-            <div style={{ color: 'rgba(0, 0, 0, 0.45)', fontSize: 14, marginBottom: 4 }}>会话数</div>
-            <Button
-              type="link"
-              onClick={() => onSessionLink()}
-              style={{ padding: 0, height: 'auto', fontSize: 24, fontWeight: 600, lineHeight: 1.2 }}
-            >
-              {s.session_count}
-            </Button>
-          </div>
+          {/* "会话数"做成可点击数字，跳到 Sessions 列表的项目过滤态；与其余四项统一为 <Statistic>，
+              click 行为靠 formatter 内嵌可聚焦的 link Button 保留（字号/字重 inherit 跟随 Statistic）。 */}
+          <Statistic
+            title="会话数"
+            value={s.session_count}
+            valueStyle={{ fontVariantNumeric: 'tabular-nums' }}
+            formatter={(v) => (
+              <Button
+                type="link"
+                onClick={() => onSessionLink()}
+                style={{ padding: 0, height: 'auto', fontSize: 'inherit', fontWeight: 'inherit', lineHeight: 'inherit' }}
+              >
+                {v}
+              </Button>
+            )}
+          />
         </Col>
         <Col xs={12} md={6}>
           <Statistic
@@ -509,20 +525,25 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
         </Col>
         <Col xs={12} md={6}><Statistic title="参与员工" value={s.user_count} /></Col>
         <Col xs={12} md={6}>
-          <div>
-            <div style={{ color: 'rgba(0, 0, 0, 0.45)', fontSize: 14, marginBottom: 4 }}>Git 提交</div>
-            {s.git_commit_count > 0 && s.repo_url ? (
-              <Button
-                type="link"
-                onClick={onOpenGitCommits}
-                style={{ padding: 0, height: 'auto', fontSize: 24, fontWeight: 600, lineHeight: 1.2 }}
-              >
-                {s.git_commit_count}
-              </Button>
-            ) : (
-              <div style={{ fontSize: 24, fontWeight: 600, lineHeight: 1.2 }}>{s.git_commit_count}</div>
-            )}
-          </div>
+          {/* Git 提交：有提交且有 repo 时数字可点开提交明细，否则纯数字；统一为 <Statistic>。 */}
+          <Statistic
+            title="Git 提交"
+            value={s.git_commit_count}
+            valueStyle={{ fontVariantNumeric: 'tabular-nums' }}
+            formatter={
+              s.git_commit_count > 0 && s.repo_url
+                ? (v) => (
+                    <Button
+                      type="link"
+                      onClick={onOpenGitCommits}
+                      style={{ padding: 0, height: 'auto', fontSize: 'inherit', fontWeight: 'inherit', lineHeight: 'inherit' }}
+                    >
+                      {v}
+                    </Button>
+                  )
+                : undefined
+            }
+          />
         </Col>
       </Row>
 
@@ -540,6 +561,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
               dataSource={detail.contributor_matrix}
               pagination={false}
               scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
+              locale={{ emptyText: '暂无贡献者数据' }}
             />
           </Card>
         </Col>
@@ -565,6 +587,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
               dataSource={detail.top_models}
               pagination={false}
               scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
+              locale={{ emptyText: '暂无模型数据' }}
             />
           </Card>
         </Col>

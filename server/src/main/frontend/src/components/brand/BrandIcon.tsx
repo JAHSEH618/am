@@ -17,8 +17,8 @@ function BrandGradient() {
   return (
     <defs>
       <linearGradient id={GRADIENT_ID} x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-        <stop stopColor="#6366f1" />
-        <stop offset="1" stopColor="#8b5cf6" />
+        <stop stopColor="#2e6bf0" />
+        <stop offset="1" stopColor="#18b5d8" />
       </linearGradient>
     </defs>
   );

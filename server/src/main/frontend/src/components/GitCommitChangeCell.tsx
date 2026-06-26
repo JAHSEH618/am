@@ -3,6 +3,7 @@ import { Drawer, Popover, Spin, Tag, Tooltip, Typography } from 'antd';
 import type { ProjectGitCommit } from '../api/types';
 import { fetchGitCommitPatch } from '../api/client';
 import { decodeGitQuotedPath } from '../utils/gitPath';
+import { NUM_STYLE } from '../utils/table';
 
 const { Text } = Typography;
 
@@ -30,7 +31,7 @@ function DiffBody({
   return (
     <>
       {truncated && (
-        <Tag color="orange" style={{ marginBottom: 8 }}>
+        <Tag color="warning" style={{ marginBottom: 8 }}>
           已截断{reason ? `：${reason}` : ''}
         </Tag>
       )}
@@ -38,7 +39,7 @@ function DiffBody({
         style={{
           margin: 0,
           padding: 12,
-          fontSize: 11,
+          fontSize: 12,
           lineHeight: 1.45,
           overflow: 'auto',
           maxHeight: 'calc(100vh - 180px)',
@@ -80,9 +81,9 @@ export function GitCommitChangeCell({ row }: Props) {
 
   const summary = (
     <Text type="secondary">
-      <Text style={{ color: 'var(--am-success-fg)' }}>+{row.lines_added}</Text>
+      <Text style={{ color: 'var(--am-success-fg)', ...NUM_STYLE }}>+{row.lines_added}</Text>
       {' / '}
-      <Text style={{ color: 'var(--am-error-fg)' }}>-{row.lines_deleted}</Text>
+      <Text style={{ color: 'var(--am-error-fg)', ...NUM_STYLE }}>-{row.lines_deleted}</Text>
     </Text>
   );
 
@@ -144,7 +145,11 @@ export function GitCommitChangeCell({ row }: Props) {
             onKeyDown={
               clickable
                 ? (e) => {
-                    if (e.key === 'Enter' || e.key === ' ') openDiff(decodeGitQuotedPath(p.path));
+                    // Space 默认会滚动页面，需先 preventDefault 再触发（与 utils/table 可点击行同款）
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      openDiff(decodeGitQuotedPath(p.path));
+                    }
                   }
                 : undefined
             }
@@ -155,11 +160,11 @@ export function GitCommitChangeCell({ row }: Props) {
             }}
           >
             <div style={{ fontSize: 12, marginBottom: 4 }}>
-              <Text style={{ color: 'var(--am-success-fg)', fontWeight: 500 }}>+{p.lines_added}</Text>
+              <Text style={{ color: 'var(--am-success-fg)', fontWeight: 500, ...NUM_STYLE }}>+{p.lines_added}</Text>
               <Text style={{ color: 'var(--am-ink-4)', margin: '0 4px' }}>/</Text>
-              <Text style={{ color: 'var(--am-error-fg)', fontWeight: 500 }}>-{p.lines_deleted}</Text>
+              <Text style={{ color: 'var(--am-error-fg)', fontWeight: 500, ...NUM_STYLE }}>-{p.lines_deleted}</Text>
               {clickable && (
-                <Text type="secondary" style={{ marginLeft: 8, fontSize: 11 }}>
+                <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
                   点击查看 diff
                 </Text>
               )}
@@ -170,7 +175,7 @@ export function GitCommitChangeCell({ row }: Props) {
                 lineHeight: 1.5,
                 color: clickable ? 'var(--am-brand)' : 'var(--am-ink-2)',
                 wordBreak: 'break-all',
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                fontFamily: 'var(--am-font-mono)',
               }}
               title={displayPath}
             >

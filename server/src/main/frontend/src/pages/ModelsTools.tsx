@@ -8,6 +8,7 @@ import { fetchModelDistribution, fetchModelHeatmap } from '../api/client';
 import type { ModelDistribution, ModelHeatmap } from '../api/types';
 import { formatTokens } from '../utils/format';
 import { ink, indigo, semantic } from '../styles/tokens';
+import { NUM_STYLE } from '../utils/table';
 import Tools from './Tools';
 
 /**
@@ -20,7 +21,7 @@ import Tools from './Tools';
  *
  * gz
  */
-const { Text, Title } = Typography;
+const { Text } = Typography;
 const { RangePicker } = DatePicker;
 
 /** 柱状图仅保留 Token Top N，其余合并为「其他」，避免品类过多轴标签重叠 */
@@ -211,22 +212,24 @@ export default function ModelsTools() {
       dataIndex: 'percent',
       key: 'percent',
       width: 84,
+      onCell: () => ({ style: NUM_STYLE }),
       sorter: (a, b) => a.percent - b.percent,
       defaultSortOrder: 'descend',
       render: (v: number) => `${v.toFixed(1)}%`,
     },
-    { title: 'input', dataIndex: 'input_tokens', key: 'input_tokens', width: 88, render: (v: number) => formatTokens(v) },
-    { title: 'output', dataIndex: 'output_tokens', key: 'output_tokens', width: 88, render: (v: number) => formatTokens(v) },
+    { title: 'input', dataIndex: 'input_tokens', key: 'input_tokens', width: 88, onCell: () => ({ style: NUM_STYLE }), render: (v: number) => formatTokens(v) },
+    { title: 'output', dataIndex: 'output_tokens', key: 'output_tokens', width: 88, onCell: () => ({ style: NUM_STYLE }), render: (v: number) => formatTokens(v) },
     {
       title: '总量',
       dataIndex: 'total_tokens',
       key: 'total_tokens',
       width: 88,
+      onCell: () => ({ style: NUM_STYLE }),
       sorter: (a, b) => a.total_tokens - b.total_tokens,
       render: (v: number) => formatTokens(v),
     },
-    { title: '会话数', dataIndex: 'session_count', key: 'session_count', width: 72 },
-    { title: '员工数', dataIndex: 'user_count', key: 'user_count', width: 72 },
+    { title: '会话数', dataIndex: 'session_count', key: 'session_count', width: 72, onCell: () => ({ style: NUM_STYLE }) },
+    { title: '员工数', dataIndex: 'user_count', key: 'user_count', width: 72, onCell: () => ({ style: NUM_STYLE }) },
   ];
 
   const cardBodyStyle = {
@@ -237,8 +240,8 @@ export default function ModelsTools() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card size="small">
-        <Space wrap>
+      <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
+        <div className="am-toolbar">
           <Text type="secondary">时间窗：</Text>
           <RangePicker
             value={range}
@@ -246,10 +249,8 @@ export default function ModelsTools() {
             allowClear={false}
             disabledDate={(d) => d.isAfter(dayjs(), 'day')}
           />
-          <Text type="secondary" style={{ marginLeft: 8 }}>
-            热力图与上方时间窗一致
-          </Text>
-        </Space>
+          <Text type="secondary">热力图与上方时间窗一致</Text>
+        </div>
       </Card>
 
       <Spin spinning={loading}>
@@ -259,7 +260,7 @@ export default function ModelsTools() {
               size="small"
               style={{ flex: 1, width: '100%' }}
               styles={{ body: { ...cardBodyStyle, padding: '12px 12px 10px' } }}
-              title={<Title level={5} style={{ margin: 0 }}>模型 Token 占比</Title>}
+              title="模型 Token 占比"
             >
               <div style={{ height: MODEL_CHART_INNER_HEIGHT, flexShrink: 0 }}>
                 <ReactECharts option={distOption} style={{ height: '100%', width: '100%' }} notMerge lazyUpdate />
@@ -276,13 +277,14 @@ export default function ModelsTools() {
               size="small"
               style={{ flex: 1, width: '100%' }}
               styles={{ body: { ...cardBodyStyle, padding: '8px 0 0' } }}
-              title={<Title level={5} style={{ margin: 0 }}>模型分布明细</Title>}
+              title="模型分布明细"
             >
               <Table<ModelDistribution>
                 rowKey="model"
                 size="small"
                 columns={distColumns}
                 dataSource={dist}
+                locale={{ emptyText: '所选时间窗内暂无模型数据' }}
                 scroll={{ x: 'max-content', y: MODEL_TABLE_SCROLL_Y }}
                 pagination={{
                   pageSize: MODEL_TABLE_PAGE_SIZE,
@@ -299,14 +301,14 @@ export default function ModelsTools() {
       </Spin>
 
       {heatmapOption && (
-        <Card size="small" title={<Title level={5} style={{ margin: 0 }}>模型 × 日期 Token 燃烧热力图（窗口期内）</Title>}>
+        <Card size="small" title="模型 × 日期 Token 燃烧热力图（窗口期内）">
           <div style={{ height: 360 }}>
             <ReactECharts option={heatmapOption} style={{ height: '100%' }} notMerge lazyUpdate />
           </div>
         </Card>
       )}
 
-      <Card size="small" title={<Title level={5} style={{ margin: 0 }}>Slash Commands Top</Title>}>
+      <Card size="small" title="Slash Commands Top">
         <Tools from={params.from} to={params.to} embedded />
       </Card>
     </Space>

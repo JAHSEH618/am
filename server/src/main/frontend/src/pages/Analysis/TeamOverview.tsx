@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Empty, Input, Select, Table, Tag, Tooltip, Typography } from 'antd';
+import { Empty, Input, Select, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { AnalysisReportDetail } from '../../api/types';
 import { ink, semantic, accent, indigo } from '../../styles/tokens';
+import { NUM_STYLE } from '../../utils/table';
+import { categoryAxisGridLeft } from '../../utils/chartAxis';
 import { MODE_META, WATCHLIST_META } from './constants';
 import MetricLabel from './MetricLabel';
 
@@ -21,9 +23,10 @@ const { Text, Paragraph } = Typography;
 const panelStyle: React.CSSProperties = {
   marginBottom: 20,
   border: '1px solid var(--am-border)',
-  borderRadius: 12,
+  borderRadius: 'var(--am-r-md)',
   overflow: 'hidden',
   background: 'var(--am-bg-card)',
+  boxShadow: 'var(--am-shadow-1), var(--am-inner-hi)',
 };
 
 const sectionHeadStyle: React.CSSProperties = {
@@ -54,8 +57,8 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
     return {
       tooltip: { trigger: 'axis' as const },
       grid: { left: 36, right: 16, bottom: 28, top: 28 },
-      xAxis: { type: 'category' as const, data: ['1', '2', '3', '4', '5'], name: '难度' },
-      yAxis: { type: 'value' as const, name: '会话数' },
+      xAxis: { type: 'category' as const, data: ['1', '2', '3', '4', '5'], name: '难度', axisLabel: { color: ink[3] } },
+      yAxis: { type: 'value' as const, name: '会话数', axisLabel: { color: ink[3] } },
       series: [
         {
           type: 'bar' as const,
@@ -112,6 +115,8 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
     const counts = items.map((i) => i.count ?? 0);
     const colors = items.map((i) => (i.kind === 'skill' ? accent.purple.base : indigo[600]));
     const innerChartHeight = Math.max(120, 32 + Math.max(items.length, 1) * 30);
+    // 左侧留白按最长标签估算（取代手写 axisLabel.width + containLabel），避免命令名被截断或越界
+    const gridLeft = categoryAxisGridLeft(categories);
 
     const option = {
       tooltip: {
@@ -123,20 +128,22 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
           return `${p?.name ?? ''}<br/><span style="font-weight:600">${n} 次</span>`;
         },
       },
-      grid: { left: 8, right: 48, top: 8, bottom: 8, containLabel: true },
+      grid: { left: gridLeft, right: 48, top: 8, bottom: 28 },
       xAxis: {
         type: 'value' as const,
         name: '次数',
         minInterval: 1,
-        splitLine: { lineStyle: { type: 'dashed' as const, color: ink[4] } },
+        axisLabel: { color: ink[3] },
+        splitLine: { lineStyle: { type: 'dashed' as const, color: ink[5] } },
       },
       yAxis: {
         type: 'category' as const,
         data: categories,
         inverse: true as const,
         axisLabel: {
+          color: ink[3],
           overflow: 'truncate' as const,
-          width: 200,
+          width: gridLeft - 16,
           formatter: (v: string) => v,
         },
         axisTick: { show: false },
@@ -414,32 +421,56 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
                 当前窗口仅 {(report.active_user_count ?? 0)} 名活跃员工，各分位列数值相同属正常。
               </Text>
             )}
-            <table style={{ width: '100%', fontSize: 13 }}>
-              <thead>
-                <tr style={{ color: 'var(--am-ink-3)' }}>
-                  <th style={{ textAlign: 'left', padding: '4px 0' }}>指标</th>
-                  <th>P10</th>
-                  <th>P25</th>
-                  <th>P50</th>
-                  <th>P75</th>
-                  <th>P90</th>
-                </tr>
-              </thead>
-              <tbody>
-                {percentilesView.map((row) => (
-                  <tr key={row.metricKey} style={{ borderTop: '1px solid var(--am-border-subtle)' }}>
-                    <td style={{ padding: '6px 0' }}>
-                      <MetricLabel name={row.metricKey} />
-                    </td>
-                    <td style={{ textAlign: 'center' }}>{fmtP(row.bundle?.p10)}</td>
-                    <td style={{ textAlign: 'center' }}>{fmtP(row.bundle?.p25)}</td>
-                    <td style={{ textAlign: 'center' }}>{fmtP(row.bundle?.p50)}</td>
-                    <td style={{ textAlign: 'center' }}>{fmtP(row.bundle?.p75)}</td>
-                    <td style={{ textAlign: 'center' }}>{fmtP(row.bundle?.p90)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Table<(typeof percentilesView)[number]>
+              size="small"
+              rowKey="metricKey"
+              dataSource={percentilesView}
+              pagination={false}
+              scroll={{ x: 460 }}
+              columns={[
+                {
+                  title: '指标',
+                  key: 'metric',
+                  width: 160,
+                  render: (_, row) => <MetricLabel name={row.metricKey} />,
+                },
+                {
+                  title: 'P10',
+                  key: 'p10',
+                  width: 60,
+                  align: 'center',
+                  render: (_, row) => <span style={NUM_STYLE}>{fmtP(row.bundle?.p10)}</span>,
+                },
+                {
+                  title: 'P25',
+                  key: 'p25',
+                  width: 60,
+                  align: 'center',
+                  render: (_, row) => <span style={NUM_STYLE}>{fmtP(row.bundle?.p25)}</span>,
+                },
+                {
+                  title: 'P50',
+                  key: 'p50',
+                  width: 60,
+                  align: 'center',
+                  render: (_, row) => <span style={NUM_STYLE}>{fmtP(row.bundle?.p50)}</span>,
+                },
+                {
+                  title: 'P75',
+                  key: 'p75',
+                  width: 60,
+                  align: 'center',
+                  render: (_, row) => <span style={NUM_STYLE}>{fmtP(row.bundle?.p75)}</span>,
+                },
+                {
+                  title: 'P90',
+                  key: 'p90',
+                  width: 60,
+                  align: 'center',
+                  render: (_, row) => <span style={NUM_STYLE}>{fmtP(row.bundle?.p90)}</span>,
+                },
+              ]}
+            />
             <Paragraph type="secondary" style={{ marginTop: 'auto', paddingTop: 10, marginBottom: 0, fontSize: 12 }}>
               团队基线是 watchlist 触发与相对化分位的参照，不与外部基准对比。
             </Paragraph>
@@ -517,12 +548,20 @@ function KpiCell({
 }) {
   return (
     <div style={{ padding: '16px 18px', ...(showDivider ? cellDivider : {}) }}>
-      <div style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>{title}</div>
-      <div style={{ fontSize: 26, fontWeight: 680, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: 'var(--am-ink)', marginTop: 4, lineHeight: 1.12 }}>
-        {value}
-      </div>
+      <Statistic
+        title={title}
+        value={value}
+        valueStyle={{
+          fontSize: 'var(--am-fs-2xl)',
+          fontWeight: 680,
+          letterSpacing: '-0.02em',
+          lineHeight: 1.12,
+          color: 'var(--am-ink)',
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      />
       {hint && (
-        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 6, lineHeight: 1.4 }}>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 6, lineHeight: 1.4 }}>
           {hint}
         </Text>
       )}

@@ -17,6 +17,7 @@ import {
   targetTypeLabel,
   type TargetTypeMap,
 } from '../utils/format';
+import { clickableRowProps, NUM_STYLE } from '../utils/table';
 import { MODE_META, OUTCOME_META, CAPABILITY_DIMENSIONS } from './Analysis/constants';
 
 // 页面 URL 参数键。集中在这里，避免 Sessions / SessionDetail 各写一份字符串字面量。
@@ -449,6 +450,7 @@ export default function Sessions() {
           dataSource={data?.items ?? []}
           scroll={{ x: 1780 }}
           className="am-sticky-table"
+          locale={{ emptyText: '当前筛选条件下暂无会话' }}
           pagination={{
             current: page + 1,
             pageSize: size,
@@ -462,17 +464,16 @@ export default function Sessions() {
               setSize(s);
             },
           }}
-          onRow={(r) => ({
-            onClick: () => {
+          onRow={(r) =>
+            clickableRowProps(() => {
               // 把当前时间窗带进详情页，让详情页的消息 / 事件也按这段窗口截断
               const sp = new URLSearchParams();
               if (fromStr) sp.set(QP_FROM, fromStr);
               if (toStr) sp.set(QP_TO, toStr);
               const qs = sp.toString();
               navigate(`/sessions/${r.id}${qs ? `?${qs}` : ''}`);
-            },
-            style: { cursor: 'pointer' },
-          })}
+            })
+          }
           columns={[
             {
               title: '状态',
@@ -630,7 +631,7 @@ export default function Sessions() {
                               fontSize: 11,
                               borderColor: OUTCOME_META[a.outcome]?.color,
                               color: OUTCOME_META[a.outcome]?.color,
-                              background: '#fff',
+                              background: 'var(--am-bg-card)',
                             }}
                           >
                             {outcomeLabel}
@@ -641,7 +642,7 @@ export default function Sessions() {
                               fontSize: 11,
                               borderColor: modeColor,
                               color: modeColor,
-                              background: '#fff',
+                              background: 'var(--am-bg-card)',
                             }}
                           >
                             {modeLabel}
@@ -676,7 +677,7 @@ export default function Sessions() {
                 const win = r.window_message_count;
                 if (hasWindow && win != null) {
                   return (
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={NUM_STYLE}>
                       <strong>{win}</strong>
                       <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
                         {' '}
@@ -686,7 +687,7 @@ export default function Sessions() {
                   );
                 }
                 return (
-                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={NUM_STYLE}>
                     {r.user_messages} / {r.assistant_messages}
                   </span>
                 );
@@ -712,7 +713,7 @@ export default function Sessions() {
                 const winTok = r.window_tokens;
                 if (hasWindow && winTok != null) {
                   return (
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={NUM_STYLE}>
                       <strong>{formatTokens(winTok)}</strong>
                       <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
                         {' '}
@@ -722,7 +723,7 @@ export default function Sessions() {
                   );
                 }
                 return (
-                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={NUM_STYLE}>
                     {formatTokens(r.input_tokens)} / {formatTokens(r.output_tokens)}
                   </span>
                 );

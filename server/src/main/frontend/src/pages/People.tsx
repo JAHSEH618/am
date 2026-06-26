@@ -24,6 +24,8 @@ import {
 import { categoryAxisGridLeft } from '../utils/chartAxis';
 import { formatDuration, formatTokens, formatTokensM } from '../utils/format';
 import { ink, semantic, indigo } from '../styles/tokens';
+import { HeroCard, MetricRow, type HeroTone } from '../components/HeroCard';
+import { EMPTY_DASH, NUM_STYLE } from '../utils/table';
 
 dayjs.extend(isoWeek);
 
@@ -37,6 +39,9 @@ dayjs.extend(isoWeek);
  */
 const { Text, Link } = Typography;
 const { RangePicker } = DatePicker;
+
+/** 数字列统一：右对齐 + 等宽数字（tnum），防止数据滚动时左右抖动；与 Dashboard 数值列同款。 */
+const NUMERIC_COL = { align: 'right' as const, onCell: () => ({ style: NUM_STYLE }) };
 
 function defaultRange(): [Dayjs, Dayjs] {
   // 默认窗口：本自然周（周一 ~ 周日），与分析报告口径一致。
@@ -176,6 +181,7 @@ export default function People() {
       ),
       dataIndex: 'ai_active_seconds_union_avg',
       key: 'ai_active_seconds_union_avg',
+      ...NUMERIC_COL,
       sorter: (a, b) => a.ai_active_seconds_union_avg - b.ai_active_seconds_union_avg,
       render: (v: number) => formatDuration(v),
     },
@@ -188,6 +194,7 @@ export default function People() {
       dataIndex: 'user_message_count',
       key: 'user_message_count',
       width: 104,
+      ...NUMERIC_COL,
       sorter: (a, b) => a.user_message_count - b.user_message_count,
     },
     {
@@ -199,13 +206,14 @@ export default function People() {
       dataIndex: 'qa_ratio',
       key: 'qa_ratio',
       width: 100,
+      ...NUMERIC_COL,
       sorter: (a, b) => {
         const av = a.qa_ratio ?? -1;
         const bv = b.qa_ratio ?? -1;
         return av - bv;
       },
       render: (_: number | null, row) => {
-        if (row.qa_ratio == null) return <Text type="secondary">-</Text>;
+        if (row.qa_ratio == null) return EMPTY_DASH;
         return (
           <Tooltip title={`用户 ${row.user_message_count} · 助手 ${row.assistant_message_count}`}>
             <span>{row.qa_ratio.toFixed(2)}</span>
@@ -217,6 +225,7 @@ export default function People() {
       title: '会话数',
       dataIndex: 'ai_session_count_total',
       key: 'ai_session_count_total',
+      ...NUMERIC_COL,
       sorter: (a, b) => a.ai_session_count_total - b.ai_session_count_total,
     },
     {
@@ -228,6 +237,7 @@ export default function People() {
       dataIndex: 'git_commit_window_count',
       key: 'git_commit_window_count',
       width: 96,
+      ...NUMERIC_COL,
       sorter: (a, b) => a.git_commit_window_count - b.git_commit_window_count,
       render: (v: number, row) => (
         <Link
@@ -244,6 +254,7 @@ export default function People() {
       title: '输入 Token',
       dataIndex: 'total_input_tokens',
       key: 'total_input_tokens',
+      ...NUMERIC_COL,
       sorter: (a, b) => a.total_input_tokens - b.total_input_tokens,
       render: (v: number) => formatTokens(v),
     },
@@ -251,6 +262,7 @@ export default function People() {
       title: '输出 Token',
       dataIndex: 'total_output_tokens',
       key: 'total_output_tokens',
+      ...NUMERIC_COL,
       sorter: (a, b) => a.total_output_tokens - b.total_output_tokens,
       render: (v: number) => formatTokens(v),
     },
@@ -258,6 +270,7 @@ export default function People() {
       title: 'Token 总量',
       dataIndex: 'total_tokens',
       key: 'total_tokens',
+      ...NUMERIC_COL,
       sorter: (a, b) => a.total_tokens - b.total_tokens,
       render: (v: number) => formatTokens(v),
     },
@@ -270,6 +283,7 @@ export default function People() {
       dataIndex: 'tool_call_count_total',
       key: 'tool_call_count_total',
       width: 120,
+      ...NUMERIC_COL,
       sorter: (a, b) => a.tool_call_count_total - b.tool_call_count_total,
       render: (v: number, row) => (
         v > 0 ? (
@@ -282,7 +296,7 @@ export default function People() {
             {v}
           </Link>
         ) : (
-          <Text type="secondary">0</Text>
+          EMPTY_DASH
         )
       ),
     },
@@ -290,26 +304,45 @@ export default function People() {
       title: '卡壳',
       dataIndex: 'retry_count_total',
       key: 'retry_count_total',
-      render: (v: number) => v > 0 ? <Tag color="volcano">{v}</Tag> : <Text type="secondary">0</Text>,
+      ...NUMERIC_COL,
+      // 卡壳 = warning 语义；与时间线图的卡壳柱（semantic.warning）统一，不再用 volcano。
+      render: (v: number) =>
+        v > 0 ? (
+          <Tag
+            style={{
+              margin: 0,
+              color: 'var(--am-warning-fg)',
+              background: 'var(--am-warning-bg)',
+              borderColor: 'var(--am-warning-border)',
+            }}
+          >
+            {v}
+          </Tag>
+        ) : (
+          EMPTY_DASH
+        ),
     },
     {
       title: '首响均值',
       dataIndex: 'first_response_avg_ms',
       key: 'first_response_avg_ms',
-      render: (v: number) => v > 0 ? `${(v / 1000).toFixed(1)} s` : '-',
+      ...NUMERIC_COL,
+      render: (v: number) => (v > 0 ? `${(v / 1000).toFixed(1)} s` : EMPTY_DASH),
     },
     {
       title: 'Top 模型',
       dataIndex: 'top_model',
       key: 'top_model',
-      render: (v: string | null) => v ? <Tag>{v}</Tag> : <Text type="secondary">-</Text>,
+      width: 150,
+      ellipsis: true,
+      render: (v: string | null) => (v ? <Tag>{v}</Tag> : EMPTY_DASH),
     },
   ];
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card size="small">
-        <Space wrap>
+        <div className="am-toolbar">
           <Text type="secondary">时间窗：</Text>
           <RangePicker
             value={range}
@@ -317,7 +350,7 @@ export default function People() {
             allowClear={false}
             disabledDate={(d) => d.isAfter(dayjs(), 'day')}
           />
-        </Space>
+        </div>
       </Card>
 
       <Card size="small" title={`员工列表（${list.length} 人）`}>
@@ -325,8 +358,10 @@ export default function People() {
           <Table<PeopleSummary>
             rowKey="user_code"
             size="middle"
+            className="am-sticky-table"
             columns={columns}
             dataSource={list}
+            locale={{ emptyText: '所选时间窗内暂无员工 AI 使用数据' }}
             pagination={{ pageSize: 20, showSizeChanger: false }}
             scroll={{ x: 1180 }}
             onRow={(row) => ({
@@ -384,6 +419,7 @@ export default function People() {
             size="small"
             columns={gitCommitColumns}
             dataSource={gitCommits}
+            locale={{ emptyText: '所选时间窗内暂无 Git 提交' }}
             pagination={gitCommitModalPagination}
             scroll={{ x: 1040, y: GIT_COMMIT_MODAL_TABLE_SCROLL_Y }}
           />
@@ -573,18 +609,6 @@ function PersonDetailPanel({
   );
 }
 
-const metricsPanelStyle: React.CSSProperties = {
-  marginBottom: 20,
-  border: '1px solid var(--am-border)',
-  borderRadius: 12,
-  overflow: 'hidden',
-  background: 'var(--am-bg-card)',
-};
-
-const metricsCellDivider: React.CSSProperties = {
-  borderRight: '1px solid var(--am-border-subtle)',
-};
-
 function PersonDetailMetrics({
   summary: s,
   wow,
@@ -600,10 +624,13 @@ function PersonDetailMetrics({
   const lastWeekShort = `${wow.last_week_from.slice(5)} ~ ${wow.last_week_to.slice(5)}`;
   const gitMetric = wow.git_commits ?? { this_week: 0, last_week: 0, change_pct: null };
 
+  // 主 KPI：与 Dashboard 同款 HeroCard 度量词汇（图标 chip + 近黑大数字 + ink-3 注脚），
+  // 不再手搓 26px 离格卡。注脚 subnote 承载「附注（token 拆分 / 点击提示）+ 上周基准 + 环比趋势」。
   const primary: {
     key: string;
     label: string;
     icon: React.ReactNode;
+    tone: HeroTone;
     value: string;
     sub?: string;
     metric: WowMetric;
@@ -615,6 +642,7 @@ function PersonDetailMetrics({
       key: 'active',
       label: '窗口期协作（并集）',
       icon: <ClockCircleOutlined />,
+      tone: 'indigo',
       value: formatDuration(wow.active_seconds_union.this_week) || '0s',
       metric: wow.active_seconds_union,
       formatLast: (n) => formatDuration(n) || '0s',
@@ -623,6 +651,7 @@ function PersonDetailMetrics({
       key: 'tokens',
       label: '窗口期 Token',
       icon: <ThunderboltOutlined />,
+      tone: 'amber',
       value: formatTokens(wow.tokens.this_week),
       sub: tokenDetail,
       metric: wow.tokens,
@@ -632,6 +661,7 @@ function PersonDetailMetrics({
       key: 'retries',
       label: '窗口期卡壳',
       icon: <ExclamationCircleOutlined />,
+      tone: 'rose',
       value: `${wow.retries.this_week}`,
       metric: wow.retries,
       formatLast: (n) => `${n}`,
@@ -641,6 +671,7 @@ function PersonDetailMetrics({
       key: 'git',
       label: 'Git 提交',
       icon: <GitlabOutlined />,
+      tone: 'emerald',
       value: `${gitMetric.this_week}`,
       sub: '点击查看明细',
       metric: gitMetric,
@@ -649,6 +680,7 @@ function PersonDetailMetrics({
     },
   ];
 
+  // 次级指标：与 Dashboard「今日运营指标」同构的紧凑 MetricRow（hint 退到 ink-3，仍可见，不抢读数）。
   const secondary: { key: string; label: string; value: string; hint?: string; tooltip?: string }[] = [
     {
       key: 'avg',
@@ -678,121 +710,87 @@ function PersonDetailMetrics({
   ];
 
   return (
-    <div style={metricsPanelStyle}>
+    <div style={{ marginBottom: 24 }}>
+      {/* 窗口期 + 环比基准：小字注脚（ink-3，不抢读数） */}
       <div
         style={{
-          padding: '10px 16px',
-          borderBottom: '1px solid var(--am-border-subtle)',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
-          background: 'var(--am-surface-sunken)',
+          alignItems: 'baseline',
           flexWrap: 'wrap',
-          gap: 4,
+          gap: 8,
+          marginBottom: 12,
         }}
       >
-        <Text style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>窗口期 {periodLabel}</Text>
-        <Text style={{ fontSize: 11, color: 'var(--am-ink-3)' }}>环比 · 上周 {lastWeekShort}</Text>
+        <Text style={{ fontSize: 13, color: 'var(--am-ink-3)' }}>窗口期 {periodLabel}</Text>
+        <Text style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>环比基准 · 上周 {lastWeekShort}</Text>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-        {primary.map((item, i) => {
-          const { key: itemKey, ...rest } = item;
-          return <PrimaryMetricCell key={itemKey} {...rest} showDivider={i < primary.length - 1} />;
-        })}
-      </div>
+      <Row gutter={[16, 16]} className="am-dashboard-hero-row">
+        {primary.map((item) => (
+          <Col xs={12} md={6} key={item.key}>
+            <HeroCard
+              label={item.label}
+              value={item.value}
+              icon={item.icon}
+              tone={item.tone}
+              subnote={
+                <MetricTrendNote
+                  sub={item.sub}
+                  metric={item.metric}
+                  formatLast={item.formatLast}
+                  inverted={item.inverted}
+                />
+              }
+              onClick={item.onClick}
+              ariaLabel={item.onClick ? `${item.label}（点击查看明细）` : undefined}
+            />
+          </Col>
+        ))}
+      </Row>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-          borderTop: '1px solid var(--am-border-subtle)',
-          background: 'var(--am-surface-sunken)',
-        }}
-      >
-        {secondary.map((item, i) => {
-          const { key: itemKey, ...rest } = item;
-          return <SecondaryMetricCell key={itemKey} {...rest} showDivider={i < secondary.length - 1} />;
-        })}
-      </div>
+      <Card size="small" style={{ marginTop: 16 }} styles={{ body: { padding: '12px 20px' } }}>
+        <Row gutter={[24, 0]}>
+          <Col xs={24} md={12} lg={8}>
+            <SecondaryMetric {...secondary[0]} />
+            <SecondaryMetric {...secondary[1]} />
+          </Col>
+          <Col xs={24} md={12} lg={8}>
+            <SecondaryMetric {...secondary[2]} />
+            <SecondaryMetric {...secondary[3]} />
+          </Col>
+          <Col xs={24} md={12} lg={8}>
+            <SecondaryMetric {...secondary[4]} />
+          </Col>
+        </Row>
+      </Card>
     </div>
   );
 }
 
-function PrimaryMetricCell({
-  label,
-  icon,
-  value,
+/** 主 KPI 注脚：附注（可选）+ 上周基准 + 环比趋势（升降箭头 + 百分比；语义色用 -fg 达标文字，非 base）。 */
+function MetricTrendNote({
   sub,
   metric,
   formatLast,
   inverted,
-  onClick,
-  showDivider,
 }: {
-  label: string;
-  icon: React.ReactNode;
-  value: string;
   sub?: string;
   metric: WowMetric;
   formatLast: (n: number) => string;
   inverted?: boolean;
-  onClick?: () => void;
-  showDivider: boolean;
 }) {
   const pct = metric.change_pct;
   let trendColor = 'var(--am-ink-3)';
   if (pct != null) {
-    trendColor = (inverted ? pct < 0 : pct >= 0) ? 'var(--am-success)' : 'var(--am-warning)';
+    // base 圆点色用作 11–13px 文字对比不达标 → 取同色系达标深色 -fg。
+    trendColor = (inverted ? pct < 0 : pct >= 0) ? 'var(--am-success-fg)' : 'var(--am-warning-fg)';
   }
   const arrow = pct == null ? null : pct >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />;
-
   return (
-    <div
-      style={{
-        padding: '14px 16px',
-        minHeight: 112,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        cursor: onClick ? 'pointer' : undefined,
-        ...(showDivider ? metricsCellDivider : {}),
-      }}
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onClick={onClick}
-      onKeyDown={
-        onClick
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onClick();
-              }
-            }
-          : undefined
-      }
-    >
+    <>
+      {sub ? <div>{sub}</div> : null}
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--am-ink-3)' }}>
-          <span style={{ color: 'var(--am-brand)', fontSize: 13 }}>{icon}</span>
-          <span>{label}</span>
-        </div>
-        <div
-          style={{
-            marginTop: 6,
-            fontSize: 26,
-            fontWeight: 680,
-            letterSpacing: '-0.02em',
-            lineHeight: 1.12,
-            fontVariantNumeric: 'tabular-nums',
-            color: onClick ? 'var(--am-brand)' : 'var(--am-ink)',
-          }}
-        >
-          {value}
-        </div>
-        <div style={{ marginTop: 4, minHeight: 16, fontSize: 11, color: 'var(--am-ink-3)' }}>{sub ?? '\u00a0'}</div>
-      </div>
-      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--am-ink-3)', lineHeight: 1.45 }}>
         上周 {formatLast(metric.last_week)}
         {' · '}
         {pct == null ? (
@@ -803,31 +801,37 @@ function PrimaryMetricCell({
           </span>
         )}
       </div>
-    </div>
+    </>
   );
 }
 
-function SecondaryMetricCell({
+/** 次级指标行：复用 MetricRow（label/value 同 Dashboard）；hint 折进 label 末尾保持可见（ink-3），tooltip 走悬浮说明。 */
+function SecondaryMetric({
   label,
   value,
   hint,
   tooltip,
-  showDivider,
 }: {
   label: string;
   value: string;
   hint?: string;
   tooltip?: string;
-  showDivider: boolean;
 }) {
-  const body = (
-    <div style={{ padding: '12px 16px', ...(showDivider ? metricsCellDivider : {}) }}>
-      <div style={{ fontSize: 11, color: 'var(--am-ink-3)' }}>{label}</div>
-      <div style={{ marginTop: 4, fontSize: 17, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'var(--am-ink)' }}>
-        {value}
-      </div>
-      <div style={{ marginTop: 2, minHeight: 14, fontSize: 11, color: 'var(--am-ink-5)' }}>{hint ?? '\u00a0'}</div>
-    </div>
+  const labelNode = (
+    <span>
+      {tooltip ? (
+        <Tooltip title={tooltip}>
+          <span>{label}</span>
+        </Tooltip>
+      ) : (
+        label
+      )}
+      {hint && (
+        <span style={{ marginLeft: 6, fontSize: 12, fontWeight: 400, color: 'var(--am-ink-3)' }}>
+          {hint}
+        </span>
+      )}
+    </span>
   );
-  return tooltip ? <Tooltip title={tooltip}>{body}</Tooltip> : body;
+  return <MetricRow label={labelNode} value={value} />;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Empty, List, Row, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Col, Empty, List, Row, Spin, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts-for-react';
 import { Link } from 'react-router-dom';
@@ -68,9 +68,12 @@ interface Props {
 export default function UserDetail({ report, user }: Props) {
   const slashTotal = (user.tool_command_count ?? 0) + (user.tool_skill_count ?? 0);
   const [peopleDetail, setPeopleDetail] = useState<PeopleDetail | null>(null);
+  // 员工数据（日趋势）异步拉取期间的加载态：避免在到位前一闪而过地显示「暂无 timeline」兜底
+  const [peopleLoading, setPeopleLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
+    setPeopleLoading(true);
     fetchPersonDetail(user.user_code, {
       from: report.window_from,
       to: report.window_to,
@@ -80,6 +83,9 @@ export default function UserDetail({ report, user }: Props) {
       })
       .catch(() => {
         if (!cancelled) setPeopleDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPeopleLoading(false);
       });
     return () => {
       cancelled = true;
@@ -132,8 +138,8 @@ export default function UserDetail({ report, user }: Props) {
     return {
       tooltip: { trigger: 'axis' as const },
       grid: { left: 36, right: 16, bottom: 28, top: 28 },
-      xAxis: { type: 'category' as const, data: ['1', '2', '3', '4', '5'], name: '难度' },
-      yAxis: { type: 'value' as const, name: '会话数' },
+      xAxis: { type: 'category' as const, data: ['1', '2', '3', '4', '5'], name: '难度', axisLabel: { color: ink[3] } },
+      yAxis: { type: 'value' as const, name: '会话数', axisLabel: { color: ink[3] } },
       series: [
         {
           type: 'bar' as const,
@@ -182,9 +188,9 @@ export default function UserDetail({ report, user }: Props) {
     return {
       tooltip: { trigger: 'axis' as const },
       grid: { left: 40, right: 16, bottom: 28, top: 28 },
-      xAxis: { type: 'category' as const, data: dates },
-      yAxis: { type: 'value' as const, name: '协作 h' },
-      series: [{ type: 'line' as const, data: hours, smooth: true, areaStyle: { opacity: 0.15 } }],
+      xAxis: { type: 'category' as const, data: dates, axisLabel: { color: ink[3] } },
+      yAxis: { type: 'value' as const, name: '协作 h', axisLabel: { color: ink[3] } },
+      series: [{ type: 'line' as const, data: hours, smooth: true, color: indigo[600], areaStyle: { opacity: 0.15 } }],
     };
   }, [peopleDetail]);
 
@@ -395,7 +401,19 @@ export default function UserDetail({ report, user }: Props) {
                     />
                   </Col>
                 </Row>
-                {activeHoursTimelineOption ? (
+                {peopleLoading ? (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      minHeight: 220,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Spin />
+                  </div>
+                ) : activeHoursTimelineOption ? (
                   <div style={{ marginTop: 16 }}>
                     <Text strong style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>
                       日协作时长趋势（员工数据同源）

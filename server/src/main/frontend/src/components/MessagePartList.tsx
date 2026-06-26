@@ -111,7 +111,7 @@ function ImageAttachments({
                 >
                   <Image
                     src={src}
-                    alt="attachment"
+                    alt="会话附件图片"
                     width={THUMB_WIDTH}
                     height={THUMB_HEIGHT}
                     style={{
@@ -123,7 +123,7 @@ function ImageAttachments({
                     preview={{ src }}
                   />
                   {p.width && p.height ? (
-                    <Text type="secondary" style={{ display: 'block', fontSize: 11, marginTop: 4 }}>
+                    <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 4 }}>
                       {p.width}×{p.height}
                     </Text>
                   ) : null}
@@ -242,8 +242,10 @@ function TextBlock({ text, mono, italic }: { text: string; mono?: boolean; itali
           wordBreak: 'break-word',
           margin: '4px 0 0',
           fontSize: 13,
-          fontFamily: mono ? 'ui-monospace, Menlo, monospace' : undefined,
+          fontFamily: mono ? 'var(--am-font-mono)' : undefined,
           fontStyle: italic ? 'italic' : 'normal',
+          // thinking 内容沿用 SessionDetail 的紫罗兰处理（保留这一分类角色的紫，非主色调）
+          color: italic ? 'var(--am-violet-fg)' : undefined,
         }}
       >
         {visible}

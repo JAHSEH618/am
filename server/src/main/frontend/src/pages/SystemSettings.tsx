@@ -15,7 +15,6 @@ import {
   Select,
   Skeleton,
   Space,
-  Statistic,
   Switch,
   Table,
   Tabs,
@@ -64,6 +63,8 @@ import type {
   ScheduledTaskStatus,
 } from '../api/types';
 import { CollectorMark } from '../components/brand/CollectorMark';
+import { HeroCard } from '../components/HeroCard';
+import { EMPTY_DASH, NUM_STYLE } from '../utils/table';
 
 const { Text, Paragraph } = Typography;
 
@@ -205,17 +206,16 @@ function ActiveAgentsPanel() {
                 · 更早的历史数据如需对齐，可走"历史重算"批量回填
               </div>
               {target.recent7d_session_count > 0 && (
-                <div
-                  style={{
-                    marginTop: 10,
-                    padding: '8px 12px',
-                    background: 'var(--am-warning-bg)',
-                    color: 'var(--am-warning-fg)',
-                    borderRadius: 6,
-                  }}
-                >
-                  注意：最近 7 天该 agent 贡献了 <strong>{target.recent7d_session_count}</strong> 个会话，禁用后这部分将退出团队聚合口径。
-                </div>
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: 10 }}
+                  message={
+                    <span>
+                      注意：最近 7 天该 agent 贡献了 <strong>{target.recent7d_session_count}</strong> 个会话，禁用后这部分将退出团队聚合口径。
+                    </span>
+                  }
+                />
               )}
             </div>
           ),
@@ -271,57 +271,40 @@ function ActiveAgentsPanel() {
         }
       />
 
-      {/* 总览数字 —— 三张卡 */}
+      {/* 总览数字 —— 三张 Hero 卡（与 Dashboard 金标准一致：白底 + 近黑数字，语义色只在图标 chip） */}
       {counters && (
-        <Row gutter={16}>
+        <Row gutter={[16, 16]} className="am-dashboard-hero-row">
           <Col xs={24} sm={8}>
-            <Card bordered>
-              <Statistic
-                title={
-                  <span style={{ color: 'var(--am-ink-3)' }}>
-                    启用中 Agent
-                  </span>
-                }
-                value={counters.enabled}
-                suffix={
-                  <Text type="secondary" style={{ fontSize: 14 }}>
-                    / 全部 {counters.total}
-                  </Text>
-                }
-                valueStyle={{ color: 'var(--am-success)' }}
-                prefix={<CheckCircleFilled />}
-              />
-            </Card>
+            <HeroCard
+              label="启用中 Agent"
+              value={counters.enabled}
+              suffix={`/ 全部 ${counters.total}`}
+              icon={<CheckCircleFilled />}
+              tone="emerald"
+            />
           </Col>
           <Col xs={24} sm={8}>
-            <Card bordered>
-              <Statistic
-                title={<span style={{ color: 'var(--am-ink-3)' }}>禁用中 Agent</span>}
-                value={counters.disabled}
-                valueStyle={{ color: counters.disabled > 0 ? 'var(--am-error-fg)' : 'var(--am-ink-3)' }}
-                prefix={<PauseCircleFilled />}
-              />
-            </Card>
+            <HeroCard
+              label="禁用中 Agent"
+              value={counters.disabled}
+              icon={<PauseCircleFilled />}
+              tone="amber"
+            />
           </Col>
           <Col xs={24} sm={8}>
-            <Card bordered>
-              <Statistic
-                title={
-                  <Tooltip title="过去 7 天落入白名单的会话数 / 全部上报会话数。差值就是被白名单过滤掉的部分。">
-                    <span style={{ color: 'var(--am-ink-3)' }}>
-                      近 7 天会话（白名单内 / 全部）<InfoCircleOutlined style={{ marginLeft: 4 }} />
-                    </span>
-                  </Tooltip>
-                }
-                value={counters.enabledRecent}
-                suffix={
-                  <Text type="secondary" style={{ fontSize: 14 }}>
-                    / {counters.recentTotal}
-                  </Text>
-                }
-                valueStyle={{ color: 'var(--am-ink)' }}
-              />
-            </Card>
+            <HeroCard
+              label="近 7 天会话"
+              value={counters.enabledRecent}
+              suffix={`/ ${counters.recentTotal}`}
+              subnote="白名单内 / 全部上报会话"
+              icon={<ThunderboltOutlined />}
+              tone="indigo"
+              extra={
+                <Tooltip title="过去 7 天落入白名单的会话数 / 全部上报会话数。差值就是被白名单过滤掉的部分。">
+                  <InfoCircleOutlined style={{ color: 'var(--am-ink-4)' }} />
+                </Tooltip>
+              }
+            />
           </Col>
         </Row>
       )}
@@ -330,7 +313,7 @@ function ActiveAgentsPanel() {
       <Card
         title={
           <Space>
-            <span style={{ fontSize: 15, fontWeight: 600 }}>Agent 列表</span>
+            <span style={{ fontWeight: 600 }}>Agent 列表</span>
             <Text type="secondary" style={{ fontSize: 12 }}>
               开关即时生效；禁用后客户端停止采集上报，展示与聚合也不再纳入
             </Text>
@@ -375,12 +358,14 @@ function AgentCard({
   return (
     <Card
       size="small"
-      bordered
+      // 切换卡统一形态：1px 发丝边（全局 .ant-card 提供）+ 启用态用 3px 左侧品牌色导轨做强调；
+      // 左边框恒为 3px（启用品牌色 / 禁用发丝色）避免启停切换时内容水平抖动。
       style={{
-        borderColor: isEnabled ? target.display_color : 'var(--am-border)',
-        borderWidth: isEnabled ? 1.5 : 1,
-        background: isEnabled ? '#ffffff' : 'var(--am-surface-sunken)',
-        transition: 'all .2s',
+        borderLeftWidth: 3,
+        borderLeftStyle: 'solid',
+        borderLeftColor: isEnabled ? 'var(--am-brand)' : 'var(--am-border-subtle)',
+        background: isEnabled ? 'var(--am-bg-card)' : 'var(--am-surface-sunken)',
+        transition: 'border-color var(--am-dur) var(--am-ease), background var(--am-dur) var(--am-ease)',
       }}
       styles={{ body: { padding: 16 } }}
     >
@@ -396,7 +381,6 @@ function AgentCard({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
-                fontSize: 15,
                 fontWeight: 600,
                 color: isEnabled ? 'var(--am-ink)' : 'var(--am-ink-3)',
                 whiteSpace: 'nowrap',
@@ -413,7 +397,7 @@ function AgentCard({
           <Badge
             status={isEnabled ? 'success' : 'default'}
             text={
-              <span style={{ fontSize: 12, color: isEnabled ? 'var(--am-success)' : 'var(--am-ink-3)' }}>
+              <span style={{ fontSize: 12, color: isEnabled ? 'var(--am-success-fg)' : 'var(--am-ink-3)' }}>
                 {isEnabled ? '已启用' : '已禁用'}
               </span>
             }
@@ -447,7 +431,7 @@ function AgentCard({
             </Text>
             <div
               style={{
-                fontSize: 18,
+                fontSize: 'var(--am-fs-lg)',
                 fontWeight: 600,
                 color: target.recent7d_session_count > 0 ? 'var(--am-ink)' : 'var(--am-ink-5)',
                 fontVariantNumeric: 'tabular-nums',
@@ -531,7 +515,7 @@ function SchedulesPanel() {
       />
 
       <Card
-        title={<span style={{ fontSize: 15, fontWeight: 600 }}>业务任务</span>}
+        title={<span style={{ fontWeight: 600 }}>业务任务</span>}
         extra={
           <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
             刷新
@@ -552,7 +536,7 @@ function SchedulesPanel() {
       </Card>
 
       {infraTasks.length > 0 && (
-        <Card title={<span style={{ fontSize: 15, fontWeight: 600 }}>基础设施任务</span>}>
+        <Card title={<span style={{ fontWeight: 600 }}>基础设施任务</span>}>
           <Row gutter={[16, 16]}>
             {infraTasks.map((t) => (
               <Col key={t.task_code} xs={24} lg={12}>
@@ -632,10 +616,13 @@ function ScheduledTaskCard({
   return (
     <Card
       size="small"
-      bordered
+      // 切换卡统一形态：与活跃 Agent 卡一致 —— 1px 发丝边 + 启用态 3px 左侧品牌色导轨，左边框恒为 3px 防抖动。
       style={{
-        borderColor: task.enabled ? 'var(--am-ink-5)' : 'var(--am-border)',
-        background: task.enabled ? '#ffffff' : 'var(--am-surface-sunken)',
+        borderLeftWidth: 3,
+        borderLeftStyle: 'solid',
+        borderLeftColor: task.enabled ? 'var(--am-brand)' : 'var(--am-border-subtle)',
+        background: task.enabled ? 'var(--am-bg-card)' : 'var(--am-surface-sunken)',
+        transition: 'border-color var(--am-dur) var(--am-ease), background var(--am-dur) var(--am-ease)',
       }}
       styles={{ body: { padding: 16 } }}
     >
@@ -643,7 +630,7 @@ function ScheduledTaskCard({
         {/* 头部 */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--am-ink)' }}>
+            <div style={{ fontWeight: 600, color: 'var(--am-ink)' }}>
               {task.display_name}
             </div>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -698,7 +685,7 @@ function ScheduledTaskCard({
               onChange={(e) => setCronDraft(e.target.value)}
               disabled={!task.cron_editable}
               placeholder="秒 分 时 日 月 周（Spring 6 字段）"
-              style={{ fontFamily: 'JetBrains Mono, Menlo, monospace', fontSize: 13 }}
+              style={{ fontFamily: 'var(--am-font-mono)', fontSize: 13 }}
               onPressEnter={saveCron}
             />
             <Button
@@ -764,7 +751,7 @@ function ScheduledTaskCard({
             <Text type="secondary" style={{ fontSize: 12 }}>
               累计成功
             </Text>
-            <div style={{ color: 'var(--am-success)', fontWeight: 600 }}>
+            <div style={{ color: 'var(--am-success-fg)', fontWeight: 600 }}>
               <CheckCircleOutlined style={{ marginRight: 4 }} />
               {task.success_count.toLocaleString()}
             </div>
@@ -1274,7 +1261,7 @@ function JudgeConfigPanel() {
       </Row>
 
       <Card
-        title={<span style={{ fontSize: 15, fontWeight: 600 }}>评判参数</span>}
+        title={<span style={{ fontWeight: 600 }}>评判参数</span>}
         size="small"
       >
         <Form layout="vertical" size="middle">
@@ -1405,37 +1392,42 @@ function JudgeConfigPanel() {
         rubricVersion={draft[KEYS.INSIGHT_RUBRIC] ?? ''}
       />
 
-      {/* 全局保存条 */}
+      {/* 全局保存条（与「鉴权与安全」页保存条同款：不透明卡面 + shadow-2 + r-md + Badge 脏标） */}
       <div
         style={{
           position: 'sticky',
           bottom: 0,
-          background: '#ffffff',
+          background: 'var(--am-bg-card)',
           padding: '12px 16px',
-          borderTop: '1px solid var(--am-border)',
-          borderRadius: 6,
-          boxShadow: '0 -2px 8px rgba(0,0,0,0.04)',
+          border: '1px solid var(--am-border-subtle)',
+          borderRadius: 'var(--am-r-md)',
+          boxShadow: 'var(--am-shadow-2)',
           display: 'flex',
-          justifyContent: 'flex-end',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           gap: 12,
           zIndex: 10,
         }}
       >
-        {dirty && (
-          <Text type="warning" style={{ alignSelf: 'center', marginRight: 8 }}>
-            <ExclamationCircleOutlined style={{ marginRight: 4 }} />
-            有未保存变更
-          </Text>
-        )}
-        <Button onClick={load} disabled={saving}>
-          重新拉取
-        </Button>
-        <Button onClick={handleReset} disabled={!dirty || saving}>
-          撤销修改
-        </Button>
-        <Button type="primary" onClick={handleSave} loading={saving} disabled={!dirty}>
-          保存全部
-        </Button>
+        <Space>
+          {dirty && (
+            <>
+              <Badge status="warning" />
+              <Text type="warning">有未保存变更</Text>
+            </>
+          )}
+        </Space>
+        <Space>
+          <Button onClick={load} disabled={saving}>
+            重新拉取
+          </Button>
+          <Button onClick={handleReset} disabled={!dirty || saving}>
+            撤销修改
+          </Button>
+          <Button type="primary" onClick={handleSave} loading={saving} disabled={!dirty}>
+            保存全部
+          </Button>
+        </Space>
       </div>
     </Space>
   );
@@ -1462,7 +1454,7 @@ function RubricEditorCard({ value, originalValue, onChange, rubricVersion }: Rub
       title={
         <Space size={8}>
           <FileTextOutlined style={{ color: 'var(--am-violet)' }} />
-          <span style={{ fontSize: 15, fontWeight: 600 }}>Rubric 模板</span>
+          <span style={{ fontWeight: 600 }}>Rubric 模板</span>
           {dirty && (
             <Tag color="orange" style={{ marginLeft: 4 }}>
               未保存
@@ -1509,9 +1501,8 @@ function RubricEditorCard({ value, originalValue, onChange, rubricVersion }: Rub
         autoSize={{ minRows: 14, maxRows: 36 }}
         spellCheck={false}
         style={{
-          fontFamily:
-            'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-          fontSize: 12.5,
+          fontFamily: 'var(--am-font-mono)',
+          fontSize: 13,
           lineHeight: '20px',
           background: 'var(--am-surface-sunken)',
         }}
@@ -1825,7 +1816,7 @@ function AuthPanel() {
               autoSize
               readOnly
               onClick={(e) => (e.target as HTMLTextAreaElement).select()}
-              style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+              style={{ fontFamily: 'var(--am-font-mono)' }}
             />
             <Text type="secondary" style={{ fontSize: 12 }}>{r.note}</Text>
           </div>
@@ -1959,22 +1950,23 @@ function AuthPanel() {
         </Col>
       </Row>
 
-      {/* 底栏：保存 / 重置（与 Judge 页一致的体感） */}
+      {/* 底栏：保存 / 重置（与 Judge 页保存条同款：不透明卡面 + shadow-2 + r-md + Badge 脏标） */}
       {dirty && (
         <div
           style={{
             position: 'sticky',
             bottom: 0,
             marginTop: 16,
-            padding: '12px 20px',
-            background: 'rgba(255,255,255,0.92)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid var(--am-border)',
-            borderRadius: 10,
+            padding: '12px 16px',
+            background: 'var(--am-bg-card)',
+            border: '1px solid var(--am-border-subtle)',
+            borderRadius: 'var(--am-r-md)',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            boxShadow: '0 -4px 16px rgba(15,23,42,0.06)',
+            gap: 12,
+            boxShadow: 'var(--am-shadow-2)',
+            zIndex: 10,
           }}
         >
           <Space>
@@ -2091,7 +2083,7 @@ function AuditPanel() {
       width: 165,
       render: (v: string) => (
         <Tooltip title={dayjs(v).format('YYYY-MM-DD HH:mm:ss')}>
-          <Text style={{ fontSize: 13 }}>{dayjs(v).format('MM-DD HH:mm:ss')}</Text>
+          <Text style={{ fontSize: 13, ...NUM_STYLE }}>{dayjs(v).format('MM-DD HH:mm:ss')}</Text>
         </Tooltip>
       ),
     },
@@ -2104,10 +2096,10 @@ function AuditPanel() {
     {
       title: '配置项',
       dataIndex: 'config_key',
-      width: 250,
+      width: 280,
       render: (v: string, row) => (
         <Space size={6}>
-          <Text style={{ fontSize: 13, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+          <Text style={{ fontSize: 13, fontFamily: 'var(--am-font-mono)' }}>
             {v}
           </Text>
           {row.is_secret === 1 && (
@@ -2130,11 +2122,15 @@ function AuditPanel() {
     {
       title: '旧值',
       dataIndex: 'old_value',
+      width: 240,
+      ellipsis: true,
       render: (v: string | null, row) => renderValue(v, row.is_secret === 1, row.id, 'old'),
     },
     {
       title: '新值',
       dataIndex: 'new_value',
+      width: 240,
+      ellipsis: true,
       render: (v: string | null, row) => renderValue(v, row.is_secret === 1, row.id, 'new'),
     },
     {
@@ -2156,7 +2152,7 @@ function AuditPanel() {
             {v}
           </Tag>
         ) : (
-          <Text type="secondary">—</Text>
+          EMPTY_DASH
         ),
     },
   ];
@@ -2218,6 +2214,8 @@ function AuditPanel() {
         dataSource={data?.items ?? []}
         loading={loading}
         size="middle"
+        scroll={{ x: 1150 }}
+        className="am-sticky-table"
         pagination={{
           current: page + 1,
           pageSize: size,

@@ -154,14 +154,21 @@ export default function MainLayout() {
           {/* 折叠按钮：用 hitarea 包一下，避免 16px 图标点不准 */}
           <span
             onClick={toggleCollapsed}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                toggleCollapsed();
+              }
+            }}
             role="button"
+            tabIndex={0}
             aria-label={collapsed ? '展开菜单' : '收起菜单'}
             style={{
               cursor: 'pointer',
               fontSize: 18,
               padding: 6,
               color: 'var(--am-ink-3)',
-              borderRadius: 6,
+              borderRadius: 'var(--am-r-sm)',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',

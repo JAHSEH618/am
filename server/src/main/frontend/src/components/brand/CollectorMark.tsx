@@ -15,6 +15,7 @@ import zcodeLogo from '../../assets/collectors/zcode.png';
 import openclawLogo from '../../assets/collectors/openclaw.png';
 import openharnessLogo from '../../assets/collectors/openharness.png';
 import hermesLogo from '../../assets/collectors/hermes.png';
+import { ink } from '../../styles/tokens';
 
 /** type_code → 打包 logo 资源 URL。 */
 const BUNDLED_LOGO: Record<string, string> = {
@@ -74,7 +75,7 @@ export function CollectorMark({
     justifyContent: 'center',
     overflow: 'hidden',
     opacity: enabled ? 1 : 0.35,
-    transition: 'opacity .2s',
+    transition: 'opacity var(--am-dur) var(--am-ease)',
   };
 
   // 官方 logo：白底圆角 tile + 居中图标（彩色 / 单色字形皆能识别）
@@ -96,7 +97,7 @@ export function CollectorMark({
 
   // 回落：品牌色 tile + 自适应对比度首字母（修掉浅底白字几乎看不见的问题）
   const L = luminance(color);
-  const fg = L > 0.6 ? '#1d1f26' : '#fff';
+  const fg = L > 0.6 ? ink[1] : '#fff';
   const border = L > 0.82 ? '1px solid var(--am-border)' : 'none';
   return (
     <div

@@ -44,6 +44,7 @@ import {
   STALE_VISUAL_THRESHOLD_SECONDS,
 } from '../utils/format';
 import StatusDot from '../components/StatusDot';
+import { HeroCard, MetricRow } from '../components/HeroCard';
 
 // v2.7.1：HTTP 兜底 polling 间隔。SSE 实时 patch 已经覆盖大部分高频更新（status/tool/model/project），
 // polling 主要负责拉今日累计指标（today_messages / today_tokens / top 列表）和"上次没开页时漏掉的"
@@ -633,93 +634,7 @@ function InsightAuditProgressCard(props: {
   );
 }
 
-// ===== Hero 卡 / Metric 行 ============================================
-//
-// 这俩组件足够小、且只在 Dashboard 里复用，先内置在文件里；如果 Realtime / Cost
-// 也要 Hero 风格，再抽到 components/HeroCard.tsx。
-
-type Tone = 'indigo' | 'emerald' | 'amber' | 'rose';
-
-// Hero chip 配色：浅底 + 饱和 icon；四个 KPI 各一个语义色，全部走设计 token（CSS 变量）。
-const TONE_PALETTE: Record<Tone, { bg: string; fg: string }> = {
-  indigo:  { bg: 'var(--am-brand-bg)',   fg: 'var(--am-brand)' },
-  emerald: { bg: 'var(--am-success-bg)', fg: 'var(--am-success-fg)' },
-  amber:   { bg: 'var(--am-warning-bg)', fg: 'var(--am-warning-fg)' },
-  rose:    { bg: 'var(--am-rose-bg)',    fg: 'var(--am-rose-fg)' },
-};
-
-interface HeroCardProps {
-  label: string;
-  value: React.ReactNode;
-  suffix?: string;
-  subnote?: React.ReactNode;
-  icon?: React.ReactNode;
-  tone: Tone;
-  /** 可点击：例如跳转 AI 会话「仅活跃」视图 */
-  onClick?: () => void;
-  /** 无障碍名称（onClick 时建议传入） */
-  ariaLabel?: string;
-  /** 右上角附加控件（如窗口选择器）。 */
-  extra?: React.ReactNode;
-}
-
-function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabel, extra }: HeroCardProps) {
-  const c = TONE_PALETTE[tone];
-  const interactive = !!onClick;
-  return (
-    <Card
-      size="small"
-      styles={{ body: { padding: 18, cursor: interactive ? 'pointer' : undefined } }}
-      style={{ ['--am-hero-tint' as string]: c.bg, position: 'relative' }}
-      className={`am-hero${interactive ? ' am-clickable' : ''}`}
-      onClick={onClick}
-      role={interactive ? 'button' : undefined}
-      tabIndex={interactive ? 0 : undefined}
-      aria-label={interactive ? (ariaLabel || label) : undefined}
-      onKeyDown={
-        interactive
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onClick?.();
-              }
-            }
-          : undefined
-      }
-    >
-      {extra != null && (
-        <div className="am-hero-extra" onClick={(e) => e.stopPropagation()}>
-          {extra}
-        </div>
-      )}
-      <div className="am-hero-top">
-        <span className="am-hero-chip" style={{ background: c.bg, color: c.fg }}>
-          {icon}
-        </span>
-        <span className="am-hero-label">{label}</span>
-      </div>
-      <div className="am-hero-value">
-        {value}
-        {suffix && <span className="am-hero-suffix">{suffix}</span>}
-      </div>
-      {subnote != null && subnote !== '' && <div className="am-hero-subnote">{subnote}</div>}
-    </Card>
-  );
-}
-
-interface MetricRowProps {
-  label: string;
-  value: React.ReactNode;
-}
-
-function MetricRow({ label, value }: MetricRowProps) {
-  return (
-    <div className="am-metric-row">
-      <span className="am-metric-label">{label}</span>
-      <span className="am-metric-value">{value}</span>
-    </div>
-  );
-}
+// Hero 卡 / Metric 行已抽到 components/HeroCard.tsx（供 People / Analysis 等页复用，杜绝各页手搓离格指标卡）。
 
 /** 把"距上次活动多少秒"格式化成简短的人类可读串，给"陈旧"提示用 */
 function formatStale(seconds: number): string {

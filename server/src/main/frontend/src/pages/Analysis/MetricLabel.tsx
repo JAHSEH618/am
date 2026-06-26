@@ -18,8 +18,6 @@ interface Props {
  *
  * <p>所有"测评指标"前面统一用本组件，鼠标放在 "?" 图标上展示完整解释。
  * 文案集中在 {@link METRIC_HELP}，新增指标只需在字典里加一行。
- *
- * gz
  */
 export default function MetricLabel({ name, label, help, size = 'md' }: Props) {
   const dict = name ? METRIC_HELP[name as string] : undefined;

@@ -50,7 +50,7 @@ export default function Alerts() {
       size="small"
       title={
         <Space wrap>
-          <span>异常告警</span>
+          <span style={{ fontWeight: 600 }}>异常告警</span>
           <Select
             value={type}
             onChange={(v) => { setType(v); setPage(0); }}
@@ -70,6 +70,8 @@ export default function Alerts() {
         size="small"
         loading={loading}
         dataSource={data?.items ?? []}
+        locale={{ emptyText: '暂无告警' }}
+        scroll={{ x: 1000 }}
         pagination={{
           current: page + 1,
           pageSize: size,

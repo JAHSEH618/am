@@ -3,6 +3,7 @@ import type { ColumnsType } from 'antd/es/table';
 import type { TablePaginationConfig } from 'antd/es/table/interface';
 import type { ProjectGitCommit } from '../api/types';
 import { formatTime } from '../utils/format';
+import { emptyCell, EMPTY_DASH } from '../utils/table';
 import { GitCommitChangeCell } from './GitCommitChangeCell';
 
 const { Text } = Typography;
@@ -26,7 +27,6 @@ export type GitCommitColumnsOptions = {
 
 /**
  * 项目透视 / 员工数据共用：Git 提交明细弹框表格列（变更列 Popover 行为一致）
- * gz
  */
 export function buildGitCommitTableColumns(opts: GitCommitColumnsOptions = {}): ColumnsType<ProjectGitCommit> {
   const { includeRepo = false } = opts;
@@ -43,7 +43,7 @@ export function buildGitCommitTableColumns(opts: GitCommitColumnsOptions = {}): 
           {v}
         </Text>
       ) : (
-        <Text type="secondary">—</Text>
+        EMPTY_DASH
       ),
   };
 
@@ -60,7 +60,7 @@ export function buildGitCommitTableColumns(opts: GitCommitColumnsOptions = {}): 
       dataIndex: 'commit_hash',
       key: 'commit_hash',
       width: 88,
-      render: (h: string) => <Text code>{h?.slice(0, 7) || '—'}</Text>,
+      render: (h: string) => (h ? <Text code>{h.slice(0, 7)}</Text> : EMPTY_DASH),
     },
     ...(includeRepo ? [repoColumn] : []),
     {
@@ -68,7 +68,7 @@ export function buildGitCommitTableColumns(opts: GitCommitColumnsOptions = {}): 
       dataIndex: 'message_subject',
       key: 'message_subject',
       ellipsis: true,
-      render: (v: string | null) => v || <Text type="secondary">—</Text>,
+      render: (v: string | null) => emptyCell(v),
     },
     {
       title: '分支',
@@ -76,7 +76,7 @@ export function buildGitCommitTableColumns(opts: GitCommitColumnsOptions = {}): 
       key: 'branch_name',
       width: 120,
       ellipsis: true,
-      render: (v: string | null) => v || '—',
+      render: (v: string | null) => emptyCell(v),
     },
     {
       title: '变更',

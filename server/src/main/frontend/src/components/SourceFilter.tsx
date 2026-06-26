@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Select } from 'antd';
+import StatusDot from './StatusDot';
 import type { MonitorTarget } from '../api/types';
 import { presetColorToHex } from '../utils/format';
 
@@ -45,7 +46,7 @@ export default function SourceFilter({
         value: ALL_VALUE,
         label: (
           <span style={dotRow}>
-            <span style={{ ...dot, background: 'var(--am-ink-5)' }} />
+            <StatusDot color="var(--am-ink-5)" />
             <span>全部来源</span>
             <span style={count}>{enabled.length}</span>
           </span>
@@ -55,7 +56,7 @@ export default function SourceFilter({
         value: t.type_code,
         label: (
           <span style={dotRow}>
-            <span style={{ ...dot, background: presetColorToHex(t.display_color) }} />
+            <StatusDot color={presetColorToHex(t.display_color)} />
             <span>{t.type_name}</span>
           </span>
         ),
@@ -82,17 +83,9 @@ const dotRow: React.CSSProperties = {
   gap: 8,
 };
 
-const dot: React.CSSProperties = {
-  display: 'inline-block',
-  width: 8,
-  height: 8,
-  borderRadius: 4,
-  flexShrink: 0,
-};
-
 const count: React.CSSProperties = {
   marginLeft: 'auto',
-  fontSize: 12,
+  fontSize: 'var(--am-fs-xs)',
   color: 'var(--am-ink-3)',
   fontVariantNumeric: 'tabular-nums',
 };

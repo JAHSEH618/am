@@ -5,13 +5,13 @@ import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './styles/global.css';
-import { indigo, semantic, ink, surface, border, radius, fontFamily, fontSize } from './styles/tokens';
+import { indigo, semantic, ink, surface, border, radius, shadow, fontFamily, fontSize } from './styles/tokens';
 
 // 全局 design tokens（v3 · Apple-native / indigo）。统一从 styles/tokens.ts 取值，
 // 与 global.css 的 :root 变量同源。
 //
 // 取舍：
-//   - 单一强调色 = 品牌靛紫 indigo-600 (#4f46e5)，与 logo / 字标同源；不再有「功能蓝 vs 品牌靛」分裂；
+//   - 单一强调色 = 品牌钴蓝 cobalt-600 (#1a52dc)，与 logo / 字标同源（v4：去紫，更高级）；
 //   - 圆角走苹果连续档：卡片 14 / 控件 8 / 紧凑 6；
 //   - Layout 表面透明，交给 global.css 的 Liquid Glass 材质层；
 //   - 字号沿用 14，但全局走 tabular-nums（global.css），数据表格不抖动；
@@ -28,6 +28,12 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
     colorWarning: semantic.warning.base,
     colorError: semantic.error.base,
     colorTextBase: ink[1],
+    // 墨色 5 级阶梯显式钉死：不再让 AntD 用 alpha 推导次级色，保证信息文字 ≥ 4.5:1 且与 tokens.ts 同源。
+    colorText: ink[2],            // 正文 / 主要标签 ≈ 8.4:1
+    colorTextSecondary: ink[3],   // 次级标签 / 说明  ≈ 4.9:1（信息文字下限）
+    colorTextTertiary: ink[4],    // 弱提示 / 大字辅文（不承载关键信息）
+    colorTextQuaternary: ink[5],  // 占位符 / 禁用
+    colorTextPlaceholder: ink[5], // 输入占位
     // Layout 表面交给 global.css 的 Liquid Glass 材质层接管（透明 → 露出底层柔光背景）
     colorBgLayout: 'transparent',
     colorBgContainer: surface.card,
@@ -41,11 +47,10 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
     fontSizeSM: fontSize.sm,
     fontFamily,
     controlHeight: 32,
-    // 苹果分层投影：贴地接触阴影 + 柔和环境阴影（替掉 AntD 默认偏灰单层投影）
-    boxShadow:
-      '0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px -6px rgba(15, 23, 42, 0.12)',
-    boxShadowSecondary:
-      '0 2px 4px rgba(15, 23, 42, 0.05), 0 16px 40px -12px rgba(15, 23, 42, 0.18)',
+    // 苹果分层投影：贴地接触阴影 + 柔和环境阴影。直接取 tokens.shadow（= --am-shadow-1/2），
+    // 不再手写第三套数值，坐实「单一事实源」。
+    boxShadow: shadow.sm,
+    boxShadowSecondary: shadow.md,
   },
   components: {
     // 卡片：默认带极淡分割，标题区缩到 12px padding 才不至于"标题占半个卡片"
@@ -75,7 +80,7 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
       itemBorderRadius: 8,
       itemMarginInline: 8,
       itemHeight: 38,
-      itemSelectedBg: 'rgba(79, 70, 229, 0.10)',
+      itemSelectedBg: 'rgba(26, 82, 220, 0.10)',
       itemSelectedColor: indigo[700],
     },
     Tag: {
@@ -86,7 +91,7 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
       contentFontSize: 22,
     },
     Button: {
-      primaryShadow: '0 1px 2px rgba(79, 70, 229, 0.28)',
+      primaryShadow: '0 1px 2px rgba(26, 82, 220, 0.28)',
       defaultShadow: 'none',
     },
     Segmented: {

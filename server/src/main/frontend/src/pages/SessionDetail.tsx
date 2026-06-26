@@ -26,6 +26,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MessagePartList from '../components/MessagePartList';
+import StatusDot from '../components/StatusDot';
 import {
   fetchMonitorTargets,
   fetchSession,
@@ -46,7 +47,6 @@ import {
   messageDeltaTagColor,
   formatTime,
   formatTokens,
-  statusColor,
   statusLabel,
   targetTypeColor,
   targetTypeLabel,
@@ -233,7 +233,7 @@ export default function SessionDetail() {
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} type="text">
           返回
         </Button>
-        <Text strong style={{ fontSize: 18, color: 'var(--am-ink)' }}>
+        <Text strong style={{ fontSize: 'var(--am-fs-xl)', color: 'var(--am-ink)' }}>
           会话 #{session.id}
         </Text>
         <Tag
@@ -244,15 +244,7 @@ export default function SessionDetail() {
         </Tag>
         <Space size={6}>
           {/* v2.8 起去掉"离线"灰化降级标签，只展示原始 status，与 Sessions 列表口径一致。 */}
-          <span
-            style={{
-              display: 'inline-block',
-              width: 8,
-              height: 8,
-              borderRadius: 4,
-              background: statusColor(session.status),
-            }}
-          />
+          <StatusDot status={session.status} />
           <Text type="secondary" style={{ fontSize: 13 }}>
             {statusLabel(session.status)}
           </Text>
@@ -466,16 +458,18 @@ interface RoleStyle {
   border: string;
 }
 
-// 消息气泡配色（v1.6 设计系统，与 Hero 卡 Tone 同源）：
-//   user      indigo   主操作语义色
-//   assistant emerald  执行成功 / 输出
-//   thinking  violet   辅助 / 思考
-//   tool      amber    工具 / 状态注意
+// 消息气泡配色（设计系统语义色，与 Hero 卡 Tone 同源）：color 统一取各色系的 -fg 达标深色档，
+// 既作角色 Tag 填充也作时间轴圆点（白底上对比一致）；bg / border 取同色系浅底 + 浅描边。
+//   user      indigo  主操作语义色
+//   subagent  sky     子 Task
+//   assistant emerald 执行成功 / 输出
+//   thinking  violet  辅助 / 思考
+//   tool      amber   工具 / 状态注意
 const roleStyles: Record<string, RoleStyle> = {
-  user:      { color: 'var(--am-brand)', icon: <UserOutlined />,  label: '用户',     bg: 'var(--am-brand-bg)', border: 'var(--am-brand-border)' },
-  subagent:  { color: 'var(--am-sky)', icon: <ApartmentOutlined />, label: 'Task', bg: 'var(--am-sky-bg)', border: 'var(--am-sky-border)' },
+  user:      { color: 'var(--am-brand-fg)', icon: <UserOutlined />,  label: '用户',     bg: 'var(--am-brand-bg)', border: 'var(--am-brand-border)' },
+  subagent:  { color: 'var(--am-sky-fg)', icon: <ApartmentOutlined />, label: 'Task', bg: 'var(--am-sky-bg)', border: 'var(--am-sky-border)' },
   assistant: { color: 'var(--am-success-fg)', icon: <RobotOutlined />, label: '助手',     bg: 'var(--am-success-bg)', border: 'var(--am-success-border)' },
-  thinking:  { color: 'var(--am-violet)', icon: <BulbOutlined />,  label: 'Thinking', bg: 'var(--am-violet-bg)', border: 'var(--am-violet-border)' },
+  thinking:  { color: 'var(--am-violet-fg)', icon: <BulbOutlined />,  label: 'Thinking', bg: 'var(--am-violet-bg)', border: 'var(--am-violet-border)' },
   tool:      { color: 'var(--am-warning-fg)', icon: <ToolOutlined />,  label: '工具',     bg: 'var(--am-warning-bg)', border: 'var(--am-warning-border)' },
 };
 
@@ -572,7 +566,7 @@ function MessageBubble({
         style={{
           background: s.bg,
           padding: 12,
-          borderRadius: 6,
+          borderRadius: 'var(--am-r-sm)',
           border: `1px solid ${s.border}`,
         }}
       >
@@ -586,15 +580,14 @@ function MessageBubble({
         ) : (
           <>
             <Paragraph
+              // am-break：无空格长 token（URL / 路径 / JSON / 哈希）也折行，避免横向撑破消息容器
+              className="am-break"
               style={{
                 whiteSpace: 'pre-wrap',
-                // 无空格长 token 也折行，避免长 URL / 路径 / JSON 横向撑破消息容器
-                overflowWrap: 'anywhere',
-                wordBreak: 'break-word',
                 margin: 0,
                 fontSize: 13,
                 fontStyle: m.role === 'thinking' ? 'italic' : 'normal',
-                fontFamily: isMono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+                fontFamily: isMono ? 'var(--am-font-mono)' : undefined,
                 color: m.role === 'thinking' ? 'var(--am-violet-fg)' : undefined,
               }}
             >
