@@ -10,6 +10,11 @@ import codexLogo from '../../assets/collectors/codex.svg';
 import opencodeLogo from '../../assets/collectors/opencode.svg';
 import kimicodeLogo from '../../assets/collectors/kimicode.png';
 import zcodeLogo from '../../assets/collectors/zcode.png';
+// 小众工具的官方标识取自其上游项目（见 agent monitor 源码注释消歧）：
+// openclaw=github.com/openclaw、openharness=HKUDS/OpenHarness、hermes=Nous Research
+import openclawLogo from '../../assets/collectors/openclaw.png';
+import openharnessLogo from '../../assets/collectors/openharness.png';
+import hermesLogo from '../../assets/collectors/hermes.png';
 
 /** type_code → 打包 logo 资源 URL。 */
 const BUNDLED_LOGO: Record<string, string> = {
@@ -19,6 +24,9 @@ const BUNDLED_LOGO: Record<string, string> = {
   opencode: opencodeLogo,
   kimicode: kimicodeLogo,
   zcode: zcodeLogo,
+  openclaw: openclawLogo,
+  openharness: openharnessLogo,
+  hermes: hermesLogo,
 };
 
 /** 相对亮度（0~1），用于决定回落标的字色 / 是否描边。 */
