@@ -45,8 +45,15 @@ to this user (alongside `git config user.email`).
 
 ## Reporting loop
 
-`internal/reporter/` is the heart. `Run(ctx)` ticks every `ReportIntervalMs` (**default 120000 ms / 2 min**;
-legacy short defaults are auto-upgraded). Each tick snapshots all policy-enabled providers **in parallel**
+`internal/reporter/` is the heart. `Run(ctx)` ticks on an **adaptive cadence**: the idle baseline is
+`ReportIntervalMs` (**default 120000 ms / 2 min**; legacy short defaults are auto-upgraded), but whenever the
+last report's response carries `active=true` (server saw a non-idle session with activity in the last ~5 min)
+the loop drops to `ActiveReportIntervalMs` (**default 15 s**, server-pushable at register, clamped to
+`[5 s, baseline]`) so the realtime page / dashboard are near-live while someone is working; it falls back to
+the 2-min baseline when idle. Cadence is driven by `Reporter.lastActive` + `ticker.Reset`; the interval-select
+logic (`resolveActiveInterval` / `nextInterval`) is unit-tested in `adaptive_test.go`. Note
+`ConfigureActivityTimeouts` stays scaled to the **baseline** interval so status windows don't flap with the
+cadence. Each tick snapshots all policy-enabled providers **in parallel**
 (one failing provider is isolated, never aborts the tick), slices per-session message cursors, gzips bodies
 ≥1 KB, and `POST`s to `/api/v1/agent/report`. Resilience features to be aware of before touching this code:
 - **Message cursors** (`cursors.go`): per `(provider, sessionID)` high-water marks persisted atomically to

@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/am/aiwatch-agent/internal/apiclient"
@@ -68,6 +69,11 @@ type Reporter struct {
 	pending map[string]MsgCursor
 
 	tickMu sync.Mutex
+
+	// lastActive 缓存最近一次成功上报时服务端返回的 active 标志，驱动 Run 的自适应 cadence
+	// （active=true → fast 间隔，false → 基线间隔）。tickOnce 写、Run 循环读，当前同 goroutine，
+	// 用 atomic 防御未来可能的并发触发，零额外成本。
+	lastActive atomic.Bool
 
 	// v2.8 新增：bootstrap 模式标志。
 	// true  = 启动时 cursors 为空，已把所有 LookbackSetter provider 切到无穷窗口；
@@ -160,14 +166,19 @@ func (r *Reporter) Run(ctx context.Context) error {
 	if r.outbox != nil {
 		pending = r.outbox.Pending()
 	}
-	logger.Infof("reporter started: interval=%s report_timeout=%s providers=%d installed=%d %v registered=%v cursors=%d outbox_pending=%d bootstrap=%v",
-		interval, r.cfg.ReportTimeout(), len(all), len(installed), installed, r.cfg.IsRegistered(), r.cursors.Size(), pending, r.bootstrap)
+	// 自适应 cadence：fast = 活跃时段快报间隔（默认 15s / 服务端可下发），永不超过 interval 基线。
+	// 状态判定窗口（ConfigureActivityTimeouts 上面已按 interval 基线缩放）保持稳定，不随 cadence 抖动，
+	// 否则会出现 active→idle→active 的反馈震荡。
+	fast := resolveActiveInterval(r.cfg.ActiveReportIntervalMs, interval)
+	logger.Infof("reporter started: interval=%s active_interval=%s report_timeout=%s providers=%d installed=%d %v registered=%v cursors=%d outbox_pending=%d bootstrap=%v",
+		interval, fast, r.cfg.ReportTimeout(), len(all), len(installed), installed, r.cfg.IsRegistered(), r.cursors.Size(), pending, r.bootstrap)
 
 	if err := r.tickOnce(ctx); err != nil {
 		logger.Warnf("first report failed: %v", err)
 	}
 
-	ticker := time.NewTicker(interval)
+	// 首 tick 后即按 active 信号决定下个间隔；每个 tick 末 Reset 一次，使 cadence 跟随活跃度。
+	ticker := time.NewTicker(r.nextInterval(fast, interval))
 	defer ticker.Stop()
 
 	for {
@@ -179,8 +190,37 @@ func (r *Reporter) Run(ctx context.Context) error {
 			if err := r.tickOnce(ctx); err != nil {
 				logger.Warnf("report failed: %v", err)
 			}
+			ticker.Reset(r.nextInterval(fast, interval))
 		}
 	}
+}
+
+// minActiveReportInterval 是自适应快报间隔的硬下限，避免误配把全员压到亚秒级上报风暴。
+const minActiveReportInterval = 5 * time.Second
+
+// resolveActiveInterval 解析活跃时段快报间隔：cfg 优先，缺省走 DefaultActiveReportIntervalMs，
+// 夹到 [minActiveReportInterval, slow]——fast 模式不应比稳态基线还慢；运维把 interval 调到 ≤15s 时
+// 自适应自然退化为定频，无副作用。
+func resolveActiveInterval(cfgActiveMs int64, slow time.Duration) time.Duration {
+	fast := time.Duration(cfgActiveMs) * time.Millisecond
+	if fast <= 0 {
+		fast = time.Duration(config.DefaultActiveReportIntervalMs) * time.Millisecond
+	}
+	if fast < minActiveReportInterval {
+		fast = minActiveReportInterval
+	}
+	if fast > slow {
+		fast = slow
+	}
+	return fast
+}
+
+// nextInterval 按最近一次上报的 active 信号选择下个 tick 间隔。
+func (r *Reporter) nextInterval(fast, slow time.Duration) time.Duration {
+	if r.lastActive.Load() {
+		return fast
+	}
+	return slow
 }
 
 // ensureRegistered 在每个 tick 入口调用：
@@ -420,6 +460,10 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 
 	// 3) 上报成功：把暂存的游标 commit 到内存 + 落盘
 	r.commitPendingCursors()
+
+	// 自适应 cadence 信号：记录服务端本次判定的 active，供 Run 决定下个 tick 间隔。
+	// 仅成功路径更新——失败 / overlap-skip 的 tick 不改 cadence，避免瞬态网络抖动拖慢活跃上报。
+	r.lastActive.Store(summary.Active)
 
 	payloadMsgCount := countSnapshotMessages(monitors)
 	_ = payloadMsgCount // 保留计数供后续诊断；dedupe replay 快进已禁用。

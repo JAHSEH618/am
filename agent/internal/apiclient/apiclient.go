@@ -100,11 +100,12 @@ type RegisterRequest struct {
 
 // RegisterResponse 与服务端 AgentRegisterResponse 一一对应。
 type RegisterResponse struct {
-	AgentID           string                `json:"agent_id"`
-	AgentSecret       string                `json:"agent_secret"`
-	ReportIntervalMs  int64                 `json:"report_interval_ms"`
-	TimestampWindowMs int64                 `json:"timestamp_window_ms"`
-	MonitorPolicy     *config.MonitorPolicy `json:"monitor_policy,omitempty"`
+	AgentID                string                `json:"agent_id"`
+	AgentSecret            string                `json:"agent_secret"`
+	ReportIntervalMs       int64                 `json:"report_interval_ms"`
+	ActiveReportIntervalMs int64                 `json:"active_report_interval_ms"`
+	TimestampWindowMs      int64                 `json:"timestamp_window_ms"`
+	MonitorPolicy          *config.MonitorPolicy `json:"monitor_policy,omitempty"`
 }
 
 // Register 调 /api/v1/agent/register。

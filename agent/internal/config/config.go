@@ -28,8 +28,13 @@ import (
 )
 
 const (
-	// DefaultReportIntervalMs 默认上报间隔（毫秒）。推广期默认 2min。
+	// DefaultReportIntervalMs 默认上报间隔（毫秒）。推广期默认 2min（空闲基线）。
 	DefaultReportIntervalMs = 120000
+	// DefaultActiveReportIntervalMs 活跃时段的快速上报间隔（毫秒），默认 15s。
+	// 自适应上报：服务端上报响应 active=true（有非 idle 且近 5min 活动的会话）时，reporter
+	// 切到这个更短的间隔，让大盘 / 实时页近实时；空闲（active=false）时回落 DefaultReportIntervalMs，
+	// 避免全员 24/7 高频上报。仅影响 tick 节奏，不影响状态判定窗口（仍按基线缩放）。
+	DefaultActiveReportIntervalMs = 15000
 	// DefaultTimestampWindowMs 服务端默认时间戳容忍窗口。
 	DefaultTimestampWindowMs = 300000
 	// DefaultGitLogIntervalMs gitlog Provider 默认扫描周期（5 分钟）。
@@ -55,6 +60,9 @@ type Config struct {
 	AgentID           string `json:"agent_id,omitempty"`
 	AgentSecret       string `json:"agent_secret,omitempty"`
 	ReportIntervalMs  int64  `json:"report_interval_ms,omitempty"`
+	// ActiveReportIntervalMs：活跃时段的快速上报间隔（毫秒）；0 或未配置时用 DefaultActiveReportIntervalMs。
+	// 服务端 /register 下发，reporter.Run 据 active 信号在它与 ReportIntervalMs 之间切换 cadence。
+	ActiveReportIntervalMs int64 `json:"active_report_interval_ms,omitempty"`
 	// ReportTimeoutMs：单次 /api/v1/agent/report HTTP 超时（毫秒）；0 或未配置时用 DefaultReportTimeoutMs。
 	ReportTimeoutMs   int64  `json:"report_timeout_ms,omitempty"`
 	TimestampWindowMs int64  `json:"timestamp_window_ms,omitempty"`

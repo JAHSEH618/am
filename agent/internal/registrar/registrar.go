@@ -63,6 +63,7 @@ func EnsureRegistered(ctx context.Context, cfg *config.Config, agentVersion, bin
 	cfg.AgentID = resp.AgentID
 	cfg.AgentSecret = resp.AgentSecret
 	cfg.ReportIntervalMs = resp.ReportIntervalMs
+	cfg.ActiveReportIntervalMs = resp.ActiveReportIntervalMs
 	cfg.TimestampWindowMs = resp.TimestampWindowMs
 	if cfg.ReportTimeoutMs <= 0 {
 		cfg.ReportTimeoutMs = config.DefaultReportTimeoutMs

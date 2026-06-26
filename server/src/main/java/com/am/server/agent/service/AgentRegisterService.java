@@ -44,6 +44,15 @@ public class AgentRegisterService {
      * 客户端 cfg.report_interval_ms 取此值并落盘到 config.json，后续 tick 全部按这个节奏跑。
      */
     private static final long DEFAULT_REPORT_INTERVAL_MS = 120_000L;
+
+    /**
+     * 服务端下发给客户端的「活跃时段」快速上报间隔。
+     *
+     * <p>自适应上报：客户端收到上报响应 {@code active=true}（有非 idle 且近 5min 活动的会话）时，
+     * tick 节奏切到此值（默认 15s），让大盘 / 实时页近实时；空闲回落 {@link #DEFAULT_REPORT_INTERVAL_MS}，
+     * 不抬高全员空闲负载。仅在新装 / 重注册时下发，老 agent 用客户端内置默认。
+     */
+    private static final long DEFAULT_ACTIVE_REPORT_INTERVAL_MS = 15_000L;
     private static final long DEFAULT_TIMESTAMP_WINDOW_MS = 300_000L;
 
     private final EmployeeRepository employeeRepository;
@@ -117,6 +126,7 @@ public class AgentRegisterService {
                 .agentId(device.getAgentId())
                 .agentSecret(device.getAgentSecret())
                 .reportIntervalMs(DEFAULT_REPORT_INTERVAL_MS)
+                .activeReportIntervalMs(DEFAULT_ACTIVE_REPORT_INTERVAL_MS)
                 .timestampWindowMs(DEFAULT_TIMESTAMP_WINDOW_MS)
                 .monitorPolicy(activeTargetTypesProvider.snapshotAgentPolicy())
                 .build();

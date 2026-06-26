@@ -326,19 +326,20 @@ func cmdStatus() error {
 
 	logPath, _ := logger.DefaultLogPath()
 	out := map[string]any{
-		"config_path":      path,
-		"log_path":         logPath,
-		"server_url":       cfg.ServerURL,
-		"user_code":        cfg.UserCode,
-		"agent_id":         cfg.AgentID,
-		"registered":       cfg.IsRegistered(),
-		"interval_ms":      cfg.ReportIntervalMs,
-		"monitor_policy":   cfg.MonitorPolicy,
-		"watch_dir":        watchDirOrCwd(),
-		"agent_version":    Version,
-		"supported_agents": supported,
-		"installed_agents": installed,
-		"agent_statuses":   statuses,
+		"config_path":        path,
+		"log_path":           logPath,
+		"server_url":         cfg.ServerURL,
+		"user_code":          cfg.UserCode,
+		"agent_id":           cfg.AgentID,
+		"registered":         cfg.IsRegistered(),
+		"interval_ms":        cfg.ReportIntervalMs,
+		"active_interval_ms": cfg.ActiveReportIntervalMs,
+		"monitor_policy":     cfg.MonitorPolicy,
+		"watch_dir":          watchDirOrCwd(),
+		"agent_version":      Version,
+		"supported_agents":   supported,
+		"installed_agents":   installed,
+		"agent_statuses":     statuses,
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
