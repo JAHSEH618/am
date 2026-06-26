@@ -4,6 +4,56 @@ import { statusHue } from '../styles/tokens';
 /** 前端「多久未动」灰化提示阈值；应 ≥ 2min 上报间隔 × 1.5，避免 tick 间误灰。 */
 export const STALE_VISUAL_THRESHOLD_SECONDS = 180;
 
+/**
+ * 员工显示名规整。
+ *
+ * <p>`user_display` 形如「姓名|工号/邮箱」，且姓名常带 git author 残留的尖括号
+ * （如 `<祁连博>|<qi_lb@his.com>`）。这里只取「姓名」段并去掉非中文符号，最终只留中文姓名
+ * （保留少数民族姓名间隔号 `·`/`・`）。
+ *
+ * <p>兜底：姓名段无中文时（纯英文名 / 只有工号）退回原姓名段，避免清成空串。
+ */
+export function employeeName(
+  display?: string | null,
+  fallback?: string | null,
+): string {
+  const raw = (display ?? '').trim() || (fallback ?? '').trim();
+  if (!raw) return '';
+  const namePart = raw.split('|')[0].trim();
+  // 保留：CJK 统一表意 一-鿿、扩展 A 㐀-䶿、姓名间隔号 ·(·) ・(・)
+  const cleaned = namePart.replace(/[^一-鿿㐀-䶿·・]/g, '');
+  return cleaned || namePart || raw;
+}
+
+/**
+ * 模型名规整。
+ *
+ * <p>原始模型 ID 常带厂商路由前缀（`anthropic/`、`us.anthropic.`、`models/`）、末尾日期戳
+ * （`-20250514`、`-2024-08-06`）与版本尾巴（`-v1:0`、`-preview`），看板里很难一眼认出是哪个模型。
+ * 这里收成清晰短名：`claude-sonnet-4-20250514` → `claude-sonnet-4`、`gpt-4o-2024-08-06` → `gpt-4o`。
+ *
+ * <p>只做「去噪」不做厂商映射，国产模型（glm / kimi / qwen / deepseek）原样保留，永不误伤；
+ * 去噪后为空（极端脏值）时退回原串。完整版本号仍可在单元格 hover 的 title 里看到。
+ */
+export function modelLabel(raw?: string | null): string {
+  const s = (raw ?? '').trim();
+  if (!s) return '';
+  let id = s.replace(/[<>]/g, '').trim();
+  id = id.replace(/^(?:[\w.\-]+\/)+/, ''); // 去所有路径段前缀 a/b/c -> c
+  id = id.replace(/^(?:us|eu|apac|global)\./i, ''); // bedrock 区域前缀
+  id = id.replace(
+    /^(?:anthropic|openai|google|meta|mistral|deepseek|qwen|moonshot|zhipu)\.(?=[a-z])/i,
+    '',
+  );
+  id = id
+    .replace(/[-_@:]\d{4}-?\d{2}-?\d{2}$/, '') // -20250514 / -2024-08-06
+    .replace(/[-_:]v\d+(?::\d+)?$/i, '') // -v1:0 (bedrock)
+    .replace(/[-_](?:latest|preview|exp|experimental|beta|stable)$/i, '')
+    .replace(/[-_@:]\d{6,}$/, '') // 其它纯数字尾巴 -250514
+    .trim();
+  return id || s;
+}
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds || seconds < 0) return '0 分';
   const h = Math.floor(seconds / 3600);

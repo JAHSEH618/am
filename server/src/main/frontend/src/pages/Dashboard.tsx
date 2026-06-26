@@ -29,6 +29,8 @@ import type {
 } from '../api/types';
 import { useSse } from '../hooks/useSse';
 import {
+  employeeName,
+  modelLabel,
   formatDuration,
   formatTimeFromNow,
   statusLabel,
@@ -774,7 +776,7 @@ function OnlineAgentTable({
       ellipsis: true,
       onCell: mergeCell,
       render: (v: string, row) => {
-        const label = v || row.user_code;
+        const label = employeeName(v, row.user_code);
         const showSeal = row.device_online === false;
         return (
           <span className="am-employee-cell" title={label}>
@@ -905,7 +907,15 @@ function OnlineAgentTable({
       dataIndex: 'current_model',
       width: 180,
       ellipsis: true,
-      render: (v: string | null) => v || <span style={{ color: 'var(--am-ink-5)' }}>—</span>,
+      // 收成清晰短名（去厂商前缀 + 日期戳）；完整原始 ID 留在 hover title 里
+      render: (v: string | null) => {
+        const label = modelLabel(v);
+        return label ? (
+          <span title={v ?? undefined}>{label}</span>
+        ) : (
+          <span style={{ color: 'var(--am-ink-5)' }}>—</span>
+        );
+      },
     },
     // ↓↓ 以下又是按机器合并
     {

@@ -63,6 +63,7 @@ import type {
   MonitorTargetAdmin,
   ScheduledTaskStatus,
 } from '../api/types';
+import { CollectorMark } from '../components/brand/CollectorMark';
 
 const { Text, Paragraph } = Typography;
 
@@ -386,24 +387,12 @@ function AgentCard({
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         {/* 头部：色块 + 名称 + 状态 Badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 8,
-              background: target.display_color,
-              opacity: isEnabled ? 1 : 0.35,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-              fontWeight: 700,
-              fontSize: 14,
-              textTransform: 'uppercase',
-            }}
-          >
-            {target.type_code.slice(0, 2)}
-          </div>
+          <CollectorMark
+            code={target.type_code}
+            name={target.type_name}
+            color={target.display_color}
+            enabled={isEnabled}
+          />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
