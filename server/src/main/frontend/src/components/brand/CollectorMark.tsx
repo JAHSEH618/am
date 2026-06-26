@@ -1,24 +1,24 @@
 import { useState, type CSSProperties } from 'react';
 
-/**
- * 采集器（Agent）品牌图标。
- *
- * <p>「Agent 列表」每张卡片左上角的图标：优先用各工具**官方站点的 favicon/logo**（运行时 `<img>`
- * 加载，仅作展示识别用途），加载失败（无公开 logo / 内网被墙）自动回落到「品牌色 tile + 首字母」。
- *
- * <p>回落标按底色亮度自适应字色（修掉 Cursor / Z Code 浅底白字几乎看不见的问题），浅底再补一道描边。
- */
+// 各采集器官方 logo —— 打包为静态资源，离线可用、零外网请求（仅作展示识别用途）。
+// 素材取自各工具官网 favicon / 官方品牌字形；hermes / openclaw / openharness 无公开 logo，
+// 不在表内即走「品牌色 tile + 首字母」回落标。新增工具图标：把 <code>.svg|png 放进
+// assets/collectors/ 并在下表登记一行即可。
+import cursorLogo from '../../assets/collectors/cursor.svg';
+import claudeLogo from '../../assets/collectors/claude.svg';
+import codexLogo from '../../assets/collectors/codex.svg';
+import opencodeLogo from '../../assets/collectors/opencode.svg';
+import kimicodeLogo from '../../assets/collectors/kimicode.png';
+import zcodeLogo from '../../assets/collectors/zcode.png';
 
-// type_code → 官方站点图标 URL。仅收录有稳定公开站点的工具；其余（hermes / openclaw / openharness）
-// 无公开 logo，留空即走字母标回落。注：claude.ai / openai.com / cursor.com 在部分内网可能不可达，
-// 不可达时同样回落，不影响功能。
-const OFFICIAL_ICON: Record<string, string> = {
-  cursor: 'https://www.cursor.com/favicon.ico',
-  claude: 'https://claude.ai/favicon.ico',
-  codex: 'https://openai.com/favicon.ico',
-  opencode: 'https://opencode.ai/favicon.ico',
-  kimicode: 'https://www.kimi.com/favicon.ico',
-  zcode: 'https://z.ai/favicon.ico',
+/** type_code → 打包 logo 资源 URL。 */
+const BUNDLED_LOGO: Record<string, string> = {
+  cursor: cursorLogo,
+  claude: claudeLogo,
+  codex: codexLogo,
+  opencode: opencodeLogo,
+  kimicode: kimicodeLogo,
+  zcode: zcodeLogo,
 };
 
 /** 相对亮度（0~1），用于决定回落标的字色 / 是否描边。 */
@@ -52,7 +52,7 @@ export function CollectorMark({
   enabled = true,
   size = 36,
 }: CollectorMarkProps) {
-  const url = OFFICIAL_ICON[code];
+  const logo = BUNDLED_LOGO[code];
   const [failed, setFailed] = useState(false);
   const label = name || code;
 
@@ -69,25 +69,24 @@ export function CollectorMark({
     transition: 'opacity .2s',
   };
 
-  // 官方 logo：白底圆角 tile + 居中图标
-  if (url && !failed) {
+  // 官方 logo：白底圆角 tile + 居中图标（彩色 / 单色字形皆能识别）
+  if (logo && !failed) {
     return (
       <div style={{ ...tile, background: '#fff', border: '1px solid var(--am-border)' }}>
         <img
-          src={url}
+          src={logo}
           alt={label}
           width={Math.round(size * 0.64)}
           height={Math.round(size * 0.64)}
           style={{ objectFit: 'contain', display: 'block' }}
           loading="lazy"
-          referrerPolicy="no-referrer"
           onError={() => setFailed(true)}
         />
       </div>
     );
   }
 
-  // 回落：品牌色 tile + 自适应对比度首字母
+  // 回落：品牌色 tile + 自适应对比度首字母（修掉浅底白字几乎看不见的问题）
   const L = luminance(color);
   const fg = L > 0.6 ? '#1d1f26' : '#fff';
   const border = L > 0.82 ? '1px solid var(--am-border)' : 'none';
