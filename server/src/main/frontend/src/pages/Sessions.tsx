@@ -10,6 +10,7 @@ import SourceFilter from '../components/SourceFilter';
 import StatusDot from '../components/StatusDot';
 import { useSse } from '../hooks/useSse';
 import {
+  employeeName,
   formatTime,
   formatTokens,
   statusLabel,
@@ -501,7 +502,14 @@ export default function Sessions() {
                 </Space>
               ),
             },
-            { title: '员工', dataIndex: 'user_display', width: 140, fixed: 'left', ellipsis: true },
+            {
+              title: '员工',
+              dataIndex: 'user_display',
+              width: 140,
+              fixed: 'left',
+              ellipsis: true,
+              render: (v: string, row) => employeeName(v, row.user_code),
+            },
             {
               title: '来源',
               dataIndex: 'target_type',

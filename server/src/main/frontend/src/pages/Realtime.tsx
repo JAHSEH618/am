@@ -7,6 +7,7 @@ import { useSse } from '../hooks/useSse';
 import {
   eventTypeColor,
   eventTypeLabel,
+  employeeName,
   formatMessageDelta,
   formatTime,
   formatTimeFromNow,
@@ -142,7 +143,7 @@ export default function Realtime() {
                       <Space>
                         {/* 标题区唯一的活跃脉冲圆点（active 时脉冲）；下方 body 圆点只承载状态色+灰化，不重复脉冲 */}
                         <StatusDot status={a.current_status} pulse={a.active} />
-                        <Text strong>{a.user_display || a.user_code}</Text>
+                        <Text strong>{employeeName(a.user_display, a.user_code)}</Text>
                         <Text type="secondary" style={{ fontSize: 12 }}>{a.hostname}</Text>
                       </Space>
                     }
@@ -211,7 +212,7 @@ export default function Realtime() {
                         )}
                       </Space>
                       <Text type="secondary" style={{ fontSize: 12 }}>
-                        {formatTime(e.event_time)} · {e.user_display || e.user_code}{sess?.project_name ? ` · ${sess.project_name}` : ''}
+                        {formatTime(e.event_time)} · {employeeName(e.user_display, e.user_code)}{sess?.project_name ? ` · ${sess.project_name}` : ''}
                       </Text>
                     </Space>
                   </List.Item>

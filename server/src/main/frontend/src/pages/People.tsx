@@ -22,7 +22,7 @@ import {
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
 import { categoryAxisGridLeft } from '../utils/chartAxis';
-import { formatDuration, formatTokens, formatTokensM } from '../utils/format';
+import { employeeName, formatDuration, formatTokens, formatTokensM } from '../utils/format';
 import { ink, semantic, indigo } from '../styles/tokens';
 import { HeroCard, MetricRow, type HeroTone } from '../components/HeroCard';
 import { EMPTY_DASH, NUM_STYLE } from '../utils/table';
@@ -171,7 +171,7 @@ export default function People() {
       fixed: 'left',
       width: 180,
       ellipsis: true,
-      render: (v: string, row) => <Space><UserOutlined />{v || row.user_code}</Space>,
+      render: (v: string, row) => <Space><UserOutlined />{employeeName(v, row.user_code)}</Space>,
     },
     {
       title: (
@@ -396,7 +396,7 @@ export default function People() {
       <Modal
         title={
           <Space direction="vertical" size={0}>
-            <span>Git 提交明细 — {gitModalDisplay || gitModalUserCode}</span>
+            <span>Git 提交明细 — {employeeName(gitModalDisplay, gitModalUserCode)}</span>
             {gitModalUserCode && gitModalDisplay && gitModalDisplay !== gitModalUserCode && (
               <Text type="secondary" style={{ fontSize: 13, fontWeight: 'normal' }}>
                 {gitModalUserCode}
@@ -429,7 +429,7 @@ export default function People() {
       <Modal
         title={
           <Space direction="vertical" size={0}>
-            <span>Slash Commands 明细 — {slashModalDisplay || slashModalUserCode}</span>
+            <span>Slash Commands 明细 — {employeeName(slashModalDisplay, slashModalUserCode)}</span>
             {slashModalUserCode && slashModalDisplay && slashModalDisplay !== slashModalUserCode && (
               <Text type="secondary" style={{ fontSize: 13, fontWeight: 'normal' }}>
                 {slashModalUserCode}
@@ -484,7 +484,7 @@ function PersonDetailPanel({
   }
 
   const s = detail.summary;
-  const display = s.user_display || s.user_code || userCode;
+  const display = employeeName(s.user_display, s.user_code || userCode);
 
   const timelineOption = useMemo(() => {
     const dates = detail.daily_timeline.map((p) => p.date);

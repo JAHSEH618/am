@@ -4,6 +4,7 @@ import ReactECharts from 'echarts-for-react';
 import type { AnalysisReportDetail } from '../../api/types';
 import { ink, semantic, accent, indigo } from '../../styles/tokens';
 import { NUM_STYLE } from '../../utils/table';
+import { employeeName } from '../../utils/format';
 import { categoryAxisGridLeft } from '../../utils/chartAxis';
 import { MODE_META, WATCHLIST_META } from './constants';
 import MetricLabel from './MetricLabel';
@@ -205,7 +206,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
   const displayByCode = useMemo(() => {
     const m = new Map<string, string>();
     for (const u of report.users) {
-      m.set(u.user_code, u.user_display || u.user_code);
+      m.set(u.user_code, employeeName(u.user_display, u.user_code));
     }
     return m;
   }, [report.users]);

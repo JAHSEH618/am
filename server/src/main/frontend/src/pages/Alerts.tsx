@@ -3,7 +3,7 @@ import { Card, DatePicker, Select, Space, Table, Tag } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { fetchAlerts } from '../api/client';
 import type { AgentAlert, PageDto } from '../api/types';
-import { formatTime } from '../utils/format';
+import { employeeName, formatTime } from '../utils/format';
 
 const { RangePicker } = DatePicker;
 
@@ -87,7 +87,13 @@ export default function Alerts() {
             render: (v) => <Tag color={LEVEL_COLOR[v] || 'default'}>{v}</Tag>,
           },
           { title: '类型', dataIndex: 'alert_type', width: 200, ellipsis: true },
-          { title: '员工', dataIndex: 'user_display', width: 160, ellipsis: true },
+          {
+            title: '员工',
+            dataIndex: 'user_display',
+            width: 160,
+            ellipsis: true,
+            render: (v: string | null, row) => employeeName(v, row.user_code),
+          },
           { title: 'Agent', dataIndex: 'agent_id', width: 200, ellipsis: true },
           { title: '消息', dataIndex: 'message', ellipsis: true },
           {

@@ -492,8 +492,8 @@ export default function Dashboard() {
                   {
                     title: '员工',
                     dataIndex: 'display_label',
-                    // display_label = 姓名|工号；后端未返回（老接口）时退回到 key（工号）
-                    render: (v: string | undefined, row) => v || row.key,
+                    // display_label = 姓名|工号；employeeName 只取姓名段，后端未返回（老接口）时退回 key（工号）
+                    render: (v: string | undefined, row) => employeeName(v, row.key),
                   },
                   { title: '会话', dataIndex: 'session_count', width: 80, align: 'right' },
                   {

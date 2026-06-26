@@ -2,7 +2,7 @@ import { Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { TablePaginationConfig } from 'antd/es/table/interface';
 import type { ProjectGitCommit } from '../api/types';
-import { formatTime } from '../utils/format';
+import { employeeName, formatTime } from '../utils/format';
 import { emptyCell, EMPTY_DASH } from '../utils/table';
 import { GitCommitChangeCell } from './GitCommitChangeCell';
 
@@ -89,7 +89,7 @@ export function buildGitCommitTableColumns(opts: GitCommitColumnsOptions = {}): 
       key: 'user_display',
       width: 140,
       ellipsis: true,
-      render: (_: unknown, row) => row.user_display || row.user_code,
+      render: (_: unknown, row) => employeeName(row.user_display, row.user_code),
     },
   ];
 

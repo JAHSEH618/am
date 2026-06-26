@@ -13,7 +13,7 @@ import {
   GIT_COMMIT_MODAL_TABLE_SCROLL_Y,
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
-import { formatTime, formatTokens } from '../utils/format';
+import { employeeName, formatTime, formatTokens } from '../utils/format';
 import { indigo, semantic } from '../styles/tokens';
 
 /**
@@ -385,7 +385,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
       dataIndex: 'user_display',
       key: 'user_display',
       ellipsis: true,
-      render: (v: string, row) => v || row.user_code,
+      render: (v: string, row) => employeeName(v, row.user_code),
     },
     {
       title: '会话',

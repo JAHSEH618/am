@@ -43,6 +43,7 @@ import type {
 import {
   eventTypeColor,
   eventTypeLabel,
+  employeeName,
   formatMessageDelta,
   messageDeltaTagColor,
   formatTime,
@@ -294,7 +295,7 @@ export default function SessionDetail() {
 
       <Card size="small">
         <Descriptions column={{ xs: 1, sm: 2, md: 3 }} size="small">
-          <Descriptions.Item label="员工">{session.user_display || session.user_code}</Descriptions.Item>
+          <Descriptions.Item label="员工">{employeeName(session.user_display, session.user_code)}</Descriptions.Item>
           <Descriptions.Item label="Agent">{session.agent_id}</Descriptions.Item>
           <Descriptions.Item label="模型">{session.model || '-'}</Descriptions.Item>
           <Descriptions.Item label="项目">{session.project_name || '-'}</Descriptions.Item>

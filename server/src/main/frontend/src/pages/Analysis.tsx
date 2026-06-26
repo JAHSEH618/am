@@ -42,6 +42,7 @@ import UserDetail from './Analysis/UserDetail';
 import MetricLabel from './Analysis/MetricLabel';
 import { BUCKET_META, WATCHLIST_META } from './Analysis/constants';
 import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
+import { employeeName } from '../utils/format';
 
 dayjs.extend(isoWeek);
 
@@ -518,7 +519,7 @@ export default function Analysis() {
           title={
             drawerUser ? (
               <span>
-                {drawerUser.user_display || drawerUser.user_code}
+                {employeeName(drawerUser.user_display, drawerUser.user_code)}
                 {drawerUser.composite_bucket && (
                   <Tag
                     color={BUCKET_META[drawerUser.composite_bucket].color}
@@ -641,7 +642,7 @@ function UserListTable({
       ellipsis: true,
       render: (_: string | undefined, u) => (
         <span>
-          <strong>{u.user_display || u.user_code}</strong>
+          <strong>{employeeName(u.user_display, u.user_code)}</strong>
           {u.insufficient_data && (
             <Tag color="default" style={{ marginLeft: 6, fontSize: 12 }}>
               样本不足
