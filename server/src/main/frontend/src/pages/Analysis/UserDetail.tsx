@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Empty, List, Row, Spin, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Col, Empty, List, Row, Skeleton, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts-for-react';
 import { Link } from 'react-router-dom';
@@ -12,8 +12,8 @@ import type {
   PeopleDetail,
 } from '../../api/types';
 import { formatTokens } from '../../utils/format';
-import { ink, semantic, accent, indigo } from '../../styles/tokens';
-import { BUCKET_META, CAPABILITY_DIMENSIONS, MODE_META, WATCHLIST_META } from './constants';
+import { ink, indigo } from '../../styles/tokens';
+import { BUCKET_META, CAPABILITY_DIMENSIONS, MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
 import MetricLabel from './MetricLabel';
 
 const { Text, Paragraph } = Typography;
@@ -92,15 +92,6 @@ export default function UserDetail({ report, user }: Props) {
     };
   }, [user.user_code, report.window_from, report.window_to]);
 
-  const kpiCardWrap = { width: '100%', height: '100%' } as const;
-  const kpiCardBody = {
-    height: '100%',
-    minHeight: 118,
-    display: 'flex',
-    flexDirection: 'column' as const,
-  };
-  const kpiFooterSlot = { marginTop: 'auto', paddingTop: 8, minHeight: 22 } as const;
-
   const teamP50Radar = useMemo(() => {
     const caps = report.team_capability_percentiles;
     if (!caps) return [3, 3, 3, 3, 3];
@@ -145,8 +136,9 @@ export default function UserDetail({ report, user }: Props) {
           type: 'bar' as const,
           data: ['1', '2', '3', '4', '5'].map((k) => dist[k as keyof typeof dist] ?? 0),
           itemStyle: {
+            // 难度 1→5 单色顺序阶（浅→深品牌钴蓝）：难度高=正面信号，不涂红
             color: (p: { dataIndex: number }) =>
-              [ink[3], accent.blue.base, semantic.success.base, semantic.warning.base, semantic.error.base][p.dataIndex],
+              [indigo[200], indigo[300], indigo[400], indigo[500], indigo[600]][p.dataIndex],
           },
           label: { show: true, position: 'top' as const },
         },
@@ -207,59 +199,48 @@ export default function UserDetail({ report, user }: Props) {
         </Link>
       </div>
 
-      <Row gutter={16} style={{ marginBottom: 16 }} align="stretch">
-        <Col span={4} style={{ display: 'flex' }}>
-          <Card size="small" style={kpiCardWrap} styles={{ body: kpiCardBody }}>
-            <Statistic title={<MetricLabel name="composite_bucket" />} value={
-              user.composite_bucket ? BUCKET_META[user.composite_bucket].label : '—'
-            } />
-            <div style={kpiFooterSlot}>
-              {user.composite_percentile != null ? (
-                <Text type="secondary">百分位 {user.composite_percentile.toFixed(1)}</Text>
-              ) : null}
-            </div>
-          </Card>
-        </Col>
-        <Col span={4} style={{ display: 'flex' }}>
-          <Card size="small" style={kpiCardWrap} styles={{ body: kpiCardBody }}>
-            <Statistic title={<MetricLabel name="ai_active_hours" />} value={user.ai_active_hours.toFixed(1)} />
-            <div style={kpiFooterSlot} />
-          </Card>
-        </Col>
-        <Col span={4} style={{ display: 'flex' }}>
-          <Card size="small" style={kpiCardWrap} styles={{ body: kpiCardBody }}>
-            <Statistic title={<MetricLabel name="ai_commit_count" />} value={user.ai_commit_count} />
-            <div style={kpiFooterSlot} />
-          </Card>
-        </Col>
-        <Col span={4} style={{ display: 'flex' }}>
-          <Card size="small" style={kpiCardWrap} styles={{ body: kpiCardBody }}>
-            <Statistic title={<MetricLabel name="high_difficulty_ratio" />} value={fmtPct(user.high_difficulty_ratio)} />
-            <div style={kpiFooterSlot} />
-          </Card>
-        </Col>
-        <Col span={4} style={{ display: 'flex' }}>
-          <Card size="small" style={kpiCardWrap} styles={{ body: kpiCardBody }}>
-            <Statistic
-              title={<MetricLabel name="ai_commits_per_active_hour" />}
-              value={
-                user.ai_commits_per_active_hour == null
-                  ? '—'
-                  : user.ai_commits_per_active_hour.toFixed(2)
-              }
-            />
-            <div style={kpiFooterSlot} />
-          </Card>
-        </Col>
-        <Col span={4} style={{ display: 'flex' }}>
-          <Card size="small" style={kpiCardWrap} styles={{ body: kpiCardBody }}>
-            <Statistic title={<MetricLabel name="session_count" />} value={user.session_count} />
-            <Text type="secondary" style={kpiFooterSlot}>
-              Slash {slashTotal}
-            </Text>
-          </Card>
-        </Col>
-      </Row>
+      <div
+        style={{
+          marginBottom: 16,
+          border: '1px solid var(--am-border)',
+          borderRadius: 'var(--am-r-md)',
+          overflow: 'hidden',
+          background: 'var(--am-bg-card)',
+          boxShadow: 'var(--am-shadow-1), var(--am-inner-hi)',
+        }}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' }}>
+          <KpiCell
+            title={<MetricLabel name="composite_bucket" />}
+            value={user.composite_bucket ? BUCKET_META[user.composite_bucket].label : '—'}
+            footer={
+              user.composite_percentile != null ? `百分位 ${user.composite_percentile.toFixed(1)}` : undefined
+            }
+            showDivider
+          />
+          <KpiCell
+            title={<MetricLabel name="ai_active_hours" />}
+            value={user.ai_active_hours.toFixed(1)}
+            showDivider
+          />
+          <KpiCell title={<MetricLabel name="ai_commit_count" />} value={user.ai_commit_count} showDivider />
+          <KpiCell
+            title={<MetricLabel name="high_difficulty_ratio" />}
+            value={fmtPct(user.high_difficulty_ratio)}
+            showDivider
+          />
+          <KpiCell
+            title={<MetricLabel name="ai_commits_per_active_hour" />}
+            value={user.ai_commits_per_active_hour == null ? '—' : user.ai_commits_per_active_hour.toFixed(2)}
+            showDivider
+          />
+          <KpiCell
+            title={<MetricLabel name="session_count" />}
+            value={user.session_count}
+            footer={`Slash ${slashTotal}`}
+          />
+        </div>
+      </div>
 
       {watchlistFlags.length > 0 && (
         <Alert
@@ -276,7 +257,7 @@ export default function UserDetail({ report, user }: Props) {
                   overlayStyle={{ maxWidth: 360 }}
                 >
                   <Tag
-                    color={WATCHLIST_META[f]?.color ?? 'default'}
+                    color={watchlistTagColor(f)}
                     style={{ marginLeft: 6, cursor: 'help' }}
                   >
                     {WATCHLIST_META[f]?.label ?? f}
@@ -402,16 +383,8 @@ export default function UserDetail({ report, user }: Props) {
                   </Col>
                 </Row>
                 {peopleLoading ? (
-                  <div
-                    style={{
-                      marginTop: 16,
-                      minHeight: 220,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Spin />
+                  <div style={{ marginTop: 16 }}>
+                    <Skeleton active paragraph={{ rows: 5 }} />
                   </div>
                 ) : activeHoursTimelineOption ? (
                   <div style={{ marginTop: 16 }}>
@@ -530,6 +503,40 @@ function HighlightSessions({
         )}
       />
     </Card>
+  );
+}
+
+/** 顶部 KPI 单元格：与团队概览同款「单面板 + 竖向分隔」，去掉逐卡边框堆叠感。 */
+function KpiCell({
+  title,
+  value,
+  footer,
+  showDivider,
+}: {
+  title: React.ReactNode;
+  value: string | number;
+  footer?: string;
+  showDivider?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        padding: '14px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 104,
+        ...(showDivider ? { borderRight: '1px solid var(--am-border-subtle)' } : {}),
+      }}
+    >
+      <Statistic title={title} value={value} />
+      <div style={{ marginTop: 'auto', paddingTop: 8, minHeight: 20 }}>
+        {footer ? (
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {footer}
+          </Text>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

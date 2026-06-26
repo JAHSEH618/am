@@ -14,6 +14,7 @@ import {
   formatTokens,
   isToolStatus,
   messageDeltaTagColor,
+  modelLabel,
   statusLabel,
   STALE_VISUAL_THRESHOLD_SECONDS,
 } from '../utils/format';
@@ -85,21 +86,27 @@ export default function Realtime() {
     try {
       const s: AiSession = JSON.parse(data);
       setSessionsById((prev) => ({ ...prev, [s.id]: s }));
-      setAgents((prev) => prev.map((a) => {
-        if (a.agent_id !== s.agent_id) return a;
-        if (a.target_type != null && a.target_type !== s.target_type) return a;
-        return {
-          ...a,
-          target_type: a.target_type ?? s.target_type,
-          current_status: s.status,
-          current_tool: s.current_tool,
-          current_model: s.model,
-          project_name: s.project_name || a.project_name,
-          branch_name: s.git_branch || a.branch_name,
-          stale_since_seconds: 0,
-          active: s.status !== 'idle' && s.status != null,
-        };
-      }));
+      setAgents((prev) => {
+        let changed = false;
+        const next = prev.map((a) => {
+          if (a.agent_id !== s.agent_id) return a;
+          if (a.target_type != null && a.target_type !== s.target_type) return a;
+          changed = true;
+          return {
+            ...a,
+            target_type: a.target_type ?? s.target_type,
+            current_status: s.status,
+            current_tool: s.current_tool,
+            current_model: s.model,
+            project_name: s.project_name || a.project_name,
+            branch_name: s.git_branch || a.branch_name,
+            stale_since_seconds: 0,
+            active: s.status !== 'idle' && s.status != null,
+          };
+        });
+        // 无任何在线行匹配该会话时返回原引用，避免无谓整列表重渲（事件高频时收益明显）。
+        return changed ? next : prev;
+      });
       scheduleOnlineRefresh();
     } catch {
       // ignore
@@ -123,6 +130,7 @@ export default function Realtime() {
           <Card title={<Space><StatusDot color="var(--am-brand)" pulse />实时活动</Space>} size="small">
             <List
               dataSource={agents}
+              rowKey={(a) => `${a.agent_id}|${a.target_type ?? '__none__'}|${a.device_online === false ? '0' : '1'}`}
               locale={{ emptyText: '暂无在线 Agent' }}
               grid={{ gutter: 12, xs: 1, sm: 2, md: 2, lg: 2, xl: 3 }}
               renderItem={(a) => (
@@ -161,17 +169,17 @@ export default function Realtime() {
                           {statusLabel(a.current_status)}
                         </Text>
                         {a.current_tool && isToolStatus(a.current_status) && a.stale_since_seconds <= STALE_VISUAL_THRESHOLD_SECONDS && (
-                          <Tag color="blue">{a.current_tool}</Tag>
+                          <Tag>{a.current_tool}</Tag>
                         )}
                       </Space>
                       {a.project_name && (
-                        <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
+                        <Text type="secondary" ellipsis={{ tooltip: true }} style={{ fontSize: 12 }}>
                           {a.project_name}{a.branch_name ? ` @${a.branch_name}` : ''}
                         </Text>
                       )}
                       {a.current_model && (
-                        <Text type="secondary" ellipsis style={{ fontSize: 12 }}>
-                          {a.current_model}
+                        <Text type="secondary" ellipsis={{ tooltip: a.current_model }} style={{ fontSize: 12 }}>
+                          {modelLabel(a.current_model)}
                         </Text>
                       )}
                     </Space>
@@ -189,6 +197,7 @@ export default function Realtime() {
             <List
               size="small"
               dataSource={events}
+              rowKey={(e) => `${e.id}-${e.receivedAt}`}
               locale={{ emptyText: '等待事件中...（启动 agent 后会自动流入）' }}
               renderItem={(e) => {
                 const sess = sessionsById[e.ai_session_id];
@@ -197,7 +206,7 @@ export default function Realtime() {
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>
                       <Space wrap>
                         <Tag color={eventTypeColor(e.event_type)}>{eventTypeLabel(e.event_type)}</Tag>
-                        {e.tool_name && <Tag color="blue">{e.tool_name}</Tag>}
+                        {e.tool_name && <Tag>{e.tool_name}</Tag>}
                         {e.tokens_delta > 0 && <Tag color="gold">+{formatTokens(e.tokens_delta)} tk</Tag>}
                         {formatMessageDelta(e.messages_delta) && (
                           <Tag color={messageDeltaTagColor(e.messages_delta)}>

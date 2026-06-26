@@ -77,6 +77,41 @@ export default function Tools({ from: fromProp, to: toProp, embedded }: ToolsPro
     };
   }, [data]);
 
+  const chartNode = (
+    <Spin spinning={loading}>
+      <ReactECharts option={option} style={{ height: 480 }} notMerge lazyUpdate />
+    </Spin>
+  );
+
+  const tableNode = (
+    <Table<ToolStat>
+      rowKey="tool_name"
+      size="small"
+      dataSource={data}
+      loading={loading}
+      pagination={false}
+      locale={{ emptyText: '所选时间窗内暂无命令调用' }}
+      scroll={{ x: 580 }}
+      columns={[
+        { title: '排名', width: 60, onCell: () => ({ style: NUM_STYLE }), render: (_, __, i) => i + 1 },
+        { title: '命令', dataIndex: 'tool_name', ellipsis: true },
+        { title: '次数', dataIndex: 'count', width: 120, onCell: () => ({ style: NUM_STYLE }) },
+        { title: '员工数', dataIndex: 'user_count', width: 100, onCell: () => ({ style: NUM_STYLE }) },
+        { title: '会话数', dataIndex: 'session_count', width: 100, onCell: () => ({ style: NUM_STYLE }) },
+      ]}
+    />
+  );
+
+  // 嵌入态（ModelsTools 已外包「Slash Commands Top」卡）：脱掉内层卡壳与重复标题，只渲图+表
+  if (embedded) {
+    return (
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        {chartNode}
+        {tableNode}
+      </Space>
+    );
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
@@ -84,38 +119,19 @@ export default function Tools({ from: fromProp, to: toProp, embedded }: ToolsPro
         title={
           <Space>
             <span>Slash Commands 排行</span>
-            {!embedded && (
-              <RangePicker
-                value={range}
-                onChange={(v) => v && setRange([v[0]!, v[1]!])}
-                allowClear={false}
-              />
-            )}
+            <RangePicker
+              value={range}
+              onChange={(v) => v && setRange([v[0]!, v[1]!])}
+              allowClear={false}
+            />
           </Space>
         }
       >
-        <Spin spinning={loading}>
-          <ReactECharts option={option} style={{ height: 480 }} notMerge lazyUpdate />
-        </Spin>
+        {chartNode}
       </Card>
 
       <Card size="small" title="原始数据">
-        <Table<ToolStat>
-          rowKey="tool_name"
-          size="small"
-          dataSource={data}
-          loading={loading}
-          pagination={false}
-          locale={{ emptyText: '所选时间窗内暂无命令调用' }}
-          scroll={{ x: 580 }}
-          columns={[
-            { title: '排名', width: 60, onCell: () => ({ style: NUM_STYLE }), render: (_, __, i) => i + 1 },
-            { title: '命令', dataIndex: 'tool_name', ellipsis: true },
-            { title: '次数', dataIndex: 'count', width: 120, onCell: () => ({ style: NUM_STYLE }) },
-            { title: '员工数', dataIndex: 'user_count', width: 100, onCell: () => ({ style: NUM_STYLE }) },
-            { title: '会话数', dataIndex: 'session_count', width: 100, onCell: () => ({ style: NUM_STYLE }) },
-          ]}
-        />
+        {tableNode}
       </Card>
     </Space>
   );

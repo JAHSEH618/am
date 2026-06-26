@@ -88,7 +88,7 @@ export const semantic = {
   success: { base: '#10b981', fg: '#047857', bg: '#ecfdf5', border: '#a7f3d0' },
   warning: { base: '#f59e0b', fg: '#b45309', bg: '#fffbeb', border: '#fde68a' },
   error: { base: '#ef4444', fg: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-  info: { base: indigo[500], fg: indigo[700], bg: indigo[50], border: indigo[200] },
+  info: { base: indigo[600], fg: indigo[700], bg: indigo[50], border: indigo[200] }, // base 对齐 main.tsx colorInfo / 品牌钴蓝（原 indigo[500]）
   neutral: { base: ink[4], fg: ink[3], bg: '#f1f2f4', border: border.default },
 } as const;
 

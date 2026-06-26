@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card, Col, DatePicker, Row, Space, Spin, Table, Typography } from 'antd';
+import { Card, Col, DatePicker, Row, Skeleton, Space, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs, { type Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
@@ -182,7 +182,8 @@ export default function ModelsTools() {
       },
       yAxis: {
         type: 'category', data: heatmap.models,
-        axisLabel: { fontSize: 11 }, splitArea: { show: true },
+        axisLabel: { width: 180, overflow: 'truncate', ellipsis: '…', fontSize: 11 },
+        splitArea: { show: true },
       },
       visualMap: {
         min: 0,
@@ -253,7 +254,11 @@ export default function ModelsTools() {
         </div>
       </Card>
 
-      <Spin spinning={loading}>
+      {loading && dist.length === 0 ? (
+        <Card size="small">
+          <Skeleton active paragraph={{ rows: 8 }} />
+        </Card>
+      ) : (
         <Row gutter={16} align="stretch">
           <Col xs={24} md={14} style={{ display: 'flex' }}>
             <Card
@@ -298,7 +303,7 @@ export default function ModelsTools() {
             </Card>
           </Col>
         </Row>
-      </Spin>
+      )}
 
       {heatmapOption && (
         <Card size="small" title="模型 × 日期 Token 燃烧热力图（窗口期内）">

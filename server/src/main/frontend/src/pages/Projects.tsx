@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Col, DatePicker, Modal, Row, Space, Spin, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { InfoCircleOutlined, ProjectOutlined } from '@ant-design/icons';
@@ -13,8 +13,9 @@ import {
   GIT_COMMIT_MODAL_TABLE_SCROLL_Y,
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
-import { employeeName, formatTime, formatTokens } from '../utils/format';
-import { indigo, semantic } from '../styles/tokens';
+import { employeeName, formatTime, formatTokens, modelLabel } from '../utils/format';
+import { clickableRowProps } from '../utils/table';
+import { accent, indigo } from '../styles/tokens';
 
 /**
  * 项目透视页（v2.1 Phase 2）
@@ -35,6 +36,19 @@ const matrixPanelBodyStyle: React.CSSProperties = {
   height: MATRIX_PANEL_BODY_HEIGHT,
   overflow: 'hidden',
   padding: '8px 12px',
+};
+/** 详情三栏分组：以「小标题 + 细分隔线」承载分组，替代 card-in-card 的嵌套卡壳。 */
+const matrixPanelStyle: React.CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+};
+const matrixPanelTitleStyle: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 600,
+  color: 'var(--am-ink-2)',
+  padding: '0 12px 8px',
+  borderBottom: '1px solid var(--am-border-subtle)',
 };
 
 function defaultRange(): [Dayjs, Dayjs] {
@@ -68,7 +82,7 @@ export default function Projects() {
    * 跳转到 Sessions 列表 + project_name 过滤。
    * days 参数不带：让 Sessions 用项目过滤路径，project + range 都不传 user/days，后端自动落到 since 分支。
    */
-  const goSessions = (projectName: string, userCode?: string, e?: React.MouseEvent) => {
+  const goSessions = useCallback((projectName: string, userCode?: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const sp = new URLSearchParams();
     sp.set('project_name', projectName);
@@ -77,13 +91,13 @@ export default function Projects() {
     const days = Math.max(7, range[1].diff(range[0], 'day') + 1);
     sp.set('days', String(days));
     navigate(`/sessions?${sp.toString()}`);
-  };
+  }, [navigate, range]);
 
-  const openGitCommitsModal = (projectName: string, repoUrl: string | null | undefined) => {
+  const openGitCommitsModal = useCallback((projectName: string, repoUrl: string | null | undefined) => {
     setGitModalProject(projectName);
     setGitModalRepo(repoUrl ?? null);
     setGitModalOpen(true);
-  };
+  }, []);
 
   useEffect(() => {
     if (!gitModalOpen || !gitModalProject) return;
@@ -128,14 +142,18 @@ export default function Projects() {
     return () => { alive = false; };
   }, [selected, params]);
 
-  const columns: ColumnsType<ProjectSummary> = [
+  const columns: ColumnsType<ProjectSummary> = useMemo(() => [
     {
       title: '项目',
       dataIndex: 'project_name',
       key: 'project_name',
       width: 240,
-      ellipsis: true,
-      render: (v: string) => <Space><ProjectOutlined />{v}</Space>,
+      ellipsis: { showTitle: false },
+      render: (v: string) => (
+        <Tooltip title={v}>
+          <Space><ProjectOutlined />{v}</Space>
+        </Tooltip>
+      ),
     },
     {
       title: '会话数',
@@ -229,8 +247,10 @@ export default function Projects() {
       dataIndex: 'top_model',
       key: 'top_model',
       width: 170,
-      ellipsis: true,
-      render: (v: string | null) => v ? <Tag>{v}</Tag> : <Text type="secondary">-</Text>,
+      ellipsis: { showTitle: false },
+      render: (v: string | null) => v
+        ? <Tooltip title={v}><Tag>{modelLabel(v)}</Tag></Tooltip>
+        : <Text type="secondary">-</Text>,
     },
     {
       title: '最后活跃',
@@ -239,7 +259,15 @@ export default function Projects() {
       width: 170,
       render: (v: string | null) => formatTime(v),
     },
-  ];
+  ], [goSessions, openGitCommitsModal]);
+
+  // 稳定化传给详情面板的回调，配合面板 React.memo 减少无谓重渲（如仅开关 Git 弹窗时）。
+  const handleSessionLink = useCallback((userCode?: string) => {
+    if (selected) goSessions(selected, userCode);
+  }, [goSessions, selected]);
+  const handleOpenGitCommits = useCallback(() => {
+    if (selected) openGitCommitsModal(selected, detail?.summary.repo_url);
+  }, [openGitCommitsModal, selected, detail]);
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -266,13 +294,16 @@ export default function Projects() {
           className="am-sticky-table"
           locale={{ emptyText: '当前时间窗内暂无项目活动' }}
           pagination={{ pageSize: 20, showSizeChanger: false }}
-          onRow={(row) => ({
-            onClick: () => setSelected(row.project_name),
-            style: {
-              cursor: 'pointer',
-              background: row.project_name === selected ? 'var(--am-brand-bg)' : undefined,
-            },
-          })}
+          onRow={(row) => {
+            const base = clickableRowProps(() => setSelected(row.project_name));
+            return {
+              ...base,
+              style: {
+                ...base.style,
+                background: row.project_name === selected ? 'var(--am-brand-bg)' : undefined,
+              },
+            };
+          }}
         />
       </Card>
 
@@ -287,8 +318,8 @@ export default function Projects() {
           detail={detail}
           loading={loadingDetail}
           projectName={selected}
-          onSessionLink={(userCode) => goSessions(selected, userCode)}
-          onOpenGitCommits={() => openGitCommitsModal(selected, detail?.summary.repo_url)}
+          onSessionLink={handleSessionLink}
+          onOpenGitCommits={handleOpenGitCommits}
         />
       )}
 
@@ -327,28 +358,20 @@ export default function Projects() {
   );
 }
 
-function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpenGitCommits }: {
+const ProjectDetailPanel = memo(function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpenGitCommits }: {
   detail: ProjectDetail | null;
   loading: boolean;
   projectName: string;
   onSessionLink: (userCode?: string) => void;
   onOpenGitCommits: () => void;
 }) {
-  if (loading || !detail) {
-    return (
-      <Card size="small" title={`项目详情 — ${projectName}`}>
-        <Spin spinning={loading}><div style={{ height: 240 }} /></Spin>
-      </Card>
-    );
-  }
-
-  const s = detail.summary;
-
+  // Hooks 必须先于任何早返回（Rules of Hooks）；timeline 用可空安全版，detail 缺失时退空数组。
   const timelineOption = useMemo(() => {
-    const dates = detail.daily_timeline.map((p) => p.date);
-    const tokens = detail.daily_timeline.map((p) => p.total_tokens);
-    const sessions = detail.daily_timeline.map((p) => p.session_count);
-    const users = detail.daily_timeline.map((p) => p.user_count);
+    const timeline = detail?.daily_timeline ?? [];
+    const dates = timeline.map((p) => p.date);
+    const tokens = timeline.map((p) => p.total_tokens);
+    const sessions = timeline.map((p) => p.session_count);
+    const users = timeline.map((p) => p.user_count);
     return {
       tooltip: {
         trigger: 'axis',
@@ -373,11 +396,21 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
       ],
       series: [
         { name: 'Token', type: 'line', smooth: true, data: tokens, areaStyle: { opacity: 0.15 }, color: indigo[600] },
-        { name: '会话数', type: 'bar', yAxisIndex: 1, data: sessions, color: semantic.success.base, barWidth: 12 },
-        { name: '参与员工', type: 'bar', yAxisIndex: 1, data: users, color: semantic.warning.base, barWidth: 12 },
+        { name: '会话数', type: 'bar', yAxisIndex: 1, data: sessions, color: accent.teal.base, barWidth: 12 },
+        { name: '参与员工', type: 'bar', yAxisIndex: 1, data: users, color: accent.purple.base, barWidth: 12 },
       ],
     };
   }, [detail]);
+
+  if (loading || !detail) {
+    return (
+      <Card size="small" title={`项目详情 — ${projectName}`}>
+        <Spin spinning={loading}><div style={{ height: 240 }} /></Spin>
+      </Card>
+    );
+  }
+
+  const s = detail.summary;
 
   const contributorColumns: ColumnsType<ProjectContributor> = [
     {
@@ -453,7 +486,13 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
   ];
 
   const topModelColumns: ColumnsType<NameValuePair> = [
-    { title: '模型', dataIndex: 'name', key: 'name', ellipsis: true },
+    {
+      title: '模型',
+      dataIndex: 'name',
+      key: 'name',
+      ellipsis: { showTitle: false },
+      render: (v: string) => <Tooltip title={v}>{modelLabel(v)}</Tooltip>,
+    },
     {
       title: 'Token',
       dataIndex: 'value',
@@ -553,45 +592,54 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
 
       <Row gutter={16} style={{ marginTop: 24 }} align="stretch">
         <Col xs={24} md={8} style={{ display: 'flex' }}>
-          <Card size="small" type="inner" title="贡献者矩阵" style={{ width: '100%' }} styles={{ body: matrixPanelBodyStyle }}>
-            <Table<ProjectContributor>
-              rowKey="user_code"
-              size="small"
-              columns={contributorColumns}
-              dataSource={detail.contributor_matrix}
-              pagination={false}
-              scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
-              locale={{ emptyText: '暂无贡献者数据' }}
-            />
-          </Card>
+          <div style={matrixPanelStyle}>
+            <div style={matrixPanelTitleStyle}>贡献者矩阵</div>
+            <div style={matrixPanelBodyStyle}>
+              <Table<ProjectContributor>
+                rowKey="user_code"
+                size="small"
+                columns={contributorColumns}
+                dataSource={detail.contributor_matrix}
+                pagination={false}
+                scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
+                locale={{ emptyText: '暂无贡献者数据' }}
+              />
+            </div>
+          </div>
         </Col>
         <Col xs={24} md={8} style={{ display: 'flex' }}>
-          <Card size="small" type="inner" title="Slash Commands" style={{ width: '100%' }} styles={{ body: matrixPanelBodyStyle }}>
-            <Table<NameValuePair>
-              rowKey="name"
-              size="small"
-              columns={topCountColumns}
-              dataSource={detail.top_slash_commands ?? []}
-              pagination={false}
-              scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
-              locale={{ emptyText: '暂无斜杠调用数据' }}
-            />
-          </Card>
+          <div style={matrixPanelStyle}>
+            <div style={matrixPanelTitleStyle}>Slash Commands</div>
+            <div style={matrixPanelBodyStyle}>
+              <Table<NameValuePair>
+                rowKey="name"
+                size="small"
+                columns={topCountColumns}
+                dataSource={detail.top_slash_commands ?? []}
+                pagination={false}
+                scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
+                locale={{ emptyText: '暂无斜杠调用数据' }}
+              />
+            </div>
+          </div>
         </Col>
         <Col xs={24} md={8} style={{ display: 'flex' }}>
-          <Card size="small" type="inner" title="Top 模型（按 token）" style={{ width: '100%' }} styles={{ body: matrixPanelBodyStyle }}>
-            <Table<NameValuePair>
-              rowKey="name"
-              size="small"
-              columns={topModelColumns}
-              dataSource={detail.top_models}
-              pagination={false}
-              scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
-              locale={{ emptyText: '暂无模型数据' }}
-            />
-          </Card>
+          <div style={matrixPanelStyle}>
+            <div style={matrixPanelTitleStyle}>Top 模型（按 token）</div>
+            <div style={matrixPanelBodyStyle}>
+              <Table<NameValuePair>
+                rowKey="name"
+                size="small"
+                columns={topModelColumns}
+                dataSource={detail.top_models}
+                pagination={false}
+                scroll={{ y: MATRIX_TABLE_SCROLL_Y }}
+                locale={{ emptyText: '暂无模型数据' }}
+              />
+            </div>
+          </div>
         </Col>
       </Row>
     </Card>
   );
-}
+});

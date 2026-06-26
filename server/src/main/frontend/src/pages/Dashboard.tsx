@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, Col, Input, Pagination, Row, Segmented, Select, Space, Spin, Table, Tag, Progress, Typography } from 'antd';
+import { Button, Card, Col, Input, Pagination, Row, Segmented, Select, Space, Spin, Table, Tag, Progress, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   ApiOutlined,
@@ -45,6 +45,7 @@ import {
 } from '../utils/format';
 import StatusDot from '../components/StatusDot';
 import { HeroCard, MetricRow } from '../components/HeroCard';
+import { clickableRowProps, NUM_STYLE } from '../utils/table';
 
 // v2.7.1：HTTP 兜底 polling 间隔。SSE 实时 patch 已经覆盖大部分高频更新（status/tool/model/project），
 // polling 主要负责拉今日累计指标（today_messages / today_tokens / top 列表）和"上次没开页时漏掉的"
@@ -254,6 +255,95 @@ export default function Dashboard() {
     if (agentPage > maxPage) setAgentPage(maxPage);
   }, [totalAgents, agentPage, agentPageSize]);
 
+  // Top 项目 / Top 员工 列定义 memo 化：避免过滤输入 / 审计轮询等无关重渲时重建列与渲染闭包。
+  const topProjectColumns = useMemo<ColumnsType<TopItem>>(
+    () => [
+      { title: '项目', dataIndex: 'key', ellipsis: true },
+      {
+        title: '会话',
+        dataIndex: 'session_count',
+        width: 80,
+        align: 'right',
+        // 与"项目透视"页 goSessions 的链路一致：带上 project_name；today 维度用 days=1
+        // 让 Sessions 页时间窗收紧到今天，避免默认 7 天把历史会话也圈进来。
+        render: (v: number, row) => (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto', ...NUM_STYLE }}
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/sessions?project_name=${encodeURIComponent(row.key)}&days=1`);
+            }}
+          >
+            {v}
+          </Button>
+        ),
+      },
+      {
+        title: '消息',
+        width: 100,
+        align: 'right',
+        // 与 AI 会话列表「X / Y」同口径：用户 / 助手；后端老版本没下发拆分时回退总数
+        render: renderUserAssistantMessages,
+      },
+      {
+        title: 'Token',
+        key: 'tokens_io',
+        width: 140,
+        align: 'right',
+        render: renderTopItemIoTokens,
+      },
+      {
+        title: '员工',
+        dataIndex: 'extra_count',
+        width: 70,
+        align: 'right',
+        render: (v: number) => <span style={NUM_STYLE}>{v}</span>,
+      },
+    ],
+    [navigate],
+  );
+
+  const topEmployeeColumns = useMemo<ColumnsType<TopItem>>(
+    () => [
+      {
+        title: '员工',
+        dataIndex: 'display_label',
+        // display_label = 姓名|工号；employeeName 只取姓名段，后端未返回（老接口）时退回 key（工号）
+        render: (v: string | undefined, row) => employeeName(v, row.key),
+      },
+      {
+        title: '会话',
+        dataIndex: 'session_count',
+        width: 80,
+        align: 'right',
+        render: (v: number) => <span style={NUM_STYLE}>{v}</span>,
+      },
+      {
+        title: '消息',
+        width: 100,
+        align: 'right',
+        render: renderUserAssistantMessages,
+      },
+      {
+        title: 'Token',
+        key: 'tokens_io',
+        width: 140,
+        align: 'right',
+        render: renderTopItemIoTokens,
+      },
+      {
+        title: '项目',
+        dataIndex: 'extra_count',
+        width: 70,
+        align: 'right',
+        render: (v: number) => <span style={NUM_STYLE}>{v}</span>,
+      },
+    ],
+    [],
+  );
+
   return (
     <Spin spinning={loading && overview === null} tip="加载中...">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -270,7 +360,7 @@ export default function Dashboard() {
                 </span>
               }
               suffix="台"
-              subnote={`跑活 ${overview?.active_agents ?? 0} 台`}
+              subnote={`在线 ${overview?.online_agents ?? 0} · 离线 ${overview?.offline_agents ?? 0} · 跑活 ${overview?.active_agents ?? 0} 台`}
               icon={<ApiOutlined />}
               tone="indigo"
             />
@@ -441,42 +531,7 @@ export default function Dashboard() {
                 size="small"
                 pagination={false}
                 locale={{ emptyText: '今日暂无项目活动' }}
-                columns={[
-                  { title: '项目', dataIndex: 'key', ellipsis: true },
-                  {
-                    title: '会话',
-                    dataIndex: 'session_count',
-                    width: 80,
-                    align: 'right',
-                    // 与"项目透视"页 goSessions 的链路一致：带上 project_name；today 维度用 days=1
-                    // 让 Sessions 页时间窗收紧到今天，避免默认 7 天把历史会话也圈进来。
-                    render: (v: number, row) => (
-                      <a
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/sessions?project_name=${encodeURIComponent(row.key)}&days=1`);
-                        }}
-                      >
-                        {v}
-                      </a>
-                    ),
-                  },
-                  {
-                    title: '消息',
-                    width: 100,
-                    align: 'right',
-                    // 与 AI 会话列表「X / Y」同口径：用户 / 助手；后端老版本没下发拆分时回退总数
-                    render: renderUserAssistantMessages,
-                  },
-                  {
-                    title: 'Token',
-                    key: 'tokens_io',
-                    width: 140,
-                    align: 'right',
-                    render: renderTopItemIoTokens,
-                  },
-                  { title: '员工', dataIndex: 'extra_count', width: 70, align: 'right' },
-                ]}
+                columns={topProjectColumns}
               />
             </Card>
           </Col>
@@ -488,33 +543,8 @@ export default function Dashboard() {
                 size="small"
                 pagination={false}
                 locale={{ emptyText: '今日暂无员工活动' }}
-                columns={[
-                  {
-                    title: '员工',
-                    dataIndex: 'display_label',
-                    // display_label = 姓名|工号；employeeName 只取姓名段，后端未返回（老接口）时退回 key（工号）
-                    render: (v: string | undefined, row) => employeeName(v, row.key),
-                  },
-                  { title: '会话', dataIndex: 'session_count', width: 80, align: 'right' },
-                  {
-                    title: '消息',
-                    width: 100,
-                    align: 'right',
-                    render: renderUserAssistantMessages,
-                  },
-                  {
-                    title: 'Token',
-                    key: 'tokens_io',
-                    width: 140,
-                    align: 'right',
-                    render: renderTopItemIoTokens,
-                  },
-                  { title: '项目', dataIndex: 'extra_count', width: 70, align: 'right' },
-                ]}
-                onRow={(row) => ({
-                  onClick: () => navigate(`/sessions?user_code=${row.key}`),
-                  style: { cursor: 'pointer' },
-                })}
+                columns={topEmployeeColumns}
+                onRow={(row) => clickableRowProps(() => navigate(`/sessions?user_code=${row.key}`))}
               />
             </Card>
           </Col>
@@ -673,16 +703,19 @@ function OnlineAgentTable({
     return { counts, firstIndex };
   }, [online]);
 
-  // 一个 helper：让"按机器不变"的列只在该 agent_device 的第一行渲染。
-  // ant Design 的 onCell 签名里 index 是 optional，这里没 index 视同非首行（rowSpan: 0）兜底。
-  const mergeCell = (row: OnlineAgent, index?: number) => {
-    if (index !== undefined && groupMeta.firstIndex[row.agent_id] === index) {
-      return { rowSpan: groupMeta.counts[row.agent_id] };
-    }
-    return { rowSpan: 0 };
-  };
+  // columns 依赖 groupMeta（rowSpan 合并）与 latestPublishedVersion（版本比对）；用 useMemo
+  // 缓存，避免大盘因无关状态（审计轮询 / 渗透率切换等）重渲时重建整张列定义与渲染闭包。
+  const columns = useMemo<ColumnsType<OnlineAgent>>(() => {
+    // 一个 helper：让"按机器不变"的列只在该 agent_device 的第一行渲染。
+    // ant Design 的 onCell 签名里 index 是 optional，这里没 index 视同非首行（rowSpan: 0）兜底。
+    const mergeCell = (row: OnlineAgent, index?: number) => {
+      if (index !== undefined && groupMeta.firstIndex[row.agent_id] === index) {
+        return { rowSpan: groupMeta.counts[row.agent_id] };
+      }
+      return { rowSpan: 0 };
+    };
 
-  const columns: ColumnsType<OnlineAgent> = [
+    return [
     {
       title: '员工',
       dataIndex: 'user_display',
@@ -696,11 +729,7 @@ function OnlineAgentTable({
         return (
           <span className="am-employee-cell" title={label}>
             <span className="am-employee-name">{label}</span>
-            {showSeal && (
-              <span className="am-offline-seal" role="img" aria-label="离线">
-                离线
-              </span>
-            )}
+            {showSeal && <span className="am-offline-tag">离线</span>}
           </span>
         );
       },
@@ -712,11 +741,14 @@ function OnlineAgentTable({
       onCell: mergeCell,
       render: (_, row) => (
         <Space direction="vertical" size={0}>
-          <span>
+          <span title={row.hostname || undefined}>
             {row.hostname || '-'}
             {row.os_type ? ` (${row.os_type})` : ''}
           </span>
-          <span style={{ color: 'var(--am-ink-3)', fontSize: 12, fontFamily: 'monospace' }}>
+          <span
+            title={row.local_ip || undefined}
+            style={{ color: 'var(--am-ink-3)', fontSize: 12, fontFamily: 'var(--am-font-mono)' }}
+          >
             {row.local_ip || '-'}
           </span>
         </Space>
@@ -729,8 +761,8 @@ function OnlineAgentTable({
       onCell: mergeCell,
       render: (_, row) => (
         <Space direction="vertical" size={0}>
-          <span>{row.git_user_name || '-'}</span>
-          <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>{row.git_user_email || ''}</span>
+          <span title={row.git_user_name || undefined}>{row.git_user_name || '-'}</span>
+          <span title={row.git_user_email || undefined} style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>{row.git_user_email || ''}</span>
         </Space>
       ),
     },
@@ -742,7 +774,7 @@ function OnlineAgentTable({
       render: (_, row) => (
         <Space direction="vertical" size={0}>
           <Space size={6} wrap>
-            <span>{row.cursor_email || '-'}</span>
+            <span title={row.cursor_email || undefined}>{row.cursor_email || '-'}</span>
             {row.cursor_membership_type && (
               <Tag color={membershipColor(row.cursor_membership_type)}>
                 {membershipLabel(row.cursor_membership_type)}
@@ -786,9 +818,9 @@ function OnlineAgentTable({
       ellipsis: true,
       render: (v, row) => (
         <Space direction="vertical" size={0}>
-          <span>{v || '-'}</span>
+          <span title={v || undefined}>{v || '-'}</span>
           {row.branch_name && (
-            <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>@{row.branch_name}</span>
+            <span title={row.branch_name} style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>@{row.branch_name}</span>
           )}
         </Space>
       ),
@@ -806,7 +838,7 @@ function OnlineAgentTable({
             <StatusDot status={v} stale={stale} />
             <span style={{ color: stale ? 'var(--am-ink-3)' : undefined }}>{statusLabel(v)}</span>
             {row.current_tool && isToolStatus(v) && !stale && (
-              <Tag color="blue">{row.current_tool}</Tag>
+              <Tag>{row.current_tool}</Tag>
             )}
             {stale && (
               <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
@@ -901,7 +933,8 @@ function OnlineAgentTable({
         );
       },
     },
-  ];
+    ];
+  }, [groupMeta, latestPublishedVersion]);
 
   return (
     <Table<OnlineAgent>
@@ -917,10 +950,7 @@ function OnlineAgentTable({
       scroll={{ x: 2260 }}
       className="am-sticky-table am-online-table"
       columns={columns}
-      onRow={(row) => ({
-        onClick: () => navigate(`/sessions?user_code=${row.user_code}`),
-        style: { cursor: 'pointer' },
-      })}
+      onRow={(row) => clickableRowProps(() => navigate(`/sessions?user_code=${row.user_code}`))}
     />
   );
 }

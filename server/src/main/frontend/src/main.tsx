@@ -31,6 +31,7 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
     // 墨色 5 级阶梯显式钉死：不再让 AntD 用 alpha 推导次级色，保证信息文字 ≥ 4.5:1 且与 tokens.ts 同源。
     colorText: ink[2],            // 正文 / 主要标签 ≈ 8.4:1
     colorTextSecondary: ink[3],   // 次级标签 / 说明  ≈ 4.9:1（信息文字下限）
+    colorTextDescription: ink[3], // AntD5 <Text type="secondary"> / <Statistic> 标题实走此 token；缺省回落 colorTextTertiary(ink-4≈3.4:1) 不达标
     colorTextTertiary: ink[4],    // 弱提示 / 大字辅文（不承载关键信息）
     colorTextQuaternary: ink[5],  // 占位符 / 禁用
     colorTextPlaceholder: ink[5], // 输入占位

@@ -30,10 +30,14 @@ export default function MetricLabel({ name, label, help, size = 'md' }: Props) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
       <span>{finalLabel}</span>
       {finalHelp && (
-        <Tooltip title={finalHelp} mouseEnterDelay={0.15} overlayStyle={{ maxWidth: 360 }}>
-          <QuestionCircleOutlined
-            style={{ color: 'var(--am-ink-3)', fontSize: iconSize, cursor: 'help' }}
-          />
+        <Tooltip title={finalHelp} trigger={['hover', 'focus']} mouseEnterDelay={0.15} overlayStyle={{ maxWidth: 360 }}>
+          <span
+            tabIndex={0}
+            aria-label={finalHelp}
+            style={{ display: 'inline-flex', alignItems: 'center', cursor: 'help' }}
+          >
+            <QuestionCircleOutlined style={{ color: 'var(--am-ink-3)', fontSize: iconSize }} />
+          </span>
         </Tooltip>
       )}
     </span>

@@ -20,6 +20,7 @@ import { fetchMonitorTargets, logout } from '../api/client';
 import type { MonitorTarget } from '../api/types';
 import { clearCurrentUser, getCurrentUser } from '../auth';
 import { BrandIcon } from '../components/brand/BrandIcon';
+import RouteErrorBoundary from '../components/RouteErrorBoundary';
 
 const { Header, Sider, Content } = Layout;
 
@@ -47,12 +48,22 @@ const NAV_ITEMS: NavItem[] = [
   { key: '/system',       icon: <SettingOutlined />,     label: '系统设置',  title: '系统设置',  subtitle: '活跃 Agent / 定时任务 / Judge 模型 / 鉴权 —— 改完即时生效，不重启' },
 ];
 
+// 一级菜单按职能聚类成三组（路由 key 全部不变，仅在视觉上分簇）：
+// 观测（看现状） / 洞察（看分析） / 运维（看异常与配置）。
+const NAV_GROUPS: { title: string; keys: string[] }[] = [
+  { title: '观测', keys: ['/dashboard', '/realtime', '/sessions', '/people'] },
+  { title: '洞察', keys: ['/analysis', '/projects', '/models-tools'] },
+  { title: '运维', keys: ['/alerts', '/system'] },
+];
+
 export default function MainLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(COLLAPSE_KEY) === '1',
   );
+  // 跳到主内容 skip-link 的聚焦态：平时视觉隐藏，键盘聚焦时浮现
+  const [skipFocused, setSkipFocused] = useState(false);
   // Agent 字典只为右上角 badge 用：拉一次即可，下次进入直接复用浏览器内存。
   const [targetCount, setTargetCount] = useState<number>(0);
   useEffect(() => {
@@ -87,6 +98,42 @@ export default function MainLayout() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
+      {/* 跳到主内容：键盘用户第一个 Tab 落点；平时视觉隐藏，聚焦时浮现并锚到 <Content> */}
+      <a
+        href="#am-main-content"
+        onFocus={() => setSkipFocused(true)}
+        onBlur={() => setSkipFocused(false)}
+        style={
+          skipFocused
+            ? {
+                position: 'fixed',
+                top: 12,
+                left: 12,
+                zIndex: 2000,
+                padding: '8px 16px',
+                background: 'var(--am-brand)',
+                color: '#fff',
+                borderRadius: 'var(--am-r-sm)',
+                boxShadow: 'var(--am-shadow-pop)',
+                fontSize: 13,
+                fontWeight: 600,
+                textDecoration: 'none',
+              }
+            : {
+                position: 'absolute',
+                width: 1,
+                height: 1,
+                padding: 0,
+                margin: -1,
+                overflow: 'hidden',
+                clip: 'rect(0, 0, 0, 0)',
+                whiteSpace: 'nowrap',
+                border: 0,
+              }
+        }
+      >
+        跳到主内容
+      </a>
       <Sider
         className="am-app-sider"
         theme="light"
@@ -133,7 +180,16 @@ export default function MainLayout() {
           mode="inline"
           inlineCollapsed={collapsed}
           selectedKeys={selected}
-          items={NAV_ITEMS.map(({ key, icon, label }) => ({ key, icon, label }))}
+          items={NAV_GROUPS.map((group) => ({
+            key: group.title,
+            type: 'group' as const,
+            // 折叠态隐藏分组标题文字，只保留簇间间隔，避免 64px 宽里挤中文标题
+            label: collapsed ? '' : group.title,
+            children: group.keys.map((k) => {
+              const item = NAV_ITEMS.find((i) => i.key === k)!;
+              return { key: item.key, icon: item.icon, label: item.label };
+            }),
+          }))}
           onClick={(e) => navigate(e.key)}
           style={{ borderInlineEnd: 0, paddingTop: 8 }}
         />
@@ -278,8 +334,15 @@ export default function MainLayout() {
             把任何漏网的横向溢出限制在内容区内，绝不冒泡成整页横向滚动条。
             （clip 不像 hidden 那样会牵连纵向轴，页面纵向滚动仍由 body 承担；
             宽表格的横向滚动发生在 .ant-table-body 自身，不受这里影响。） */}
-        <Content style={{ padding: 24, minHeight: 0, minWidth: 0, overflowX: 'clip' }}>
-          <Outlet />
+        <Content
+          id="am-main-content"
+          tabIndex={-1}
+          style={{ padding: 24, minHeight: 0, minWidth: 0, overflowX: 'clip', outline: 'none' }}
+        >
+          {/* key=路由 让错误态在换页时自动复位；主要兜「发版后旧 lazy chunk 失效」白屏 */}
+          <RouteErrorBoundary key={location.pathname}>
+            <Outlet />
+          </RouteErrorBoundary>
         </Content>
       </Layout>
     </Layout>

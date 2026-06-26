@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { statusHue } from '../styles/tokens';
+import { statusHue, ink } from '../styles/tokens';
 
 /** 前端「多久未动」灰化提示阈值；应 ≥ 2min 上报间隔 × 1.5，避免 tick 间误灰。 */
 export const STALE_VISUAL_THRESHOLD_SECONDS = 180;
@@ -129,7 +129,7 @@ export function presetColorToHex(name: string | null | undefined): string {
     case 'magenta':
     case 'pink': return '#eb2f96';
     case 'purple': return '#722ed1';
-    default: return '#94a3b8';
+    default: return ink[4];
   }
 }
 
@@ -210,7 +210,7 @@ export function membershipColor(t: string | null | undefined): string {
   switch ((t || '').toLowerCase()) {
     case 'free': return 'default';
     case 'pro': return 'blue';
-    case 'pro_plus': return 'geekblue';
+    case 'pro_plus': return 'cyan';
     case 'business':
     case 'team': return 'purple';
     case 'ultra': return 'magenta';
@@ -274,7 +274,7 @@ export function targetTypeColor(
   const key = (t || '').toLowerCase();
   if (map && map[key]) return map[key].color;
   switch (key) {
-    case 'cursor': return 'geekblue';
+    case 'cursor': return 'lime';
     case 'claude': return 'magenta';
     case 'codex': return 'green';
     case 'hermes': return 'purple';

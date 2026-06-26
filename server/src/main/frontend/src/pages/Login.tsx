@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  App as AntdApp,
   Button,
   Form,
   Input,
@@ -8,7 +9,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message,
 } from 'antd';
 import {
   AppleOutlined,
@@ -242,13 +242,14 @@ function InstallPanel() {
             AIWatch
           </Typography.Title>
           <Tag
-            color="geekblue"
             style={{
               marginLeft: 4,
               borderRadius: 999,
               fontSize: 12,
               padding: '0 10px',
               border: 'none',
+              background: 'var(--am-brand-bg)',
+              color: 'var(--am-brand-fg)',
             }}
           >
             员工 AI 工时统计
@@ -281,7 +282,7 @@ function InstallPanel() {
           description={
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               {status.missing_files.map((f) => (
-                <Tag key={f} color="orange">
+                <Tag key={f} color="warning">
                   {f}
                 </Tag>
               ))}
@@ -297,6 +298,7 @@ function InstallPanel() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
             <Form.Item
               label="公司邮箱"
+              htmlFor="install-user-code"
               required
               validateStatus={trimmedCode && !userCodeValid ? 'error' : ''}
               help={
@@ -307,6 +309,10 @@ function InstallPanel() {
               style={{ marginBottom: 0 }}
             >
               <Input
+                id="install-user-code"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
                 placeholder="如 xxxx@hisuntech.com"
                 value={userCode}
                 onChange={(e) => setUserCode(e.target.value)}
@@ -316,8 +322,10 @@ function InstallPanel() {
                 style={{ fontFamily: 'var(--am-font-mono)' }}
               />
             </Form.Item>
-            <Form.Item label="姓名" required style={{ marginBottom: 0 }}>
+            <Form.Item label="姓名" htmlFor="install-user-name" required style={{ marginBottom: 0 }}>
               <Input
+                id="install-user-name"
+                autoComplete="name"
                 placeholder="如 张三"
                 value={userName}
                 onChange={(e) => setUserName(e.target.value)}
@@ -325,8 +333,10 @@ function InstallPanel() {
                 allowClear
               />
             </Form.Item>
-            <Form.Item label="部门" required style={{ marginBottom: 0 }}>
+            <Form.Item label="部门" htmlFor="install-department" required style={{ marginBottom: 0 }}>
               <Input
+                id="install-department"
+                autoComplete="organization-title"
                 placeholder="如 研发部"
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
@@ -442,6 +452,7 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 function CommandBox({ cmd, disabled }: { cmd: string; disabled: boolean }) {
+  const { message } = AntdApp.useApp();
   const [copied, setCopied] = useState(false);
 
   // 复制命令到剪贴板。

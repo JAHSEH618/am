@@ -51,6 +51,23 @@ export const WATCHLIST_META: Record<
   },
 };
 
+/**
+ * watchlist 标签配色：由 severity（warn/info/good）映射到 AntD 预设状态色。
+ * 把 7 个 flag 原先随意的暖色（volcano/red/orange/gold/magenta…）收敛成「轻重三档」，
+ * 让管理员一眼分辨严重度，而非被一排同色暖调淹没。标签文字始终带 label，颜色不是唯一信号。
+ */
+const SEVERITY_TAG_COLOR: Record<'warn' | 'info' | 'good', string> = {
+  warn: 'warning', // 需关注：琥珀
+  info: 'default', // 提示 / 中性：灰
+  good: 'success', // 正向信号：绿
+};
+
+/** 取某个 watchlist flag 的标签色（按 severity 收敛；未知 flag 退中性灰）。 */
+export function watchlistTagColor(flag: string): string {
+  const meta = WATCHLIST_META[flag];
+  return meta ? SEVERITY_TAG_COLOR[meta.severity] : 'default';
+}
+
 // 5 种协作模式：类别色需彼此可分，统一从 tokens 取（emerald/blue/orange/violet/teal）
 export const MODE_META: Record<string, { label: string; color: string }> = {
   leverage: { label: '杠杆型', color: semantic.success.base },

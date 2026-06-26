@@ -478,7 +478,11 @@ function SchedulesPanel() {
   useEffect(() => {
     load();
     // 任务运行中（running=true）轮询频率高一点；这里偷懒固定 5s 轮询。
-    const id = window.setInterval(load, 5000);
+    // 页面不可见（切到后台标签页 / 最小化）时跳过这一拍，避免空转请求；卸载时清理。
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      load();
+    }, 5000);
     return () => window.clearInterval(id);
   }, [load]);
 
@@ -573,6 +577,12 @@ function ScheduledTaskCard({
 
   const saveCron = async () => {
     if (!dirty) return;
+    // 护栏：空表达式或非 6 段（秒 分 时 日 月 周）直接拦下；@hourly 等宏放行交服务端解析。
+    const expr = cronDraft.trim();
+    if (!expr || (!expr.startsWith('@') && expr.split(/\s+/).filter(Boolean).length !== 6)) {
+      message.error('Cron 表达式需为 6 段（秒 分 时 日 月 周），请检查');
+      return;
+    }
     setSavingCron(true);
     try {
       await updateScheduledTask(task.task_code, { cron: cronDraft.trim() });
@@ -606,7 +616,7 @@ function ScheduledTaskCard({
   };
 
   const statusTag = (() => {
-    if (task.running) return <Tag color="processing">运行中</Tag>;
+    if (task.running) return <Tag color="cyan">运行中</Tag>;
     if (!task.enabled) return <Tag>已禁用</Tag>;
     if (task.last_status === 'FAILED') return <Tag color="error">上次失败</Tag>;
     if (task.last_status === 'SUCCESS') return <Tag color="success">就绪</Tag>;
@@ -1127,6 +1137,16 @@ const PROVIDER_OPTIONS = [
 
 const SECRET_MASK = '********';
 
+/** 校验是否为合法 http(s) URL —— 用于 provider 非 mock 时的 endpoint 护栏。 */
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function JudgeConfigPanel() {
   const { message } = App.useApp();
   const [config, setConfig] = useState<Record<string, string> | null>(null);
@@ -1167,6 +1187,19 @@ function JudgeConfigPanel() {
   };
 
   const handleSave = async () => {
+    // 护栏：provider 非 mock 时 endpoint 必须是合法 http(s) URL，避免存下明显跑不通的配置。
+    for (const slot of ['a', 'b'] as const) {
+      const providerKey = slot === 'a' ? KEYS.JUDGE_A_PROVIDER : KEYS.JUDGE_B_PROVIDER;
+      const endpointKey = slot === 'a' ? KEYS.JUDGE_A_ENDPOINT : KEYS.JUDGE_B_ENDPOINT;
+      const slotTouched =
+        (draft[providerKey] ?? '') !== (config?.[providerKey] ?? '') ||
+        (draft[endpointKey] ?? '') !== (config?.[endpointKey] ?? '');
+      const provider = (draft[providerKey] ?? '').toLowerCase();
+      if (slotTouched && provider && provider !== 'mock' && !isHttpUrl((draft[endpointKey] ?? '').trim())) {
+        message.error(`Judge ${slot.toUpperCase()} 的 Endpoint 需填写合法的 http(s) URL`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       // 只发出本次有变化的字段；API Key 现在是明文回显，没改就不会进 updates
@@ -1461,7 +1494,7 @@ function RubricEditorCard({ value, originalValue, onChange, rubricVersion }: Rub
             </Tag>
           )}
           {!dirty && rubricVersion && (
-            <Tag color="blue" style={{ marginLeft: 4 }}>
+            <Tag color="cyan" style={{ marginLeft: 4 }}>
               {rubricVersion}
             </Tag>
           )}
@@ -1558,7 +1591,7 @@ function JudgeCard({
       size="small"
       title={
         <Space>
-          <Tag color={slot === 'a' ? 'geekblue' : 'purple'} style={{ fontWeight: 600 }}>
+          <Tag color={slot === 'a' ? 'cyan' : 'purple'} style={{ fontWeight: 600 }}>
             Judge {upper}
           </Tag>
           <Text type="secondary" style={{ fontSize: 12 }}>
@@ -1652,7 +1685,7 @@ function JudgeCard({
               <span>{testResult.success ? '连通正常' : '连通失败'}</span>
               <Tag color="default">{testResult.latency_ms} ms</Tag>
               {testResult.sample_difficulty != null && (
-                <Tag color="processing">样本 difficulty = {testResult.sample_difficulty}</Tag>
+                <Tag color="cyan">样本 difficulty = {testResult.sample_difficulty}</Tag>
               )}
             </Space>
           }
@@ -1731,6 +1764,50 @@ function AuthPanel() {
     Object.values(AUTH_KEYS).forEach((k) => {
       if ((draft[k] ?? '') !== (config?.[k] ?? '')) updates[k] = draft[k] ?? '';
     });
+
+    // 护栏：拦下明显非法/危险的凭证写入（仅前置校验，不改提交的数据结构）
+    if (updates[AUTH_KEYS.USERNAME] !== undefined && updates[AUTH_KEYS.USERNAME].trim() === '') {
+      message.error('用户名不能为空');
+      return;
+    }
+    if (updates[AUTH_KEYS.PASSWORD] !== undefined && updates[AUTH_KEYS.PASSWORD].length < 6) {
+      message.error('密码至少 6 位');
+      return;
+    }
+    const nextToken = updates[AUTH_KEYS.ADMIN_TOKEN];
+    if (nextToken !== undefined && nextToken.length > 0 && nextToken.length < 8) {
+      message.error('admin token 至少 8 字符（生产建议 32+）');
+      return;
+    }
+
+    // 清空 admin token = 静默关闭 X-Admin-Token 鉴权通道——单独二次确认（与改用户名/密码的确认相互独立）
+    const willClearToken =
+      nextToken !== undefined && nextToken === '' && (config?.[AUTH_KEYS.ADMIN_TOKEN] ?? '') !== '';
+    if (willClearToken) {
+      const okClear = await new Promise<boolean>((resolve) => {
+        modal.confirm({
+          title: '清空 admin token？',
+          icon: <ExclamationCircleOutlined style={{ color: 'var(--am-warning)' }} />,
+          content: (
+            <div style={{ lineHeight: 1.8 }}>
+              <div>
+                置空后 <strong>X-Admin-Token 鉴权通道将被关闭</strong>，所有依赖该 token 的自动化脚本 / curl 调用会立即失去访问权限。
+              </div>
+              <div style={{ color: 'var(--am-ink-3)', marginTop: 6 }}>
+                · 浏览器登录态不受影响（走 Session，不依赖 token）<br />
+                · 如需恢复，重新填写 token 或点「生成新 token」
+              </div>
+            </div>
+          ),
+          okText: '确认清空',
+          okButtonProps: { danger: true },
+          cancelText: '再想想',
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      });
+      if (!okClear) return;
+    }
 
     // 改密码 / 用户名前再确认一次——避免误操作把自己锁在外面
     const willChangeCreds =
@@ -1862,7 +1939,7 @@ function AuthPanel() {
           <Card
             title={
               <span>
-                <KeyOutlined style={{ color: 'var(--am-blue)', marginRight: 6 }} />
+                <KeyOutlined style={{ color: 'var(--am-brand)', marginRight: 6 }} />
                 后台登录账号
               </span>
             }
@@ -1870,9 +1947,11 @@ function AuthPanel() {
             <Form layout="vertical" size="middle">
               <Form.Item
                 label="用户名"
+                htmlFor="auth-username"
                 help={<Text type="secondary" style={{ fontSize: 12 }}>登录后台用</Text>}
               >
                 <Input
+                  id="auth-username"
                   value={draft[AUTH_KEYS.USERNAME] ?? ''}
                   onChange={(e) => setField(AUTH_KEYS.USERNAME, e.target.value)}
                   placeholder="admin"
@@ -1881,6 +1960,7 @@ function AuthPanel() {
               </Form.Item>
               <Form.Item
                 label="密码"
+                htmlFor="auth-password"
                 help={
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     至少 6 位；点眼睛切换显示
@@ -1888,6 +1968,7 @@ function AuthPanel() {
                 }
               >
                 <Input.Password
+                  id="auth-password"
                   value={draft[AUTH_KEYS.PASSWORD] ?? ''}
                   onChange={(e) => setField(AUTH_KEYS.PASSWORD, e.target.value)}
                   placeholder="留空将无法登录"
@@ -1921,6 +2002,7 @@ function AuthPanel() {
             <Form layout="vertical" size="middle">
               <Form.Item
                 label="当前 token"
+                htmlFor="auth-admin-token"
                 help={
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     用作请求头 <code>X-Admin-Token</code>；至少 8 字符（生产建议 32+），置空将关闭该通道鉴权
@@ -1928,6 +2010,7 @@ function AuthPanel() {
                 }
               >
                 <Input.Password
+                  id="auth-admin-token"
                   value={draft[AUTH_KEYS.ADMIN_TOKEN] ?? ''}
                   onChange={(e) => setField(AUTH_KEYS.ADMIN_TOKEN, e.target.value)}
                   placeholder="32 字符随机串"
@@ -2109,8 +2192,9 @@ function AuditPanel() {
                 size="small"
                 icon={<KeyOutlined />}
                 onClick={() => toggleReveal(row.id)}
+                aria-label={revealed.has(row.id) ? '隐藏明文' : '查看明文'}
                 style={{
-                  color: revealed.has(row.id) ? 'var(--am-blue)' : 'var(--am-ink-3)',
+                  color: revealed.has(row.id) ? 'var(--am-brand)' : 'var(--am-ink-3)',
                   padding: '0 4px',
                 }}
               />

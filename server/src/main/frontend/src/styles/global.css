@@ -75,7 +75,7 @@
   --am-error-fg: #dc2626;
   --am-error-bg: #fef2f2;
   --am-error-border: #fecaca;
-  --am-info: #2e6bf0; /* 收敛到品牌钴蓝 */
+  --am-info: #1a52dc; /* 收敛到品牌钴蓝（对齐 --am-brand / indigo-600） */
   --am-info-fg: #1644b6;
 
   /* 分类强调色（消息角色 / 分区图标 / 图表系列；非状态语义）—— 与 tokens.ts accent 同源 */
@@ -342,7 +342,7 @@ body,
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #fafbfc !important;
+  background: var(--am-surface-sunken) !important;
   font-weight: 500;
 }
 
@@ -353,7 +353,7 @@ body,
 }
 /* 让同一 agent_device 的子行之间出现一条更浅的虚线分隔，告诉用户"这是同一员工的另一个 agent" */
 .am-online-table .ant-table-tbody > tr:not(:last-child) > td {
-  border-bottom: 1px dashed #eef2f7;
+  border-bottom: 1px dashed var(--am-border-subtle);
 }
 /* 但每个 agent_device 之间保持完整实线分隔——通过 mergeCell 第一行 rowSpan 自动撑高，CSS 不需特别处理 */
 
@@ -541,48 +541,37 @@ body,
   color: var(--am-ink-3);
 }
 
-/* 注册员工列：离线状态用叠在姓名上的朱红小印章（轻微倾斜） */
+/* 注册员工列：离线状态用姓名后的中性小标签（替代旧朱红印章；不遮挡姓名、不喧宾夺主） */
 .am-employee-cell {
-  position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
   vertical-align: middle;
-  min-height: 1.35em;
 }
 .am-employee-name {
-  display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.am-offline-seal {
-  position: absolute;
-  left: 50%;
-  top: 45%;
-  transform: translate(-42%, -50%) rotate(-14deg);
-  z-index: 2;
-  font-size: 10px;
-  font-weight: 700;
-  font-family: 'Songti SC', 'STSong', 'SimSun', serif;
-  letter-spacing: 0.1em;
-  line-height: 1;
-  color: #b91c1c;
-  padding: 3px 4px 2px;
-  border: 1.5px solid #b91c1c;
-  border-radius: 1px;
-  background: rgba(255, 252, 250, 0.78);
-  box-shadow:
-    inset 0 0 0 0.5px rgba(185, 28, 28, 0.22),
-    0 1px 2px rgba(15, 23, 42, 0.06);
-  pointer-events: none;
-  user-select: none;
+.am-offline-tag {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 999px;
+  color: var(--am-ink-4);
+  background: var(--am-surface-sunken);
+  border: 1px solid var(--am-border);
   white-space: nowrap;
+  user-select: none;
 }
 
 /* 注册员工表：筛选工具条（白底胶囊 + 竖线分隔 + 搜索前缀图标） */
 .am-agent-filter {
   padding: 14px 16px 12px;
-  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 55%, #eef2f7 100%);
+  background: linear-gradient(180deg, var(--am-surface-sunken) 0%, var(--am-bg-page) 100%);
   border-bottom: 1px solid var(--am-border-subtle);
 }
 .am-agent-filter-inner {
@@ -591,7 +580,7 @@ body,
   flex-wrap: wrap;
   gap: 0;
   background: #fff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--am-border);
   border-radius: 10px;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.04),
@@ -610,7 +599,7 @@ body,
 .am-agent-filter-label {
   font-size: var(--am-fs-xs);
   font-weight: 600;
-  color: #64748b;
+  color: var(--am-ink-3);
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
@@ -626,7 +615,7 @@ body,
   align-self: center;
   width: 1px;
   height: 22px;
-  background: linear-gradient(180deg, transparent, #e2e8f0 20%, #e2e8f0 80%, transparent);
+  background: linear-gradient(180deg, transparent, var(--am-border) 20%, var(--am-border) 80%, transparent);
   margin: 0 4px;
   flex-shrink: 0;
 }
@@ -637,19 +626,19 @@ body,
   padding-inline: 8px 10px;
 }
 .am-agent-filter-search-icon {
-  color: #94a3b8;
+  color: var(--am-ink-4);
   font-size: 15px;
   margin-inline-end: 2px;
 }
 .am-agent-filter-input input::placeholder {
-  color: #94a3b8;
+  color: var(--am-ink-5);
   font-size: var(--am-fs-sm);
 }
 .am-agent-filter-hint {
   margin: 8px 0 0;
   padding-left: 4px;
   font-size: var(--am-fs-xs);
-  color: #94a3b8;
+  color: var(--am-ink-3);
   line-height: 1.45;
 }
 
@@ -667,7 +656,7 @@ body,
     width: 100%;
     height: 1px;
     margin: 6px 0;
-    background: #e2e8f0;
+    background: var(--am-border);
   }
   .am-agent-filter-input.ant-input-affix-wrapper {
     min-width: 0;

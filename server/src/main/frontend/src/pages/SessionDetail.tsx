@@ -366,7 +366,10 @@ export default function SessionDetail() {
                   />
                 )}
                 <Row justify="space-between" align="middle" style={{ marginBottom: 12 }} wrap>
-                  <Tooltip title="对话视图隐藏 tool/thinking，更接近 Cursor 聊天窗口；工具很多的会话默认开启">
+                  <Tooltip
+                    trigger={['hover', 'focus']}
+                    title="对话视图隐藏 tool/thinking，更接近 Cursor 聊天窗口；工具很多的会话默认开启"
+                  >
                     <Segmented
                       size="small"
                       value={msgView}
@@ -404,8 +407,11 @@ export default function SessionDetail() {
           {
             key: 'events',
             label: (
-              <Tooltip title="Agent 上报的原始事件流（含 TOKEN_DELTA / MESSAGE_DELTA / TOOL_CALL 等），条数通常远大于对话轮次">
-                {`事件流水 (${evts?.total ?? 0})`}
+              <Tooltip
+                trigger={['hover', 'focus']}
+                title="Agent 上报的原始事件流（含 TOKEN_DELTA / MESSAGE_DELTA / TOOL_CALL 等），条数通常远大于对话轮次"
+              >
+                <span tabIndex={0}>{`事件流水 (${evts?.total ?? 0})`}</span>
               </Tooltip>
             ),
             children: (
@@ -418,7 +424,7 @@ export default function SessionDetail() {
                     <List.Item>
                       <Space wrap>
                         <Tag color={eventTypeColor(e.event_type)}>{eventTypeLabel(e.event_type)}</Tag>
-                        {e.tool_name && <Tag color="blue">{e.tool_name}</Tag>}
+                        {e.tool_name && <Tag color="purple">{e.tool_name}</Tag>}
                         {e.tokens_delta > 0 && <Tag color="gold">+{formatTokens(e.tokens_delta)} tk</Tag>}
                         {formatMessageDelta(e.messages_delta) && (
                           <Tag color={messageDeltaTagColor(e.messages_delta)}>
@@ -530,12 +536,12 @@ function MessageBubble({
   return (
     <div style={{ marginBottom: 4 }}>
       <Space wrap size={6} style={{ marginBottom: 4 }}>
-        <Tag color={s.color} style={{ marginInlineEnd: 0 }}>{s.label}</Tag>
+        <Tag style={{ marginInlineEnd: 0, color: s.color, background: s.bg, borderColor: s.border }}>{s.label}</Tag>
         {m.role === 'user' &&
           ((m.slash_command_count ?? 0) > 0 || (m.slash_skill_count ?? 0) > 0) && (
             <>
               {(m.slash_command_count ?? 0) > 0 && (
-                <Tag color="blue">斜杠命令 ×{m.slash_command_count}</Tag>
+                <Tag color="magenta">斜杠命令 ×{m.slash_command_count}</Tag>
               )}
               {(m.slash_skill_count ?? 0) > 0 && (
                 <Tag color="cyan">

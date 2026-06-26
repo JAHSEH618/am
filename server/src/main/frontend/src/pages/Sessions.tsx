@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Card, DatePicker, Descriptions, Input, Modal, Select, Space, Spin, Switch, Table, Tag, Tooltip } from 'antd';
+import { Button, Card, DatePicker, Descriptions, Input, Modal, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import { ClearOutlined, InfoCircleOutlined, RobotOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
@@ -13,6 +14,7 @@ import {
   employeeName,
   formatTime,
   formatTokens,
+  modelLabel,
   statusLabel,
   targetTypeColor,
   targetTypeLabel,
@@ -74,6 +76,18 @@ function isDefaultRange(r: [Dayjs | null, Dayjs | null] | null): boolean {
   const def = defaultRange();
   return r[0].isSame(def[0], 'day') && r[1].isSame(def[1], 'day');
 }
+
+/**
+ * Slash 调用种类展示元数据：颜色 + 中文名（用于 tooltip）。
+ * 无障碍修复：此前 command 与 nl_skill 同为蓝色、且仅靠颜色区分，键盘 / 读屏无法分辨；
+ * 这里给各自语义色（去品牌蓝）并由 tooltip 显式命名种类。
+ */
+const SLASH_KIND_META: Record<string, { color: string; label: string }> = {
+  command: { color: 'purple', label: '斜杠命令' },
+  skill: { color: 'cyan', label: '技能' },
+  nl_skill: { color: 'gold', label: 'NL 技能' },
+  noise: { color: 'default', label: '噪声' },
+};
 
 type TargetFilter = string;
 
@@ -335,6 +349,353 @@ export default function Sessions() {
     || activeOnly
     || includeInvalid;
 
+  // 列定义 / 行交互 memo 化：SSE session_changed 会高频 setData 触发重渲，
+  // 避免每次重渲都重建 11 个列对象与 onRow 闭包。
+  const onRow = useCallback(
+    (r: AiSession) =>
+      clickableRowProps(() => {
+        // 把当前时间窗带进详情页，让详情页的消息 / 事件也按这段窗口截断
+        const sp = new URLSearchParams();
+        if (fromStr) sp.set(QP_FROM, fromStr);
+        if (toStr) sp.set(QP_TO, toStr);
+        const qs = sp.toString();
+        navigate(`/sessions/${r.id}${qs ? `?${qs}` : ''}`);
+      }),
+    [navigate, fromStr, toStr],
+  );
+
+  const columns = useMemo<ColumnsType<AiSession>>(
+    () => [
+            {
+              title: '状态',
+              dataIndex: 'status',
+              width: 140,
+              fixed: 'left',
+              // 仅展示 ai_session.status 本身（idle / writing / running / ...）。
+              // v2.8 起去掉前端"离线"灰化降级：旧逻辑用 last_activity > 3 分钟兜底打"离线"标，
+              // 但与"几十天未动的 idle session 不会标离线"口径不统一，反而误导。
+              // 真正的"会话陈旧"由列表的 last_activity 列直接呈现，无需再叠一个降级标签。
+              // v2.11：当包含无效会话时，状态后面加一个"无效"小 Tag，避免运维误把它当正常会话排查。
+              render: (v, r) => (
+                <Space size={6}>
+                  <StatusDot status={v} />
+                  <span>{statusLabel(v)}</span>
+                  {r.invalid_reason && (
+                    <Tooltip title={
+                      r.invalid_reason === 'merged_subagent'
+                        ? '已归并到父 chat 的 Task 子 composer，不在列表单独展示'
+                        : `无效会话（${r.invalid_reason}）：模型从未真正回应过这个会话`
+                    }>
+                      <Tag color="default" style={{ marginInlineEnd: 0, fontSize: 11 }}>无效</Tag>
+                    </Tooltip>
+                  )}
+                </Space>
+              ),
+            },
+            {
+              title: '员工',
+              dataIndex: 'user_display',
+              width: 140,
+              fixed: 'left',
+              ellipsis: true,
+              render: (v: string, row) => employeeName(v, row.user_code),
+            },
+            {
+              title: '来源',
+              dataIndex: 'target_type',
+              width: 110,
+              render: (v) => (
+                <Tag color={targetTypeColor(v, targetMap)} style={{ marginInlineEnd: 0 }}>
+                  {targetTypeLabel(v, targetMap)}
+                </Tag>
+              ),
+              filters: targets.map((t) => ({ text: t.type_name, value: t.type_code })),
+              onFilter: (val, record) => record.target_type === val,
+            },
+            {
+              title: '项目 / 分支',
+              dataIndex: 'project_name',
+              width: 280,
+              render: (v, row) => {
+                let sub: React.ReactNode = (
+                  <span style={{ color: 'var(--am-ink-5)' }}>非 git 仓库</span>
+                );
+                if (row.git_branch) sub = <span style={{ color: 'var(--am-ink-3)' }}>@{row.git_branch}</span>;
+                else if (row.repo_url)
+                  sub = (
+                    <span style={{ color: 'var(--am-ink-3)' }} title={row.repo_url}>
+                      {row.repo_url}
+                    </span>
+                  );
+                return (
+                  <Space
+                    direction="vertical"
+                    size={0}
+                    style={{ lineHeight: 1.4, maxWidth: '100%' }}
+                  >
+                    <Space size={6} wrap>
+                      <span
+                        style={{
+                          fontWeight: 500,
+                          display: 'inline-block',
+                          maxWidth: 200,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          verticalAlign: 'bottom',
+                        }}
+                        title={v || '(未识别)'}
+                      >
+                        {v || '(未识别)'}
+                      </span>
+                      {row.worktree && <Tag color="purple">worktree</Tag>}
+                    </Space>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        maxWidth: '100%',
+                      }}
+                    >
+                      {sub}
+                    </div>
+                    {row.cwd && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: 'var(--am-ink-5)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          maxWidth: '100%',
+                        }}
+                        title={row.cwd}
+                      >
+                        {row.cwd}
+                      </div>
+                    )}
+                  </Space>
+                );
+              },
+            },
+            {
+              title: (
+                <Space size={4}>
+                  Slash commands
+                  <Tooltip
+                    trigger={['hover', 'focus']}
+                    title={
+                      '当前筛选时间窗内，本会话 user 消息里合并去重后的「快捷调用」展示名。'
+                      + ' 含 Cursor 显式 /…、Codex $技能，以及 NL 已执行 skill（Read SKILL.md 后有 Edit/Write/Bash 等落地工具；仅 Read 或 Grep 浏览不计）。'
+                      + ' Claude Code 等其它来源当前无此项。'
+                      + ' 与详情页消息字段同源。'
+                      + ' 标签颜色区分 command / skill / nl_skill / noise。'
+                    }
+                  >
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} tabIndex={0} />
+                  </Tooltip>
+                </Space>
+              ),
+              width: 260,
+              render: (_, r) => {
+                const hits = r.slash_invocations;
+                if (!hits || hits.length === 0) {
+                  return <span style={{ color: 'var(--am-ink-3)' }}>—</span>;
+                }
+                return (
+                  <Space size={[4, 4]} wrap>
+                    {hits.map((h, i) => {
+                      const k = (h.kind || '').toLowerCase();
+                      const meta = SLASH_KIND_META[k] || { color: 'default', label: h.kind || '调用' };
+                      return (
+                        <Tooltip key={`${h.token}-${h.kind}-${i}`} title={`${meta.label}：${h.token}`}>
+                          <Tag color={meta.color} style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                            {h.token}
+                          </Tag>
+                        </Tooltip>
+                      );
+                    })}
+                  </Space>
+                );
+              },
+            },
+            {
+              title: '模型',
+              dataIndex: 'model',
+              width: 180,
+              ellipsis: { showTitle: false },
+              render: (v: string) =>
+                v ? (
+                  <Tooltip title={v}>
+                    <span>{modelLabel(v)}</span>
+                  </Tooltip>
+                ) : (
+                  <span style={{ color: 'var(--am-ink-5)' }}>—</span>
+                ),
+            },
+            {
+              title: (
+                <Space size={4}>
+                  审计
+                  <Tooltip
+                    trigger={['hover', 'focus']}
+                    title={
+                      'Insight 会话级评判（ai_session_audit）：跑过分析报告或命中缓存时出现；'
+                      + '难度 1–5、完成度、协作模式均为双 judge 合成结果，与「分析报告」口径一致。'
+                    }
+                  >
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} tabIndex={0} />
+                  </Tooltip>
+                </Space>
+              ),
+              width: 244,
+              render: (_, r) => {
+                const a = r.audit;
+                if (!a) {
+                  return <span style={{ color: 'var(--am-ink-3)' }}>未审计</span>;
+                }
+                const outcomeLabel = OUTCOME_META[a.outcome]?.label ?? a.outcome;
+                const modeLabel = MODE_META[a.mode]?.label ?? a.mode;
+                const modeColor = MODE_META[a.mode]?.color ?? 'var(--am-ink-3)';
+                const tip = (
+                  <Space direction="vertical" size={0}>
+                    <span>难度（合成）：{a.difficulty}</span>
+                    <span>审计时间：{formatTime(a.audited_at)}</span>
+                    <span>Rubric / 流水线版本：{a.audit_version}</span>
+                  </Space>
+                );
+                return (
+                  <div onClick={(e) => e.stopPropagation()} role="presentation">
+                    <Space size={[4, 4]} style={{ lineHeight: 1.35 }} align="center" wrap={false}>
+                      <Tooltip title={tip}>
+                        <Space size={[4, 4]} wrap>
+                          <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                            难度 {a.difficulty}
+                          </Tag>
+                          <Tag
+                            style={{
+                              marginInlineEnd: 0,
+                              fontSize: 11,
+                              borderColor: OUTCOME_META[a.outcome]?.color,
+                              color: OUTCOME_META[a.outcome]?.color,
+                              background: 'var(--am-bg-card)',
+                            }}
+                          >
+                            {outcomeLabel}
+                          </Tag>
+                          <Tag
+                            style={{
+                              marginInlineEnd: 0,
+                              fontSize: 11,
+                              borderColor: modeColor,
+                              color: modeColor,
+                              background: 'var(--am-bg-card)',
+                            }}
+                          >
+                            {modeLabel}
+                          </Tag>
+                        </Space>
+                      </Tooltip>
+                      <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => openAuditDetail(r.id)}>
+                        详情
+                      </Button>
+                    </Space>
+                  </div>
+                );
+              },
+            },
+            {
+              title: (
+                <Space size={4}>
+                  消息
+                  <Tooltip
+                    trigger={['hover', 'focus']}
+                    title={
+                      hasWindow
+                        ? '当前显示筛选区间内本会话的消息数（按 message_time 切片）；括号内为会话生命周期累计'
+                        : '会话生命周期累计的用户/助手消息数；选定时间区间后会切换为窗内值'
+                    }
+                  >
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} tabIndex={0} />
+                  </Tooltip>
+                </Space>
+              ),
+              width: 120,
+              render: (_, r) => {
+                const win = r.window_message_count;
+                if (hasWindow && win != null) {
+                  return (
+                    <span style={NUM_STYLE}>
+                      <strong>{win}</strong>
+                      <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
+                        {' '}
+                        / 累计 {r.user_messages + r.assistant_messages}
+                      </span>
+                    </span>
+                  );
+                }
+                return (
+                  <span style={NUM_STYLE}>
+                    {r.user_messages} / {r.assistant_messages}
+                  </span>
+                );
+              },
+            },
+            {
+              title: (
+                <Space size={4}>
+                  Token
+                  <Tooltip
+                    trigger={['hover', 'focus']}
+                    title={
+                      hasWindow
+                        ? '筛选区间内 input + output token；括号内为会话生命周期累计 in/out'
+                        : '会话生命周期累计的 input / output token；选定时间区间后会切换为窗内总和'
+                    }
+                  >
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} tabIndex={0} />
+                  </Tooltip>
+                </Space>
+              ),
+              width: 180,
+              render: (_, r) => {
+                const winTok = r.window_tokens;
+                if (hasWindow && winTok != null) {
+                  return (
+                    <span style={NUM_STYLE}>
+                      <strong>{formatTokens(winTok)}</strong>
+                      <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
+                        {' '}
+                        / 累计 {formatTokens(r.input_tokens + r.output_tokens)}
+                      </span>
+                    </span>
+                  );
+                }
+                return (
+                  <span style={NUM_STYLE}>
+                    {formatTokens(r.input_tokens)} / {formatTokens(r.output_tokens)}
+                  </span>
+                );
+              },
+            },
+            {
+              title: '最近活动',
+              dataIndex: 'last_activity',
+              width: 150,
+              render: (v) => formatTime(v),
+            },
+            {
+              title: '开始',
+              dataIndex: 'started_at',
+              width: 150,
+              render: (v) => formatTime(v),
+            },
+    ],
+    [targetMap, targets, hasWindow, openAuditDetail],
+  );
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {/* 项目 / user_code 过滤来自项目透视页跳转，作为只读 banner 让用户能看到当前过滤态并一键清除 */}
@@ -344,14 +705,14 @@ export default function Sessions() {
             {projectName && (
               <Space size={6}>
                 <span style={{ color: 'var(--am-ink-3)', fontSize: 13 }}>项目：</span>
-                <Tag color="blue" style={{ fontSize: 13 }}>{projectName}</Tag>
+                <Tag style={{ fontSize: 13 }}>{projectName}</Tag>
                 <Button size="small" type="link" onClick={clearProject}>清除</Button>
               </Space>
             )}
             {userCode && (
               <Space size={6}>
                 <span style={{ color: 'var(--am-ink-3)', fontSize: 13 }}>员工工号：</span>
-                <Tag color="geekblue" style={{ fontSize: 13 }}>{userCode}</Tag>
+                <Tag style={{ fontSize: 13, color: 'var(--am-ink-2)', background: 'var(--am-surface-sunken)', borderColor: 'var(--am-border)' }}>{userCode}</Tag>
                 <Button size="small" type="link" onClick={clearUserCode}>清除</Button>
               </Space>
             )}
@@ -370,6 +731,19 @@ export default function Sessions() {
             style={{ width: 240 }}
             allowClear
           />
+          {/* 快捷 / 自定义二选一：此前 RangePicker 默认预填本自然周 → 「近 N 天」下拉恒灰且无解释；
+              这里加一个明确的模式切换，复用既有 onRangeChange，不改数据流。 */}
+          <Segmented
+            value={hasWindow ? 'custom' : 'quick'}
+            onChange={(v) => {
+              if (v === 'quick') onRangeChange(null);
+              else onRangeChange(defaultRange());
+            }}
+            options={[
+              { label: '快捷', value: 'quick' },
+              { label: '自定义', value: 'custom' },
+            ]}
+          />
           <Select
             value={days}
             onChange={onDaysChange}
@@ -385,19 +759,21 @@ export default function Sessions() {
           />
           <RangePicker
             allowClear
+            disabled={!hasWindow}
             value={range as [Dayjs, Dayjs] | null}
             onChange={(v) => onRangeChange(v as [Dayjs | null, Dayjs | null] | null)}
             placeholder={['起始日', '截止日']}
             style={{ width: 240 }}
           />
           <Tooltip
+            trigger={['hover', 'focus']}
             title={
               activeOnly
                 ? '当前仅展示 status≠空闲 的会话，与观测大盘「活跃 AI 会话」计数口径一致。下方时间窗仍影响「消息 / Token」列的窗内统计。'
                 : '选择精确日期区间后，列表会展示在该区间内有过对话的会话；其消息数 / Token 列也会按区间内消息重算（而不是会话生命周期累计）。'
             }
           >
-            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} tabIndex={0} />
           </Tooltip>
           {activeOnly && (
             <Tag closable onClose={clearActiveOnly} color="green" style={{ marginInlineEnd: 0 }}>
@@ -449,7 +825,7 @@ export default function Sessions() {
           size="small"
           loading={loading}
           dataSource={data?.items ?? []}
-          scroll={{ x: 1780 }}
+          scroll={{ x: 1954 }}
           className="am-sticky-table"
           locale={{ emptyText: '当前筛选条件下暂无会话' }}
           pagination={{
@@ -465,291 +841,8 @@ export default function Sessions() {
               setSize(s);
             },
           }}
-          onRow={(r) =>
-            clickableRowProps(() => {
-              // 把当前时间窗带进详情页，让详情页的消息 / 事件也按这段窗口截断
-              const sp = new URLSearchParams();
-              if (fromStr) sp.set(QP_FROM, fromStr);
-              if (toStr) sp.set(QP_TO, toStr);
-              const qs = sp.toString();
-              navigate(`/sessions/${r.id}${qs ? `?${qs}` : ''}`);
-            })
-          }
-          columns={[
-            {
-              title: '状态',
-              dataIndex: 'status',
-              width: 140,
-              fixed: 'left',
-              // 仅展示 ai_session.status 本身（idle / writing / running / ...）。
-              // v2.8 起去掉前端"离线"灰化降级：旧逻辑用 last_activity > 3 分钟兜底打"离线"标，
-              // 但与"几十天未动的 idle session 不会标离线"口径不统一，反而误导。
-              // 真正的"会话陈旧"由列表的 last_activity 列直接呈现，无需再叠一个降级标签。
-              // v2.11：当包含无效会话时，状态后面加一个"无效"小 Tag，避免运维误把它当正常会话排查。
-              render: (v, r) => (
-                <Space size={6}>
-                  <StatusDot status={v} />
-                  <span>{statusLabel(v)}</span>
-                  {r.invalid_reason && (
-                    <Tooltip title={
-                      r.invalid_reason === 'merged_subagent'
-                        ? '已归并到父 chat 的 Task 子 composer，不在列表单独展示'
-                        : `无效会话（${r.invalid_reason}）：模型从未真正回应过这个会话`
-                    }>
-                      <Tag color="default" style={{ marginInlineEnd: 0, fontSize: 11 }}>无效</Tag>
-                    </Tooltip>
-                  )}
-                </Space>
-              ),
-            },
-            {
-              title: '员工',
-              dataIndex: 'user_display',
-              width: 140,
-              fixed: 'left',
-              ellipsis: true,
-              render: (v: string, row) => employeeName(v, row.user_code),
-            },
-            {
-              title: '来源',
-              dataIndex: 'target_type',
-              width: 110,
-              render: (v) => (
-                <Tag color={targetTypeColor(v, targetMap)} style={{ marginInlineEnd: 0 }}>
-                  {targetTypeLabel(v, targetMap)}
-                </Tag>
-              ),
-              filters: targets.map((t) => ({ text: t.type_name, value: t.type_code })),
-              onFilter: (val, record) => record.target_type === val,
-            },
-            {
-              title: '项目 / 分支',
-              dataIndex: 'project_name',
-              width: 280,
-              ellipsis: true,
-              render: (v, row) => {
-                let sub: React.ReactNode = (
-                  <span style={{ color: 'var(--am-ink-5)' }}>非 git 仓库</span>
-                );
-                if (row.git_branch) sub = <span style={{ color: 'var(--am-ink-3)' }}>@{row.git_branch}</span>;
-                else if (row.repo_url)
-                  sub = (
-                    <span style={{ color: 'var(--am-ink-3)' }} title={row.repo_url}>
-                      {row.repo_url}
-                    </span>
-                  );
-                return (
-                  <Space
-                    direction="vertical"
-                    size={0}
-                    style={{ lineHeight: 1.4 }}
-                    title={row.cwd || undefined}
-                  >
-                    <Space size={6} wrap>
-                      <span style={{ fontWeight: 500 }}>{v || '(未识别)'}</span>
-                      {row.worktree && <Tag color="purple">worktree</Tag>}
-                    </Space>
-                    <span style={{ fontSize: 12 }}>{sub}</span>
-                  </Space>
-                );
-              },
-            },
-            {
-              title: (
-                <Space size={4}>
-                  Slash commands
-                  <Tooltip
-                    title={
-                      '当前筛选时间窗内，本会话 user 消息里合并去重后的「快捷调用」展示名。'
-                      + ' 含 Cursor 显式 /…、Codex $技能，以及 NL 已执行 skill（Read SKILL.md 后有 Edit/Write/Bash 等落地工具；仅 Read 或 Grep 浏览不计）。'
-                      + ' Claude Code 等其它来源当前无此项。'
-                      + ' 与详情页消息字段同源。'
-                      + ' 标签颜色区分 command / skill / nl_skill / noise。'
-                    }
-                  >
-                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
-                  </Tooltip>
-                </Space>
-              ),
-              width: 260,
-              render: (_, r) => {
-                const hits = r.slash_invocations;
-                if (!hits || hits.length === 0) {
-                  return <span style={{ color: 'var(--am-ink-3)' }}>—</span>;
-                }
-                return (
-                  <Space size={[4, 4]} wrap>
-                    {hits.map((h, i) => {
-                      const k = (h.kind || '').toLowerCase();
-                      let color: string | undefined = 'blue';
-                      if (k === 'skill') color = 'cyan';
-                      else if (k === 'noise') color = 'default';
-                      return (
-                        <Tag key={`${h.token}-${h.kind}-${i}`} color={color} style={{ marginInlineEnd: 0, fontSize: 11 }}>
-                          {h.token}
-                        </Tag>
-                      );
-                    })}
-                  </Space>
-                );
-              },
-            },
-            { title: '模型', dataIndex: 'model', width: 180, ellipsis: true },
-            {
-              title: (
-                <Space size={4}>
-                  审计
-                  <Tooltip
-                    title={
-                      'Insight 会话级评判（ai_session_audit）：跑过分析报告或命中缓存时出现；'
-                      + '难度 1–5、完成度、协作模式均为双 judge 合成结果，与「分析报告」口径一致。'
-                    }
-                  >
-                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
-                  </Tooltip>
-                </Space>
-              ),
-              width: 244,
-              render: (_, r) => {
-                const a = r.audit;
-                if (!a) {
-                  return <span style={{ color: 'var(--am-ink-3)' }}>未审计</span>;
-                }
-                const outcomeLabel = OUTCOME_META[a.outcome]?.label ?? a.outcome;
-                const modeLabel = MODE_META[a.mode]?.label ?? a.mode;
-                const modeColor = MODE_META[a.mode]?.color ?? 'var(--am-ink-3)';
-                const tip = (
-                  <Space direction="vertical" size={0}>
-                    <span>难度（合成）：{a.difficulty}</span>
-                    <span>审计时间：{formatTime(a.audited_at)}</span>
-                    <span>Rubric / 流水线版本：{a.audit_version}</span>
-                  </Space>
-                );
-                return (
-                  <div onClick={(e) => e.stopPropagation()} role="presentation">
-                    <Space size={[4, 4]} style={{ lineHeight: 1.35 }} align="center" wrap={false}>
-                      <Tooltip title={tip}>
-                        <Space size={[4, 4]} wrap>
-                          <Tag color="blue" style={{ marginInlineEnd: 0, fontSize: 11 }}>
-                            难度 {a.difficulty}
-                          </Tag>
-                          <Tag
-                            style={{
-                              marginInlineEnd: 0,
-                              fontSize: 11,
-                              borderColor: OUTCOME_META[a.outcome]?.color,
-                              color: OUTCOME_META[a.outcome]?.color,
-                              background: 'var(--am-bg-card)',
-                            }}
-                          >
-                            {outcomeLabel}
-                          </Tag>
-                          <Tag
-                            style={{
-                              marginInlineEnd: 0,
-                              fontSize: 11,
-                              borderColor: modeColor,
-                              color: modeColor,
-                              background: 'var(--am-bg-card)',
-                            }}
-                          >
-                            {modeLabel}
-                          </Tag>
-                        </Space>
-                      </Tooltip>
-                      <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => openAuditDetail(r.id)}>
-                        详情
-                      </Button>
-                    </Space>
-                  </div>
-                );
-              },
-            },
-            {
-              title: (
-                <Space size={4}>
-                  消息
-                  <Tooltip
-                    title={
-                      hasWindow
-                        ? '当前显示筛选区间内本会话的消息数（按 message_time 切片）；括号内为会话生命周期累计'
-                        : '会话生命周期累计的用户/助手消息数；选定时间区间后会切换为窗内值'
-                    }
-                  >
-                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
-                  </Tooltip>
-                </Space>
-              ),
-              width: 120,
-              render: (_, r) => {
-                const win = r.window_message_count;
-                if (hasWindow && win != null) {
-                  return (
-                    <span style={NUM_STYLE}>
-                      <strong>{win}</strong>
-                      <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
-                        {' '}
-                        / 累计 {r.user_messages + r.assistant_messages}
-                      </span>
-                    </span>
-                  );
-                }
-                return (
-                  <span style={NUM_STYLE}>
-                    {r.user_messages} / {r.assistant_messages}
-                  </span>
-                );
-              },
-            },
-            {
-              title: (
-                <Space size={4}>
-                  Token
-                  <Tooltip
-                    title={
-                      hasWindow
-                        ? '筛选区间内 input + output token；括号内为会话生命周期累计 in/out'
-                        : '会话生命周期累计的 input / output token；选定时间区间后会切换为窗内总和'
-                    }
-                  >
-                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
-                  </Tooltip>
-                </Space>
-              ),
-              width: 180,
-              render: (_, r) => {
-                const winTok = r.window_tokens;
-                if (hasWindow && winTok != null) {
-                  return (
-                    <span style={NUM_STYLE}>
-                      <strong>{formatTokens(winTok)}</strong>
-                      <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
-                        {' '}
-                        / 累计 {formatTokens(r.input_tokens + r.output_tokens)}
-                      </span>
-                    </span>
-                  );
-                }
-                return (
-                  <span style={NUM_STYLE}>
-                    {formatTokens(r.input_tokens)} / {formatTokens(r.output_tokens)}
-                  </span>
-                );
-              },
-            },
-            {
-              title: '最近活动',
-              dataIndex: 'last_activity',
-              width: 150,
-              render: (v) => formatTime(v),
-            },
-            {
-              title: '开始',
-              dataIndex: 'started_at',
-              width: 150,
-              render: (v) => formatTime(v),
-            },
-          ]}
+          onRow={onRow}
+          columns={columns}
         />
       </Card>
 

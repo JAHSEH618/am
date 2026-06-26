@@ -27,10 +27,10 @@ Linear / Stripe 一类的**克制、精确、数据密集**后台。强调色单
 
 ### 2.1 品牌主色 —— 单一强调色 indigo
 
-只有一个强调色：**品牌靛紫 `indigo-600 #4f46e5`**，与 logo / 字标 / Hero 图标同源。
+只有一个强调色：**品牌钴蓝 `indigo-600 #1a52dc`**（v4 去紫；导出名仍叫 `indigo`），与 logo / 字标 / Hero 图标同源。
 用于：主操作（按钮）、链接、当前选中、状态指示。**不做装饰**。
 
-`indigo[50…900]`（`--am-indigo-50…800` / `--am-brand*`）：`#eef2ff #e0e7ff #c7d2fe #a5b4fc #818cf8 #6366f1 #4f46e5 #4338ca #3730a3 #312e81`
+`indigo[50…900]`（`--am-indigo-50…800` / `--am-brand*`，值以 `tokens.ts` 为准）：`#eef4ff #dbe8ff #bdd4ff #8fb4ff #5a8cf8 #2e6bf0 #1a52dc #1644b6 #163a90 #15326f`
 
 > 历史遗留的功能蓝 `#2563eb` 已全部并入 indigo——不要再引入第二种"功能蓝"。
 
@@ -59,11 +59,11 @@ Linear / Stripe 一类的**克制、精确、数据密集**后台。强调色单
 
 | 语义 | base | fg(文字) | bg | CSS 前缀 |
 | --- | --- | --- | --- | --- |
-| brand | `#4f46e5` | `#4338ca` | `#eef2ff` | `--am-brand*` |
+| brand | `#1a52dc` | `#1644b6` | `#eef4ff` | `--am-brand*` |
 | success | `#10b981` | `#047857` | `#ecfdf5` | `--am-success*` |
 | warning | `#f59e0b` | `#b45309` | `#fffbeb` | `--am-warning*` |
 | error | `#ef4444` | `#dc2626` | `#fef2f2` | `--am-error*` |
-| info | `#6366f1` | `#4338ca` | `#eef2ff` | `--am-info*` |
+| info | `#1a52dc` | `#1644b6` | `#eef4ff` | `--am-info*` |
 
 ### 2.5 分类强调色（accent）—— 非状态、需彼此可分
 

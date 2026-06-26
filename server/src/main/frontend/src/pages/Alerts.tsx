@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Card, DatePicker, Select, Space, Table, Tag } from 'antd';
+import { Card, DatePicker, Select, Skeleton, Space, Table, Tag, Tooltip } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import { fetchAlerts } from '../api/client';
 import type { AgentAlert, PageDto } from '../api/types';
@@ -15,6 +15,11 @@ const TYPE_OPTIONS = [
   { label: '二进制 Hash 不匹配', value: 'BINARY_HASH_MISMATCH' },
   { label: 'Token 篡改', value: 'TOKEN_TAMPER' },
 ];
+
+/** 复用 TYPE_OPTIONS 同一份枚举→中文映射（跳过「全部」空值），让表格「类型」列展示中文 */
+const TYPE_LABEL: Record<string, string> = Object.fromEntries(
+  TYPE_OPTIONS.filter((o) => o.value).map((o) => [o.value, o.label]),
+);
 
 const LEVEL_COLOR: Record<string, string> = {
   WARN: 'orange',
@@ -65,6 +70,9 @@ export default function Alerts() {
         </Space>
       }
     >
+      {loading && !data ? (
+        <Skeleton active paragraph={{ rows: 8 }} />
+      ) : (
       <Table<AgentAlert>
         rowKey="id"
         size="small"
@@ -86,7 +94,13 @@ export default function Alerts() {
             width: 80,
             render: (v) => <Tag color={LEVEL_COLOR[v] || 'default'}>{v}</Tag>,
           },
-          { title: '类型', dataIndex: 'alert_type', width: 200, ellipsis: true },
+          {
+            title: '类型',
+            dataIndex: 'alert_type',
+            width: 200,
+            ellipsis: true,
+            render: (v: string) => TYPE_LABEL[v] ?? v,
+          },
           {
             title: '员工',
             dataIndex: 'user_display',
@@ -95,7 +109,17 @@ export default function Alerts() {
             render: (v: string | null, row) => employeeName(v, row.user_code),
           },
           { title: 'Agent', dataIndex: 'agent_id', width: 200, ellipsis: true },
-          { title: '消息', dataIndex: 'message', ellipsis: true },
+          {
+            title: '消息',
+            dataIndex: 'message',
+            ellipsis: { showTitle: false },
+            render: (v: string | null) =>
+              v ? (
+                <Tooltip title={v} placement="topLeft">
+                  <span>{v}</span>
+                </Tooltip>
+              ) : null,
+          },
           {
             title: '时间',
             dataIndex: 'event_time',
@@ -104,6 +128,7 @@ export default function Alerts() {
           },
         ]}
       />
+      )}
     </Card>
   );
 }

@@ -12,7 +12,7 @@ import {
   Popconfirm,
   Progress,
   Space,
-  Spin,
+  Skeleton,
   Table,
   Tag,
   Tooltip,
@@ -40,7 +40,7 @@ import type {
 import TeamOverview from './Analysis/TeamOverview';
 import UserDetail from './Analysis/UserDetail';
 import MetricLabel from './Analysis/MetricLabel';
-import { BUCKET_META, WATCHLIST_META } from './Analysis/constants';
+import { BUCKET_META, WATCHLIST_META, watchlistTagColor } from './Analysis/constants';
 import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
 import { employeeName } from '../utils/format';
 
@@ -321,6 +321,7 @@ export default function Analysis() {
                 size="small"
                 type="text"
                 icon={<ReloadOutlined />}
+                aria-label="刷新历史"
                 onClick={reload}
                 loading={historyLoading}
               />
@@ -362,6 +363,7 @@ export default function Analysis() {
                       size="small"
                       danger
                       icon={<DeleteOutlined />}
+                      aria-label="删除报告"
                       loading={deletingId === item.id}
                       disabled={busy}
                       onClick={(e) => e.stopPropagation()}
@@ -408,9 +410,9 @@ export default function Analysis() {
             });
         })}
         {detailLoading && (
-          <div style={{ textAlign: 'center', padding: 80 }}>
-            <Spin />
-          </div>
+          <Card>
+            <Skeleton active paragraph={{ rows: 6 }} />
+          </Card>
         )}
         {!currentProgress && !detailLoading && (
           <Card>
@@ -632,23 +634,25 @@ function UserListTable({
     setPage(1);
   }, [users]);
 
-  const columns: ColumnsType<AnalysisReportUser> = [
+  const columns = useMemo<ColumnsType<AnalysisReportUser>>(() => [
     {
       title: '员工',
       dataIndex: 'user_display',
       key: 'employee',
       fixed: 'left',
       width: 160,
-      ellipsis: true,
+      ellipsis: { showTitle: false },
       render: (_: string | undefined, u) => (
-        <span>
-          <strong>{employeeName(u.user_display, u.user_code)}</strong>
-          {u.insufficient_data && (
-            <Tag color="default" style={{ marginLeft: 6, fontSize: 12 }}>
-              样本不足
-            </Tag>
-          )}
-        </span>
+        <Tooltip title={u.user_display || u.user_code}>
+          <span>
+            <strong>{employeeName(u.user_display, u.user_code)}</strong>
+            {u.insufficient_data && (
+              <Tag color="default" style={{ marginLeft: 6, fontSize: 12 }}>
+                样本不足
+              </Tag>
+            )}
+          </span>
+        </Tooltip>
       ),
     },
     {
@@ -718,7 +722,7 @@ function UserListTable({
             overlayStyle={{ maxWidth: 360 }}
           >
             <Tag
-              color={WATCHLIST_META[f]?.color ?? 'default'}
+              color={watchlistTagColor(f)}
               style={{ marginRight: 2, cursor: 'help' }}
             >
               {WATCHLIST_META[f]?.label ?? f}
@@ -732,13 +736,20 @@ function UserListTable({
       key: 'action',
       width: 72,
       align: 'center',
-      render: () => (
-        <Button type="link" size="small">
+      render: (_: unknown, u) => (
+        <Button
+          type="link"
+          size="small"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(u);
+          }}
+        >
           详情
         </Button>
       ),
     },
-  ];
+  ], [onPick]);
 
   return (
     <Table<AnalysisReportUser>

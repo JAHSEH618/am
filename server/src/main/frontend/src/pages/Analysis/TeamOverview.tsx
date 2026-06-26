@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Empty, Input, Select, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Empty, Input, Select, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { AnalysisReportDetail } from '../../api/types';
-import { ink, semantic, accent, indigo } from '../../styles/tokens';
+import { ink, accent, indigo } from '../../styles/tokens';
 import { NUM_STYLE } from '../../utils/table';
 import { employeeName } from '../../utils/format';
 import { categoryAxisGridLeft } from '../../utils/chartAxis';
-import { MODE_META, WATCHLIST_META } from './constants';
+import { MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
 import MetricLabel from './MetricLabel';
 
 interface WatchlistTableRow {
@@ -65,8 +65,9 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
           type: 'bar' as const,
           data: ['1', '2', '3', '4', '5'].map((k) => dist[k as keyof typeof dist] ?? 0),
           itemStyle: {
+            // 难度 1→5 单色顺序阶（浅→深品牌钴蓝）：难度高=正面信号，不涂红
             color: (p: { dataIndex: number }) =>
-              [ink[3], accent.blue.base, semantic.success.base, semantic.warning.base, semantic.error.base][p.dataIndex],
+              [indigo[200], indigo[300], indigo[400], indigo[500], indigo[600]][p.dataIndex],
           },
           label: { show: true, position: 'top' as const },
         },
@@ -273,7 +274,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
         width: '42%',
         render: (_: unknown, row: WatchlistTableRow) => (
           <Tooltip title={WATCHLIST_META[row.flag]?.help ?? '无说明'} overlayStyle={{ maxWidth: 360 }}>
-            <Tag color={WATCHLIST_META[row.flag]?.color ?? 'default'} style={{ cursor: 'help' }}>
+            <Tag color={watchlistTagColor(row.flag)} style={{ cursor: 'help' }}>
               {row.triggerLabel}
             </Tag>
           </Tooltip>
@@ -284,7 +285,14 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
         dataIndex: 'employeeDisplay',
         key: 'employee',
         render: (text: string, row: WatchlistTableRow) => (
-          <a onClick={() => onPickUser?.(row.user_code)}>{text}</a>
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto' }}
+            onClick={() => onPickUser?.(row.user_code)}
+          >
+            {text}
+          </Button>
         ),
       },
     ],

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { Card, Col, DatePicker, Modal, Row, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Card, Col, DatePicker, Modal, Row, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   ArrowDownOutlined,
@@ -22,10 +22,10 @@ import {
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
 import { categoryAxisGridLeft } from '../utils/chartAxis';
-import { employeeName, formatDuration, formatTokens, formatTokensM } from '../utils/format';
+import { employeeName, formatDuration, formatTokens, formatTokensM, modelLabel } from '../utils/format';
 import { ink, semantic, indigo } from '../styles/tokens';
 import { HeroCard, MetricRow, type HeroTone } from '../components/HeroCard';
-import { EMPTY_DASH, NUM_STYLE } from '../utils/table';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
 
 dayjs.extend(isoWeek);
 
@@ -37,7 +37,7 @@ dayjs.extend(isoWeek);
  *
  * gz
  */
-const { Text, Link } = Typography;
+const { Text } = Typography;
 const { RangePicker } = DatePicker;
 
 /** 数字列统一：右对齐 + 等宽数字（tnum），防止数据滚动时左右抖动；与 Dashboard 数值列同款。 */
@@ -135,11 +135,11 @@ export default function People() {
     return () => { alive = false; };
   }, [gitModalOpen, gitModalUserCode, params]);
 
-  const openPersonGitModal = (userCode: string, display: string | null | undefined) => {
+  const openPersonGitModal = useCallback((userCode: string, display: string | null | undefined) => {
     setGitModalUserCode(userCode);
     setGitModalDisplay(display ?? null);
     setGitModalOpen(true);
-  };
+  }, []);
 
   useEffect(() => {
     if (!slashModalOpen || !slashModalUserCode) return;
@@ -152,26 +152,32 @@ export default function People() {
     return () => { alive = false; };
   }, [slashModalOpen, slashModalUserCode, params]);
 
-  const openPersonSlashModal = (userCode: string, display: string | null | undefined) => {
+  const openPersonSlashModal = useCallback((userCode: string, display: string | null | undefined) => {
     setSlashModalUserCode(userCode);
     setSlashModalDisplay(display ?? null);
     setSlashModalOpen(true);
-  };
+  }, []);
 
   const gitCommitColumns = useMemo(
     () => buildGitCommitTableColumns({ includeRepo: true }),
     [],
   );
 
-  const columns: ColumnsType<PeopleSummary> = [
+  const columns = useMemo<ColumnsType<PeopleSummary>>(() => [
     {
       title: '员工',
       dataIndex: 'user_display',
       key: 'user_display',
       fixed: 'left',
       width: 180,
-      ellipsis: true,
-      render: (v: string, row) => <Space><UserOutlined />{employeeName(v, row.user_code)}</Space>,
+      render: (v: string, row) => (
+        <Space size={6}>
+          <UserOutlined />
+          <Text ellipsis={{ tooltip: true }} style={{ maxWidth: 132 }}>
+            {employeeName(v, row.user_code)}
+          </Text>
+        </Space>
+      ),
     },
     {
       title: (
@@ -240,14 +246,17 @@ export default function People() {
       ...NUMERIC_COL,
       sorter: (a, b) => a.git_commit_window_count - b.git_commit_window_count,
       render: (v: number, row) => (
-        <Link
+        <Button
+          type="link"
+          size="small"
+          style={{ padding: 0, height: 'auto' }}
           onClick={(e) => {
             e.stopPropagation();
             openPersonGitModal(row.user_code, row.user_display);
           }}
         >
           {v}
-        </Link>
+        </Button>
       ),
     },
     {
@@ -287,14 +296,17 @@ export default function People() {
       sorter: (a, b) => a.tool_call_count_total - b.tool_call_count_total,
       render: (v: number, row) => (
         v > 0 ? (
-          <Link
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto' }}
             onClick={(e) => {
               e.stopPropagation();
               openPersonSlashModal(row.user_code, row.user_display);
             }}
           >
             {v}
-          </Link>
+          </Button>
         ) : (
           EMPTY_DASH
         )
@@ -334,10 +346,22 @@ export default function People() {
       dataIndex: 'top_model',
       key: 'top_model',
       width: 150,
-      ellipsis: true,
-      render: (v: string | null) => (v ? <Tag>{v}</Tag> : EMPTY_DASH),
+      render: (v: string | null) =>
+        v ? (
+          <Tooltip title={v}>
+            <Tag>{modelLabel(v)}</Tag>
+          </Tooltip>
+        ) : (
+          EMPTY_DASH
+        ),
     },
-  ];
+  ], [openPersonGitModal, openPersonSlashModal]);
+
+  const handleGitCommitsClick = useCallback(() => {
+    if (!selectedUser) return;
+    const row = list.find((r) => r.user_code === selectedUser);
+    openPersonGitModal(selectedUser, row?.user_display);
+  }, [selectedUser, list, openPersonGitModal]);
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -364,13 +388,18 @@ export default function People() {
             locale={{ emptyText: '所选时间窗内暂无员工 AI 使用数据' }}
             pagination={{ pageSize: 20, showSizeChanger: false }}
             scroll={{ x: 1180 }}
-            onRow={(row) => ({
-              onClick: () => setSelectedUser(row.user_code),
-              style: {
-                cursor: 'pointer',
-                background: row.user_code === selectedUser ? 'var(--am-brand-bg)' : undefined,
-              },
-            })}
+            onRow={(row) => {
+              const selected = row.user_code === selectedUser;
+              const base = clickableRowProps(() => setSelectedUser(row.user_code));
+              return {
+                ...base,
+                style: {
+                  ...base.style,
+                  background: selected ? 'var(--am-brand-bg)' : undefined,
+                  boxShadow: selected ? 'inset 2px 0 0 0 var(--am-brand)' : undefined,
+                },
+              };
+            }}
           />
         </Spin>
       </Card>
@@ -386,10 +415,7 @@ export default function People() {
           detail={detail}
           loading={loadingDetail}
           userCode={selectedUser}
-          onGitCommitsClick={() => {
-            const row = list.find((r) => r.user_code === selectedUser);
-            openPersonGitModal(selectedUser, row?.user_display);
-          }}
+          onGitCommitsClick={handleGitCommitsClick}
         />
       )}
 
@@ -464,7 +490,50 @@ export default function People() {
   );
 }
 
-function PersonDetailPanel({
+/** 横向 Top 条形图 option（纯函数，无组件依赖）：空集出占位文案，否则按 token/计数出条。 */
+function topBarOption(
+  title: string,
+  items: { name: string; value: number }[],
+  opts?: { valueInM?: boolean; emptyText?: string; fullLabels?: boolean },
+) {
+  const fmt = opts?.valueInM ? (v: number) => formatTokensM(v) : (v: number) => String(v);
+  if (items.length === 0) {
+    return {
+      title: { text: title, left: 0, top: 0, textStyle: { fontSize: 13, fontWeight: 600 } },
+      graphic: {
+        type: 'text',
+        left: 'center',
+        top: 'middle',
+        style: { text: opts?.emptyText ?? '暂无数据', fill: ink[3], fontSize: 13 },
+      },
+    };
+  }
+  const names = items.map((i) => i.name);
+  const gridLeft = opts?.fullLabels ? categoryAxisGridLeft(names, { min: 110 }) : 110;
+  const axisLabel = opts?.fullLabels
+    ? { fontSize: 12 }
+    : { fontSize: 12, width: 96, overflow: 'truncate' as const };
+  return {
+    title: { text: title, left: 0, top: 0, textStyle: { fontSize: 13, fontWeight: 600 } },
+    grid: { left: gridLeft, right: 48, top: 30, bottom: 10 },
+    tooltip: {
+      trigger: 'item',
+      formatter: (p: { name?: string; value?: number }) =>
+        `${p.name ?? ''}: ${fmt(Number(p.value ?? 0))}`,
+    },
+    xAxis: { type: 'value', show: false },
+    yAxis: { type: 'category', data: [...names].reverse(), axisLabel },
+    series: [{
+      type: 'bar',
+      data: items.map((i) => i.value).reverse(),
+      barWidth: 12,
+      itemStyle: { color: indigo[600], borderRadius: 4 },
+      label: { show: true, position: 'right', formatter: (p: { value: number }) => fmt(Number(p.value)) },
+    }],
+  };
+}
+
+const PersonDetailPanel = memo(function PersonDetailPanel({
   detail,
   loading,
   userCode,
@@ -475,22 +544,13 @@ function PersonDetailPanel({
   userCode: string;
   onGitCommitsClick: () => void;
 }) {
-  if (loading || !detail) {
-    return (
-      <Card size="small" title={`员工详情 — ${userCode}`}>
-        <Spin spinning={loading}><div style={{ height: 240 }} /></Spin>
-      </Card>
-    );
-  }
-
-  const s = detail.summary;
-  const display = employeeName(s.user_display, s.user_code || userCode);
-
+  // Rules of Hooks：所有 hook 必须在任何早返回之前调用；detail 可能为 null → 取安全默认值。
   const timelineOption = useMemo(() => {
-    const dates = detail.daily_timeline.map((p) => p.date);
-    const activeHours = detail.daily_timeline.map((p) => +(p.ai_active_seconds_union / 3600).toFixed(2));
-    const sessions = detail.daily_timeline.map((p) => p.ai_session_count);
-    const retries = detail.daily_timeline.map((p) => p.retry_count);
+    const tl = detail?.daily_timeline ?? [];
+    const dates = tl.map((p) => p.date);
+    const activeHours = tl.map((p) => +(p.ai_active_seconds_union / 3600).toFixed(2));
+    const sessions = tl.map((p) => p.ai_session_count);
+    const retries = tl.map((p) => p.retry_count);
     return {
       tooltip: { trigger: 'axis' },
       legend: { data: ['AI 协作（h，并集）', '会话数', '卡壳次数'], bottom: 0 },
@@ -508,49 +568,33 @@ function PersonDetailPanel({
     };
   }, [detail]);
 
-  const topBarOption = (
-    title: string,
-    items: { name: string; value: number }[],
-    opts?: { valueInM?: boolean; emptyText?: string; fullLabels?: boolean },
-  ) => {
-    const fmt = opts?.valueInM
-      ? (v: number) => formatTokensM(v)
-      : (v: number) => String(v);
-    if (items.length === 0) {
-      return {
-        title: { text: title, left: 0, top: 0, textStyle: { fontSize: 13, fontWeight: 600 } },
-        graphic: {
-          type: 'text',
-          left: 'center',
-          top: 'middle',
-          style: { text: opts?.emptyText ?? '暂无数据', fill: ink[3], fontSize: 13 },
-        },
-      };
-    }
-    const names = items.map((i) => i.name);
-    const gridLeft = opts?.fullLabels ? categoryAxisGridLeft(names, { min: 110 }) : 110;
-    const axisLabel = opts?.fullLabels
-      ? { fontSize: 12 }
-      : { fontSize: 12, width: 96, overflow: 'truncate' as const };
-    return {
-      title: { text: title, left: 0, top: 0, textStyle: { fontSize: 13, fontWeight: 600 } },
-      grid: { left: gridLeft, right: 48, top: 30, bottom: 10 },
-      tooltip: {
-        trigger: 'item',
-        formatter: (p: { name?: string; value?: number }) =>
-          `${p.name ?? ''}: ${fmt(Number(p.value ?? 0))}`,
-      },
-      xAxis: { type: 'value', show: false },
-      yAxis: { type: 'category', data: [...names].reverse(), axisLabel },
-      series: [{
-        type: 'bar',
-        data: items.map((i) => i.value).reverse(),
-        barWidth: 12,
-        itemStyle: { color: indigo[600], borderRadius: 4 },
-        label: { show: true, position: 'right', formatter: (p: { value: number }) => fmt(Number(p.value)) },
-      }],
-    };
-  };
+  const topModelsOption = useMemo(
+    () => topBarOption('Top 模型（按 token）', detail?.top_models ?? [], { valueInM: true }),
+    [detail],
+  );
+  const topToolsOption = useMemo(
+    () =>
+      topBarOption('Top Slash Commands', detail?.top_tools ?? [], {
+        emptyText: '暂无斜杠调用数据',
+        fullLabels: true,
+      }),
+    [detail],
+  );
+  const topProjectsOption = useMemo(
+    () => topBarOption('Top 项目（按 token）', detail?.top_projects ?? [], { valueInM: true }),
+    [detail],
+  );
+
+  if (loading || !detail) {
+    return (
+      <Card size="small" title={`员工详情 — ${userCode}`}>
+        <Spin spinning={loading}><div style={{ height: 240 }} /></Spin>
+      </Card>
+    );
+  }
+
+  const s = detail.summary;
+  const display = employeeName(s.user_display, s.user_code || userCode);
 
   return (
     <Card size="small" title={
@@ -573,41 +617,23 @@ function PersonDetailPanel({
       <Row gutter={16} style={{ marginTop: 24 }}>
         <Col xs={24} md={8}>
           <div style={{ height: 240 }}>
-            <ReactECharts
-              option={topBarOption('Top 模型（按 token）', detail.top_models, { valueInM: true })}
-              style={{ height: '100%' }}
-              notMerge
-              lazyUpdate
-            />
+            <ReactECharts option={topModelsOption} style={{ height: '100%' }} notMerge lazyUpdate />
           </div>
         </Col>
         <Col xs={24} md={8}>
           <div style={{ height: 240 }}>
-            <ReactECharts
-              option={topBarOption('Top Slash Commands', detail.top_tools, {
-                emptyText: '暂无斜杠调用数据',
-                fullLabels: true,
-              })}
-              style={{ height: '100%' }}
-              notMerge
-              lazyUpdate
-            />
+            <ReactECharts option={topToolsOption} style={{ height: '100%' }} notMerge lazyUpdate />
           </div>
         </Col>
         <Col xs={24} md={8}>
           <div style={{ height: 240 }}>
-            <ReactECharts
-              option={topBarOption('Top 项目（按 token）', detail.top_projects, { valueInM: true })}
-              style={{ height: '100%' }}
-              notMerge
-              lazyUpdate
-            />
+            <ReactECharts option={topProjectsOption} style={{ height: '100%' }} notMerge lazyUpdate />
           </div>
         </Col>
       </Row>
     </Card>
   );
-}
+});
 
 function PersonDetailMetrics({
   summary: s,
@@ -749,7 +775,7 @@ function PersonDetailMetrics({
         ))}
       </Row>
 
-      <Card size="small" style={{ marginTop: 16 }} styles={{ body: { padding: '12px 20px' } }}>
+      <div style={{ marginTop: 16 }}>
         <Row gutter={[24, 0]}>
           <Col xs={24} md={12} lg={8}>
             <SecondaryMetric {...secondary[0]} />
@@ -763,7 +789,7 @@ function PersonDetailMetrics({
             <SecondaryMetric {...secondary[4]} />
           </Col>
         </Row>
-      </Card>
+      </div>
     </div>
   );
 }
