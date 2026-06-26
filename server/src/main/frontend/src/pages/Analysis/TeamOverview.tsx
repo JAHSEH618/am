@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Empty, Input, Select, Table, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { AnalysisReportDetail } from '../../api/types';
+import { ink, semantic, accent, indigo } from '../../styles/tokens';
 import { MODE_META, WATCHLIST_META } from './constants';
 import MetricLabel from './MetricLabel';
 
@@ -19,23 +20,23 @@ const { Text, Paragraph } = Typography;
 
 const panelStyle: React.CSSProperties = {
   marginBottom: 20,
-  border: '1px solid #e8edf3',
-  borderRadius: 10,
+  border: '1px solid var(--am-border)',
+  borderRadius: 12,
   overflow: 'hidden',
-  background: '#fff',
+  background: 'var(--am-bg-card)',
 };
 
 const sectionHeadStyle: React.CSSProperties = {
   padding: '10px 16px',
-  borderBottom: '1px solid #eef2f6',
-  background: '#fafbfc',
+  borderBottom: '1px solid var(--am-border-subtle)',
+  background: 'var(--am-surface-sunken)',
   fontSize: 13,
   fontWeight: 600,
-  color: '#334155',
+  color: 'var(--am-ink-2)',
 };
 
 const cellDivider: React.CSSProperties = {
-  borderRight: '1px solid #eef2f6',
+  borderRight: '1px solid var(--am-border-subtle)',
 };
 
 interface Props {
@@ -61,7 +62,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
           data: ['1', '2', '3', '4', '5'].map((k) => dist[k as keyof typeof dist] ?? 0),
           itemStyle: {
             color: (p: { dataIndex: number }) =>
-              ['#94a3b8', '#60a5fa', '#22c55e', '#f59e0b', '#ef4444'][p.dataIndex],
+              [ink[3], accent.blue.base, semantic.success.base, semantic.warning.base, semantic.error.base][p.dataIndex],
           },
           label: { show: true, position: 'top' as const },
         },
@@ -77,7 +78,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
       .map(([k, v]) => ({
         name: MODE_META[k]?.label ?? k,
         value: Math.round(((v ?? 0) / total) * 1000) / 10,
-        itemStyle: { color: MODE_META[k]?.color ?? '#94a3b8' },
+        itemStyle: { color: MODE_META[k]?.color ?? ink[3] },
       }));
     return {
       tooltip: { trigger: 'item' as const, formatter: '{b}: {c}%' },
@@ -109,7 +110,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
 
     const categories = items.map((i) => i.name);
     const counts = items.map((i) => i.count ?? 0);
-    const colors = items.map((i) => (i.kind === 'skill' ? '#a855f7' : '#2563eb'));
+    const colors = items.map((i) => (i.kind === 'skill' ? accent.purple.base : indigo[600]));
     const innerChartHeight = Math.max(120, 32 + Math.max(items.length, 1) * 30);
 
     const option = {
@@ -127,7 +128,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
         type: 'value' as const,
         name: '次数',
         minInterval: 1,
-        splitLine: { lineStyle: { type: 'dashed' as const, color: '#e2e8f0' } },
+        splitLine: { lineStyle: { type: 'dashed' as const, color: ink[4] } },
       },
       yAxis: {
         type: 'category' as const,
@@ -364,7 +365,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
                 style={{ height: toolBreakdownChart.innerChartHeight }}
               />
             </div>
-            <div style={{ borderBottom: '1px solid #eef2f6', margin: '0 16px' }} />
+            <div style={{ borderBottom: '1px solid var(--am-border-subtle)', margin: '0 16px' }} />
           </>
         ) : (
           <div
@@ -392,7 +393,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
                 ...(i < chartTitles.length - 1 ? cellDivider : {}),
               }}
             >
-              <Text strong style={{ fontSize: 12, color: '#64748b', display: 'block', padding: '0 8px 8px' }}>
+              <Text strong style={{ fontSize: 12, color: 'var(--am-ink-3)', display: 'block', padding: '0 8px 8px' }}>
                 {chart.title}
               </Text>
               <ReactECharts option={chart.option} style={{ height: 240 }} />
@@ -415,7 +416,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
             )}
             <table style={{ width: '100%', fontSize: 13 }}>
               <thead>
-                <tr style={{ color: '#64748b' }}>
+                <tr style={{ color: 'var(--am-ink-3)' }}>
                   <th style={{ textAlign: 'left', padding: '4px 0' }}>指标</th>
                   <th>P10</th>
                   <th>P25</th>
@@ -426,7 +427,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
               </thead>
               <tbody>
                 {percentilesView.map((row) => (
-                  <tr key={row.metricKey} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <tr key={row.metricKey} style={{ borderTop: '1px solid var(--am-border-subtle)' }}>
                     <td style={{ padding: '6px 0' }}>
                       <MetricLabel name={row.metricKey} />
                     </td>
@@ -446,7 +447,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ ...sectionHeadStyle, borderBottom: '1px solid #eef2f6' }}>
+          <div style={{ ...sectionHeadStyle, borderBottom: '1px solid var(--am-border-subtle)' }}>
             <MetricLabel name="watchlist_summary" />
           </div>
           <div style={{ padding: '12px 16px 16px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -516,8 +517,8 @@ function KpiCell({
 }) {
   return (
     <div style={{ padding: '16px 18px', ...(showDivider ? cellDivider : {}) }}>
-      <div style={{ fontSize: 12, color: '#64748b' }}>{title}</div>
-      <div style={{ fontSize: 26, fontWeight: 600, color: '#0f172a', marginTop: 4, lineHeight: 1.2 }}>
+      <div style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>{title}</div>
+      <div style={{ fontSize: 26, fontWeight: 680, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums', color: 'var(--am-ink)', marginTop: 4, lineHeight: 1.12 }}>
         {value}
       </div>
       {hint && (

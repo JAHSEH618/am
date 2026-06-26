@@ -83,7 +83,7 @@ export default function Login() {
         background:
           'radial-gradient(1200px 600px at 10% 0%, #ede9fe 0%, transparent 60%),' +
           'radial-gradient(900px 500px at 100% 100%, #dbeafe 0%, transparent 55%),' +
-          'linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)',
+          'linear-gradient(180deg, #f8fafc 0%, var(--am-brand-bg) 100%)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -235,7 +235,7 @@ function InstallPanel() {
       <header style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <BrandIcon variant="monogram" size={30} style={{ boxShadow: '0 4px 10px rgba(99,102,241,.35)' }} />
-          <Typography.Title level={3} style={{ margin: 0, color: '#0f172a', fontWeight: 700 }}>
+          <Typography.Title level={3} style={{ margin: 0, color: 'var(--am-ink)', fontWeight: 700 }}>
             AIWatch
           </Typography.Title>
           <Tag
@@ -251,7 +251,7 @@ function InstallPanel() {
             员工 AI 工时统计
           </Tag>
         </div>
-        <Typography.Text style={{ color: '#64748b', fontSize: 13 }}>
+        <Typography.Text style={{ color: 'var(--am-ink-3)', fontSize: 13 }}>
           自助安装客户端 — 统计你日常使用 AI 编码的协作时长与产出
         </Typography.Text>
       </header>
@@ -355,7 +355,7 @@ function InstallPanel() {
           style={{ marginTop: 4, marginBottom: 8 }}
         />
 
-        <Typography.Text style={{ color: '#64748b', fontSize: 12, marginBottom: 8 }}>
+        <Typography.Text style={{ color: 'var(--am-ink-3)', fontSize: 12, marginBottom: 8 }}>
           {tipByOS[activeOS]}
         </Typography.Text>
 
@@ -373,8 +373,8 @@ function SectionLabel({ index, title }: { index: number; title: string }) {
           width: 22,
           height: 22,
           borderRadius: 999,
-          background: '#eef2ff',
-          color: '#4f46e5',
+          background: 'var(--am-brand-bg)',
+          color: 'var(--am-brand)',
           fontWeight: 700,
           fontSize: 12,
           display: 'inline-flex',
@@ -384,7 +384,7 @@ function SectionLabel({ index, title }: { index: number; title: string }) {
       >
         {index}
       </span>
-      <Typography.Text strong style={{ color: '#0f172a', fontSize: 14 }}>
+      <Typography.Text strong style={{ color: 'var(--am-ink)', fontSize: 14 }}>
         {title}
       </Typography.Text>
     </div>
@@ -506,7 +506,7 @@ function CommandBox({ cmd, disabled }: { cmd: string; disabled: boolean }) {
             position: 'absolute',
             right: 8,
             top: 8,
-            color: copied ? '#22c55e' : '#94a3b8',
+            color: copied ? 'var(--am-success)' : '#94a3b8',
             background: 'rgba(15,23,42,.6)',
             border: '1px solid rgba(148,163,184,.2)',
           }}
@@ -547,7 +547,7 @@ function LoginPanel({ submitting, authError, onFinish }: LoginPanelProps) {
       }}
     >
       <div style={{ marginBottom: 28 }}>
-        <Typography.Title level={3} style={{ margin: 0, color: '#0f172a', fontWeight: 700 }}>
+        <Typography.Title level={3} style={{ margin: 0, color: 'var(--am-ink)', fontWeight: 700 }}>
           管理员登录
         </Typography.Title>
         <Typography.Text type="secondary" style={{ fontSize: 13 }}>
@@ -572,7 +572,7 @@ function LoginPanel({ submitting, authError, onFinish }: LoginPanelProps) {
           <Input.Password prefix={<LockOutlined />} autoComplete="current-password" size="large" />
         </Form.Item>
         {authError && (
-          <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 16 }}>{authError}</div>
+          <div style={{ color: 'var(--am-error-fg)', fontSize: 12, marginBottom: 16 }}>{authError}</div>
         )}
         <Button type="primary" htmlType="submit" block size="large" loading={submitting}>
           登 录

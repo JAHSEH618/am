@@ -13,10 +13,10 @@ import {
   formatTokens,
   isToolStatus,
   messageDeltaTagColor,
-  statusColor,
   statusLabel,
   STALE_VISUAL_THRESHOLD_SECONDS,
 } from '../utils/format';
+import StatusDot from '../components/StatusDot';
 
 const { Text } = Typography;
 const ONLINE_REFRESH_MS = 5_000;
@@ -137,10 +137,11 @@ export default function Realtime() {
                   <Space direction="vertical" size={4} style={{ width: '100%' }}>
                     <Space>
                       {/* last_activity 超过阈值时仅做视觉灰化；status 以 DB 为准 */}
-                      <span style={{
-                        display: 'inline-block', width: 8, height: 8, borderRadius: 4,
-                        background: a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS ? '#cbd5e1' : statusColor(a.current_status),
-                      }} />
+                      <StatusDot
+                        status={a.current_status}
+                        stale={a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS}
+                        pulse={a.stale_since_seconds <= STALE_VISUAL_THRESHOLD_SECONDS && a.current_status !== 'idle'}
+                      />
                       <Text type={a.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS ? 'secondary' : undefined}>
                         {statusLabel(a.current_status)}
                       </Text>
@@ -192,7 +193,7 @@ export default function Realtime() {
                         )}
                         {e.status && (
                           <Space size={4}>
-                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: statusColor(e.status) }} />
+                            <StatusDot status={e.status} />
                             {statusLabel(e.status)}
                           </Space>
                         )}

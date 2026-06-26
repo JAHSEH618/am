@@ -6,6 +6,7 @@ import ReactECharts from 'echarts-for-react';
 import { fetchToolStats } from '../api/client';
 import type { ToolStat } from '../api/types';
 import { categoryAxisGridLeft } from '../utils/chartAxis';
+import { semantic } from '../styles/tokens';
 
 const { RangePicker } = DatePicker;
 
@@ -54,7 +55,7 @@ export default function Tools({ from: fromProp, to: toProp, embedded }: ToolsPro
         name: '次数',
         type: 'bar',
         data: data.map((d) => d.count).reverse(),
-        itemStyle: { color: '#1677ff' },
+        itemStyle: { color: semantic.brand.base },
         barMaxWidth: 18,
       },
     ],

@@ -43,7 +43,7 @@ export default function ComingSoon({ title, subTitle, milestone, highlights }: C
             <Paragraph type="secondary" style={{ marginBottom: 12, textAlign: 'center' }}>
               {subTitle}
             </Paragraph>
-            <ul style={{ paddingLeft: 24, color: '#475569', lineHeight: 2 }}>
+            <ul style={{ paddingLeft: 24, color: 'var(--am-ink-3)', lineHeight: 2 }}>
               {highlights.map((h) => (
                 <li key={h}>{h}</li>
               ))}

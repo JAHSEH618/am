@@ -233,7 +233,7 @@ export default function SessionDetail() {
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(-1)} type="text">
           返回
         </Button>
-        <Text strong style={{ fontSize: 18, color: '#0f172a' }}>
+        <Text strong style={{ fontSize: 18, color: 'var(--am-ink)' }}>
           会话 #{session.id}
         </Text>
         <Tag
@@ -325,7 +325,7 @@ export default function SessionDetail() {
               }
             >
               <strong>{session.window_message_count}</strong>
-              <span style={{ color: '#94a3b8', marginLeft: 6 }}>
+              <span style={{ color: 'var(--am-ink-3)', marginLeft: 6 }}>
                 / 累计 {conversationCount(session) ?? session.user_messages + session.assistant_messages}
               </span>
             </Descriptions.Item>
@@ -335,7 +335,7 @@ export default function SessionDetail() {
           {hasWindow && session.window_tokens != null ? (
             <Descriptions.Item label="窗内 Token">
               <strong>{formatTokens(session.window_tokens)}</strong>
-              <span style={{ color: '#94a3b8', marginLeft: 6 }}>
+              <span style={{ color: 'var(--am-ink-3)', marginLeft: 6 }}>
                 / 累计 {formatTokens(session.input_tokens + session.output_tokens)}
               </span>
             </Descriptions.Item>
@@ -472,21 +472,21 @@ interface RoleStyle {
 //   thinking  violet   辅助 / 思考
 //   tool      amber    工具 / 状态注意
 const roleStyles: Record<string, RoleStyle> = {
-  user:      { color: '#4f46e5', icon: <UserOutlined />,  label: '用户',     bg: '#eef2ff', border: '#c7d2fe' },
-  subagent:  { color: '#0ea5e9', icon: <ApartmentOutlined />, label: 'Task', bg: '#f0f9ff', border: '#bae6fd' },
-  assistant: { color: '#059669', icon: <RobotOutlined />, label: '助手',     bg: '#ecfdf5', border: '#a7f3d0' },
-  thinking:  { color: '#7c3aed', icon: <BulbOutlined />,  label: 'Thinking', bg: '#f5f3ff', border: '#ddd6fe' },
-  tool:      { color: '#d97706', icon: <ToolOutlined />,  label: '工具',     bg: '#fffbeb', border: '#fde68a' },
+  user:      { color: 'var(--am-brand)', icon: <UserOutlined />,  label: '用户',     bg: 'var(--am-brand-bg)', border: 'var(--am-brand-border)' },
+  subagent:  { color: 'var(--am-sky)', icon: <ApartmentOutlined />, label: 'Task', bg: 'var(--am-sky-bg)', border: 'var(--am-sky-border)' },
+  assistant: { color: 'var(--am-success-fg)', icon: <RobotOutlined />, label: '助手',     bg: 'var(--am-success-bg)', border: 'var(--am-success-border)' },
+  thinking:  { color: 'var(--am-violet)', icon: <BulbOutlined />,  label: 'Thinking', bg: 'var(--am-violet-bg)', border: 'var(--am-violet-border)' },
+  tool:      { color: 'var(--am-warning-fg)', icon: <ToolOutlined />,  label: '工具',     bg: 'var(--am-warning-bg)', border: 'var(--am-warning-border)' },
 };
 
 function styleOf(role: string): RoleStyle {
   return (
     roleStyles[role] || {
-      color: '#64748b',
+      color: 'var(--am-ink-3)',
       icon: <UserOutlined />,
       label: role,
-      bg: '#f8fafc',
-      border: '#e2e8f0',
+      bg: 'var(--am-surface-sunken)',
+      border: 'var(--am-border)',
     }
   );
 }
@@ -595,7 +595,7 @@ function MessageBubble({
                 fontSize: 13,
                 fontStyle: m.role === 'thinking' ? 'italic' : 'normal',
                 fontFamily: isMono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
-                color: m.role === 'thinking' ? '#5a4480' : undefined,
+                color: m.role === 'thinking' ? 'var(--am-violet-fg)' : undefined,
               }}
             >
               {visible || '(无内容)'}

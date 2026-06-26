@@ -52,8 +52,12 @@ the proxy at whichever port your backend is actually on, or run the backend on 8
   the cookie is the real session, re-validated async via `GET /auth/me`.
 - **Realtime** (`src/hooks/useSse.ts`): wraps `EventSource` on `/api/v1/dashboard/stream` for live dashboard
   updates; auto-reconnects.
-- **Styling** (`src/styles/global.css` + AntD `ConfigProvider` theme in `src/main.tsx`): design tokens
-  (primary `#2563eb`, 8pt spacing, `tnum` tabular numbers, sticky table headers) — prefer these over ad-hoc CSS.
+- **Styling / design system** — authoritative spec in [`DESIGN.md`](DESIGN.md). Tokens are a single source:
+  `src/styles/tokens.ts` (JS, for ECharts/canvas + `color` props) mirrored in `src/styles/global.css :root`
+  (CSS vars, for DOM inline styles), wired into the AntD `ConfigProvider` theme in `src/main.tsx`. The one
+  committed accent is **brand indigo `#4f46e5`** (the old `#2563eb` is gone). DOM inline styles use
+  `var(--am-*)`; ECharts uses the JS tokens; status dots use `components/StatusDot`. Never scatter raw hex —
+  add/borrow a token. 8pt spacing, `tnum` tabular numbers, sticky table headers as before.
 
 ## Gotchas
 

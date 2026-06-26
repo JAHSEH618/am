@@ -12,6 +12,7 @@ import type {
   PeopleDetail,
 } from '../../api/types';
 import { formatTokens } from '../../utils/format';
+import { ink, semantic, accent, indigo } from '../../styles/tokens';
 import { BUCKET_META, CAPABILITY_DIMENSIONS, MODE_META, WATCHLIST_META } from './constants';
 import MetricLabel from './MetricLabel';
 
@@ -118,8 +119,8 @@ export default function UserDetail({ report, user }: Props) {
           type: 'radar',
           areaStyle: { opacity: 0.2 },
           data: [
-            { name: '该员工', value: userRadar, itemStyle: { color: '#1677ff' } },
-            { name: '团队 P50', value: teamP50Radar, itemStyle: { color: '#94a3b8' } },
+            { name: '该员工', value: userRadar, itemStyle: { color: indigo[600] } },
+            { name: '团队 P50', value: teamP50Radar, itemStyle: { color: ink[3] } },
           ],
         },
       ],
@@ -139,7 +140,7 @@ export default function UserDetail({ report, user }: Props) {
           data: ['1', '2', '3', '4', '5'].map((k) => dist[k as keyof typeof dist] ?? 0),
           itemStyle: {
             color: (p: { dataIndex: number }) =>
-              ['#94a3b8', '#60a5fa', '#22c55e', '#f59e0b', '#ef4444'][p.dataIndex],
+              [ink[3], accent.blue.base, semantic.success.base, semantic.warning.base, semantic.error.base][p.dataIndex],
           },
           label: { show: true, position: 'top' as const },
         },
@@ -154,7 +155,7 @@ export default function UserDetail({ report, user }: Props) {
       .map(([k, v]) => ({
         name: MODE_META[k]?.label ?? k,
         value: Math.round((v ?? 0) * 1000) / 10,
-        itemStyle: { color: MODE_META[k]?.color ?? '#94a3b8' },
+        itemStyle: { color: MODE_META[k]?.color ?? ink[3] },
       }));
     return {
       tooltip: { trigger: 'item' as const, formatter: '{b}: {c}%' },
@@ -396,7 +397,7 @@ export default function UserDetail({ report, user }: Props) {
                 </Row>
                 {activeHoursTimelineOption ? (
                   <div style={{ marginTop: 16 }}>
-                    <Text strong style={{ fontSize: 12, color: '#64748b' }}>
+                    <Text strong style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>
                       日协作时长趋势（员工数据同源）
                     </Text>
                     <EChartsAutoBox option={activeHoursTimelineOption} height={220} />

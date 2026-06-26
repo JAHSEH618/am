@@ -117,7 +117,7 @@ function ImageAttachments({
                     style={{
                       objectFit: 'cover',
                       borderRadius: 6,
-                      border: '1px solid #e8e8e8',
+                      border: '1px solid var(--am-border)',
                       cursor: 'pointer',
                     }}
                     preview={{ src }}

@@ -34,7 +34,7 @@ export default function MetricLabel({ name, label, help, size = 'md' }: Props) {
       {finalHelp && (
         <Tooltip title={finalHelp} mouseEnterDelay={0.15} overlayStyle={{ maxWidth: 360 }}>
           <QuestionCircleOutlined
-            style={{ color: '#94a3b8', fontSize: iconSize, cursor: 'help' }}
+            style={{ color: 'var(--am-ink-3)', fontSize: iconSize, cursor: 'help' }}
           />
         </Tooltip>
       )}

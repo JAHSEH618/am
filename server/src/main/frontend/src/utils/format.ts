@@ -1,4 +1,5 @@
 import dayjs from 'dayjs';
+import { statusHue } from '../styles/tokens';
 
 /** 前端「多久未动」灰化提示阈值；应 ≥ 2min 上报间隔 × 1.5，避免 tick 间误灰。 */
 export const STALE_VISUAL_THRESHOLD_SECONDS = 180;
@@ -51,20 +52,10 @@ export function formatTimeFromNow(s: string | null | undefined): string {
 // 真正的"陈旧"由 last_activity 列呈现。后端 DashboardController 内部自有同名常量，
 // 用于 hero 卡 active_ai_sessions 计数（不依赖前端），保留不动。
 
+/** 会话状态分类色：统一从 tokens.statusHue 取，色值不再散落在此 */
 export function statusColor(status: string | null | undefined): string {
-  switch ((status || '').toLowerCase()) {
-    case 'idle': return '#94a3b8';
-    case 'waiting': return '#f59e0b';
-    case 'thinking': return '#2563eb';
-    case 'compacting': return '#0d9488';
-    case 'reading': return '#10b981';
-    case 'writing': return '#ea580c';
-    case 'running': return '#6366f1';
-    case 'searching': return '#db2777';
-    case 'browsing': return '#3b82f6';
-    case 'spawning': return '#f97316';
-    default: return '#94a3b8';
-  }
+  const key = (status || '').toLowerCase() as keyof typeof statusHue;
+  return statusHue[key] ?? statusHue.idle;
 }
 
 /**

@@ -23,6 +23,7 @@ import {
 } from '../components/gitCommitTableColumns';
 import { categoryAxisGridLeft } from '../utils/chartAxis';
 import { formatDuration, formatTokens, formatTokensM } from '../utils/format';
+import { ink, semantic, indigo } from '../styles/tokens';
 
 dayjs.extend(isoWeek);
 
@@ -332,7 +333,7 @@ export default function People() {
               onClick: () => setSelectedUser(row.user_code),
               style: {
                 cursor: 'pointer',
-                background: row.user_code === selectedUser ? '#eff6ff' : undefined,
+                background: row.user_code === selectedUser ? 'var(--am-brand-bg)' : undefined,
               },
             })}
           />
@@ -464,9 +465,9 @@ function PersonDetailPanel({
         { type: 'value', name: '次', position: 'right' },
       ],
       series: [
-        { name: 'AI 协作（h，并集）', type: 'line', smooth: true, data: activeHours, areaStyle: { opacity: 0.15 }, color: '#2563eb' },
-        { name: '会话数', type: 'bar', yAxisIndex: 1, data: sessions, color: '#10b981', barWidth: 12 },
-        { name: '卡壳次数', type: 'bar', yAxisIndex: 1, data: retries, color: '#ea580c', barWidth: 12 },
+        { name: 'AI 协作（h，并集）', type: 'line', smooth: true, data: activeHours, areaStyle: { opacity: 0.15 }, color: indigo[600] },
+        { name: '会话数', type: 'bar', yAxisIndex: 1, data: sessions, color: semantic.success.base, barWidth: 12 },
+        { name: '卡壳次数', type: 'bar', yAxisIndex: 1, data: retries, color: semantic.warning.base, barWidth: 12 },
       ],
     };
   }, [detail]);
@@ -486,7 +487,7 @@ function PersonDetailPanel({
           type: 'text',
           left: 'center',
           top: 'middle',
-          style: { text: opts?.emptyText ?? '暂无数据', fill: '#94a3b8', fontSize: 13 },
+          style: { text: opts?.emptyText ?? '暂无数据', fill: ink[3], fontSize: 13 },
         },
       };
     }
@@ -509,7 +510,7 @@ function PersonDetailPanel({
         type: 'bar',
         data: items.map((i) => i.value).reverse(),
         barWidth: 12,
-        itemStyle: { color: '#2563eb', borderRadius: 4 },
+        itemStyle: { color: indigo[600], borderRadius: 4 },
         label: { show: true, position: 'right', formatter: (p: { value: number }) => fmt(Number(p.value)) },
       }],
     };
@@ -574,14 +575,14 @@ function PersonDetailPanel({
 
 const metricsPanelStyle: React.CSSProperties = {
   marginBottom: 20,
-  border: '1px solid #e8edf3',
-  borderRadius: 10,
+  border: '1px solid var(--am-border)',
+  borderRadius: 12,
   overflow: 'hidden',
-  background: '#fff',
+  background: 'var(--am-bg-card)',
 };
 
 const metricsCellDivider: React.CSSProperties = {
-  borderRight: '1px solid #eef2f6',
+  borderRight: '1px solid var(--am-border-subtle)',
 };
 
 function PersonDetailMetrics({
@@ -681,17 +682,17 @@ function PersonDetailMetrics({
       <div
         style={{
           padding: '10px 16px',
-          borderBottom: '1px solid #eef2f6',
+          borderBottom: '1px solid var(--am-border-subtle)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          background: '#fafbfc',
+          background: 'var(--am-surface-sunken)',
           flexWrap: 'wrap',
           gap: 4,
         }}
       >
-        <Text style={{ fontSize: 12, color: '#64748b' }}>窗口期 {periodLabel}</Text>
-        <Text style={{ fontSize: 11, color: '#94a3b8' }}>环比 · 上周 {lastWeekShort}</Text>
+        <Text style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>窗口期 {periodLabel}</Text>
+        <Text style={{ fontSize: 11, color: 'var(--am-ink-3)' }}>环比 · 上周 {lastWeekShort}</Text>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
@@ -705,8 +706,8 @@ function PersonDetailMetrics({
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
-          borderTop: '1px solid #eef2f6',
-          background: '#fafbfc',
+          borderTop: '1px solid var(--am-border-subtle)',
+          background: 'var(--am-surface-sunken)',
         }}
       >
         {secondary.map((item, i) => {
@@ -740,9 +741,9 @@ function PrimaryMetricCell({
   showDivider: boolean;
 }) {
   const pct = metric.change_pct;
-  let trendColor = '#94a3b8';
+  let trendColor = 'var(--am-ink-3)';
   if (pct != null) {
-    trendColor = (inverted ? pct < 0 : pct >= 0) ? '#10b981' : '#f59e0b';
+    trendColor = (inverted ? pct < 0 : pct >= 0) ? 'var(--am-success)' : 'var(--am-warning)';
   }
   const arrow = pct == null ? null : pct >= 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />;
 
@@ -772,29 +773,30 @@ function PrimaryMetricCell({
       }
     >
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b' }}>
-          <span style={{ color: '#2563eb', fontSize: 13 }}>{icon}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--am-ink-3)' }}>
+          <span style={{ color: 'var(--am-brand)', fontSize: 13 }}>{icon}</span>
           <span>{label}</span>
         </div>
         <div
           style={{
             marginTop: 6,
-            fontSize: 24,
-            fontWeight: 600,
-            lineHeight: 1.15,
+            fontSize: 26,
+            fontWeight: 680,
+            letterSpacing: '-0.02em',
+            lineHeight: 1.12,
             fontVariantNumeric: 'tabular-nums',
-            color: onClick ? '#2563eb' : '#0f172a',
+            color: onClick ? 'var(--am-brand)' : 'var(--am-ink)',
           }}
         >
           {value}
         </div>
-        <div style={{ marginTop: 4, minHeight: 16, fontSize: 11, color: '#94a3b8' }}>{sub ?? '\u00a0'}</div>
+        <div style={{ marginTop: 4, minHeight: 16, fontSize: 11, color: 'var(--am-ink-3)' }}>{sub ?? '\u00a0'}</div>
       </div>
-      <div style={{ marginTop: 10, fontSize: 11, color: '#94a3b8', lineHeight: 1.45 }}>
+      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--am-ink-3)', lineHeight: 1.45 }}>
         上周 {formatLast(metric.last_week)}
         {' · '}
         {pct == null ? (
-          <span style={{ color: '#cbd5e1' }}>—</span>
+          <span style={{ color: 'var(--am-ink-5)' }}>—</span>
         ) : (
           <span style={{ color: trendColor, fontWeight: 500 }}>
             {arrow} {Math.abs(pct)}%
@@ -820,11 +822,11 @@ function SecondaryMetricCell({
 }) {
   const body = (
     <div style={{ padding: '12px 16px', ...(showDivider ? metricsCellDivider : {}) }}>
-      <div style={{ fontSize: 11, color: '#94a3b8' }}>{label}</div>
-      <div style={{ marginTop: 4, fontSize: 17, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: '#0f172a' }}>
+      <div style={{ fontSize: 11, color: 'var(--am-ink-3)' }}>{label}</div>
+      <div style={{ marginTop: 4, fontSize: 17, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'var(--am-ink)' }}>
         {value}
       </div>
-      <div style={{ marginTop: 2, minHeight: 14, fontSize: 11, color: '#cbd5e1' }}>{hint ?? '\u00a0'}</div>
+      <div style={{ marginTop: 2, minHeight: 14, fontSize: 11, color: 'var(--am-ink-5)' }}>{hint ?? '\u00a0'}</div>
     </div>
   );
   return tooltip ? <Tooltip title={tooltip}>{body}</Tooltip> : body;

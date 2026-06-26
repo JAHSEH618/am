@@ -31,7 +31,6 @@ import { useSse } from '../hooks/useSse';
 import {
   formatDuration,
   formatTimeFromNow,
-  statusColor,
   statusLabel,
   formatTokens,
   isToolStatus,
@@ -42,6 +41,7 @@ import {
   targetTypeColor,
   STALE_VISUAL_THRESHOLD_SECONDS,
 } from '../utils/format';
+import StatusDot from '../components/StatusDot';
 
 // v2.7.1：HTTP 兜底 polling 间隔。SSE 实时 patch 已经覆盖大部分高频更新（status/tool/model/project），
 // polling 主要负责拉今日累计指标（today_messages / today_tokens / top 列表）和"上次没开页时漏掉的"
@@ -261,9 +261,9 @@ export default function Dashboard() {
               label="注册员工"
               value={
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  <span style={{ color: '#059669' }}>{overview?.online_agents ?? 0}</span>
+                  <span style={{ color: 'var(--am-success-fg)' }}>{overview?.online_agents ?? 0}</span>
                   <span style={{ opacity: 0.45, fontWeight: 500 }}> / </span>
-                  <span style={{ color: '#dc2626' }}>{overview?.offline_agents ?? 0}</span>
+                  <span style={{ color: 'var(--am-error-fg)' }}>{overview?.offline_agents ?? 0}</span>
                 </span>
               }
               suffix="台"
@@ -362,7 +362,7 @@ export default function Dashboard() {
           title={
             <Space>
               <span style={{ fontWeight: 600 }}>注册员工</span>
-              <span style={{ color: '#94a3b8', fontSize: 13, fontWeight: 400 }}>
+              <span style={{ color: 'var(--am-ink-3)', fontSize: 13, fontWeight: 400 }}>
                 {totalAgents} 台机器
                 {totalAgents > 0 &&
                   ` · 第 ${agentPage} / ${Math.max(1, Math.ceil(totalAgents / agentPageSize))} 页`}
@@ -409,7 +409,7 @@ export default function Dashboard() {
             latestPublishedVersion={overview?.latest_agent_version ?? null}
           />
           {totalAgents > 0 && (
-            <div style={{ padding: '12px 16px', borderTop: '1px solid #f1f5f9', textAlign: 'right' }}>
+            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--am-surface-sunken)', textAlign: 'right' }}>
               <Pagination
                 current={agentPage}
                 pageSize={agentPageSize}
@@ -574,7 +574,7 @@ function InsightAuditProgressCard(props: {
       {/* 结构与分析报告页「报告生成中」卡片一致：标题区 → Progress → 说明段落 */}
       <Space align="start" size={14} style={{ marginBottom: 14 }}>
         <FundProjectionScreenOutlined
-          style={{ fontSize: 22, color: '#4f46e5', marginTop: 2 }}
+          style={{ fontSize: 22, color: 'var(--am-brand)', marginTop: 2 }}
           aria-hidden
         />
         <div style={{ minWidth: 0 }}>
@@ -607,7 +607,7 @@ function InsightAuditProgressCard(props: {
             进度 <Text strong>{stable}</Text> / <Text strong>{total}</Text>
             ：稳定口径已审计会话占有效会话总量；
             队列剩余{' '}
-            <Text strong style={{ color: pending > 0 ? '#c2410c' : undefined }}>
+            <Text strong style={{ color: pending > 0 ? 'var(--am-warning-fg)' : undefined }}>
               {loadingFast ? '—' : pending}
             </Text>
             （高频）；未审计总会话{' '}
@@ -638,12 +638,12 @@ function InsightAuditProgressCard(props: {
 
 type Tone = 'indigo' | 'emerald' | 'amber' | 'rose';
 
-// 语义底色：浅色背景 + 深色 icon，符合"克制 dashboard"基调；与 main.tsx token 协调。
-const TONE_PALETTE: Record<Tone, { bg: string; fg: string; ring: string }> = {
-  indigo:  { bg: '#eef2ff', fg: '#4f46e5', ring: '#c7d2fe' },
-  emerald: { bg: '#ecfdf5', fg: '#059669', ring: '#a7f3d0' },
-  amber:   { bg: '#fffbeb', fg: '#d97706', ring: '#fde68a' },
-  rose:    { bg: '#fff1f2', fg: '#e11d48', ring: '#fecdd3' },
+// Hero chip 配色：浅底 + 饱和 icon；四个 KPI 各一个语义色，全部走设计 token（CSS 变量）。
+const TONE_PALETTE: Record<Tone, { bg: string; fg: string }> = {
+  indigo:  { bg: 'var(--am-brand-bg)',   fg: 'var(--am-brand)' },
+  emerald: { bg: 'var(--am-success-bg)', fg: 'var(--am-success-fg)' },
+  amber:   { bg: 'var(--am-warning-bg)', fg: 'var(--am-warning-fg)' },
+  rose:    { bg: 'var(--am-rose-bg)',    fg: 'var(--am-rose-fg)' },
 };
 
 interface HeroCardProps {
@@ -667,13 +667,8 @@ function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabe
   return (
     <Card
       size="small"
-      styles={{ body: { padding: 16, cursor: interactive ? 'pointer' : undefined } }}
-      style={{
-        background: c.bg,
-        border: `1px solid ${c.ring}`,
-        borderRadius: 8,
-        position: 'relative',
-      }}
+      styles={{ body: { padding: 18, cursor: interactive ? 'pointer' : undefined } }}
+      style={{ ['--am-hero-tint' as string]: c.bg, position: 'relative' }}
       className={`am-hero${interactive ? ' am-clickable' : ''}`}
       onClick={onClick}
       role={interactive ? 'button' : undefined}
@@ -691,14 +686,16 @@ function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, ariaLabe
       }
     >
       {extra != null && (
-        <div style={{ position: 'absolute', top: 8, right: 8 }} onClick={(e) => e.stopPropagation()}>
+        <div className="am-hero-extra" onClick={(e) => e.stopPropagation()}>
           {extra}
         </div>
       )}
-      <div className="am-hero-icon" style={{ color: c.fg }}>
-        {icon}
+      <div className="am-hero-top">
+        <span className="am-hero-chip" style={{ background: c.bg, color: c.fg }}>
+          {icon}
+        </span>
+        <span className="am-hero-label">{label}</span>
       </div>
-      <div className="am-hero-label">{label}</div>
       <div className="am-hero-value">
         {value}
         {suffix && <span className="am-hero-suffix">{suffix}</span>}
@@ -802,7 +799,7 @@ function OnlineAgentTable({
             {row.hostname || '-'}
             {row.os_type ? ` (${row.os_type})` : ''}
           </span>
-          <span style={{ color: '#94a3b8', fontSize: 12, fontFamily: 'monospace' }}>
+          <span style={{ color: 'var(--am-ink-3)', fontSize: 12, fontFamily: 'monospace' }}>
             {row.local_ip || '-'}
           </span>
         </Space>
@@ -816,7 +813,7 @@ function OnlineAgentTable({
       render: (_, row) => (
         <Space direction="vertical" size={0}>
           <span>{row.git_user_name || '-'}</span>
-          <span style={{ color: '#94a3b8', fontSize: 12 }}>{row.git_user_email || ''}</span>
+          <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>{row.git_user_email || ''}</span>
         </Space>
       ),
     },
@@ -835,7 +832,7 @@ function OnlineAgentTable({
               </Tag>
             )}
           </Space>
-          <span style={{ color: '#94a3b8', fontSize: 12 }}>
+          <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
             {row.cursor_subscription_status === 'active'
               ? '订阅中'
               : row.cursor_subscription_status || ''}
@@ -856,7 +853,7 @@ function OnlineAgentTable({
       // 真正的"开机但闲着"信号已经由"当前状态"列呈现（idle + stale 灰点），不需要在这里再叠加。
       render: (v: string | null, row) => {
         if (!v || !row.active) {
-          return <span style={{ color: '#94a3b8', fontSize: 12 }}>无运行中 Agent</span>;
+          return <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>无运行中 Agent</span>;
         }
         return (
           <Tag color={targetTypeColor(v)} style={{ fontWeight: 600 }}>
@@ -874,7 +871,7 @@ function OnlineAgentTable({
         <Space direction="vertical" size={0}>
           <span>{v || '-'}</span>
           {row.branch_name && (
-            <span style={{ color: '#94a3b8', fontSize: 12 }}>@{row.branch_name}</span>
+            <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>@{row.branch_name}</span>
           )}
         </Space>
       ),
@@ -884,27 +881,18 @@ function OnlineAgentTable({
       dataIndex: 'current_status',
       width: 170,
       render: (v: string | null, row) => {
-        if (!v) return <span style={{ color: '#cbd5e1' }}>—</span>;
+        if (!v) return <span style={{ color: 'var(--am-ink-5)' }}>—</span>;
         // staleSinceSeconds 仅做「多久未动」视觉提示；status 以 DB 为准（卡僵由 AiSessionStaleCloser 兜底）
         const stale = row.stale_since_seconds > STALE_VISUAL_THRESHOLD_SECONDS;
         return (
           <Space size={4}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: 8,
-                height: 8,
-                borderRadius: 4,
-                background: stale ? '#cbd5e1' : statusColor(v),
-                boxShadow: stale ? '0 0 0 2px #f1f5f9' : undefined,
-              }}
-            />
-            <span style={{ color: stale ? '#94a3b8' : undefined }}>{statusLabel(v)}</span>
+            <StatusDot status={v} stale={stale} />
+            <span style={{ color: stale ? 'var(--am-ink-3)' : undefined }}>{statusLabel(v)}</span>
             {row.current_tool && isToolStatus(v) && !stale && (
               <Tag color="blue">{row.current_tool}</Tag>
             )}
             {stale && (
-              <span style={{ color: '#94a3b8', fontSize: 12 }}>
+              <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
                 （{formatStale(row.stale_since_seconds)}未动）
               </span>
             )}
@@ -917,7 +905,7 @@ function OnlineAgentTable({
       dataIndex: 'current_model',
       width: 180,
       ellipsis: true,
-      render: (v: string | null) => v || <span style={{ color: '#cbd5e1' }}>—</span>,
+      render: (v: string | null) => v || <span style={{ color: 'var(--am-ink-5)' }}>—</span>,
     },
     // ↓↓ 以下又是按机器合并
     {
@@ -939,7 +927,7 @@ function OnlineAgentTable({
         v ? (
           formatTimeFromNow(v)
         ) : (
-          <span style={{ color: '#94a3b8', fontSize: 12 }}>从未上报</span>
+          <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>从未上报</span>
         ),
     },
     {
@@ -953,7 +941,7 @@ function OnlineAgentTable({
             {formatDuration(row.offline_seconds ?? 0)}
           </span>
         ) : (
-          <span style={{ color: '#cbd5e1' }}>—</span>
+          <span style={{ color: 'var(--am-ink-5)' }}>—</span>
         ),
     },
     {
@@ -965,7 +953,7 @@ function OnlineAgentTable({
         const installed = v?.trim() || null;
         const latest = latestPublishedVersion?.trim() || null;
         const mismatch = Boolean(installed && latest && installed !== latest);
-        if (!installed) return <span style={{ color: '#cbd5e1' }}>—</span>;
+        if (!installed) return <span style={{ color: 'var(--am-ink-5)' }}>—</span>;
         return mismatch ? (
           <Tag color="orange" style={{ marginInlineEnd: 0 }}>
             {installed}
@@ -984,7 +972,7 @@ function OnlineAgentTable({
         return latest ? (
           <span style={{ fontVariantNumeric: 'tabular-nums' }}>{latest}</span>
         ) : (
-          <span style={{ color: '#cbd5e1' }}>—</span>
+          <span style={{ color: 'var(--am-ink-5)' }}>—</span>
         );
       },
     },

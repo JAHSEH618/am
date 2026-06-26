@@ -1,6 +1,8 @@
 // 分析报告 v3.0 前端常量：watchlist 文案、协作模式文案、能力维度文案。
 // 与 docs/design/employee-insight-from-ai-sessions-v1.0.md §3 / §2.2 对齐。
 
+import { semantic, violet, statusHue } from '../../styles/tokens';
+
 export const WATCHLIST_META: Record<
   string,
   { label: string; color: string; severity: 'warn' | 'info' | 'good'; help: string }
@@ -49,18 +51,19 @@ export const WATCHLIST_META: Record<
   },
 };
 
+// 5 种协作模式：类别色需彼此可分，统一从 tokens 取（emerald/blue/orange/violet/teal）
 export const MODE_META: Record<string, { label: string; color: string }> = {
-  leverage: { label: '杠杆型', color: '#22c55e' },
-  learning: { label: '学习型', color: '#3b82f6' },
-  dependent: { label: '依赖型', color: '#f97316' },
-  exploratory: { label: '探索型', color: '#a855f7' },
-  debugging: { label: '调试型', color: '#06b6d4' },
+  leverage: { label: '杠杆型', color: semantic.success.base },
+  learning: { label: '学习型', color: statusHue.browsing },
+  dependent: { label: '依赖型', color: statusHue.spawning },
+  exploratory: { label: '探索型', color: violet[500] },
+  debugging: { label: '调试型', color: statusHue.compacting },
 };
 
 export const OUTCOME_META: Record<string, { label: string; color: string }> = {
-  completed: { label: '完成', color: '#22c55e' },
-  partial: { label: '部分', color: '#f59e0b' },
-  abandoned: { label: '放弃', color: '#ef4444' },
+  completed: { label: '完成', color: semantic.success.base },
+  partial: { label: '部分', color: semantic.warning.base },
+  abandoned: { label: '放弃', color: semantic.error.base },
 };
 
 export const CAPABILITY_DIMENSIONS: Array<{

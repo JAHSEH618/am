@@ -45,7 +45,7 @@ export default function SourceFilter({
         value: ALL_VALUE,
         label: (
           <span style={dotRow}>
-            <span style={{ ...dot, background: '#cbd5e1' }} />
+            <span style={{ ...dot, background: 'var(--am-ink-5)' }} />
             <span>全部来源</span>
             <span style={count}>{enabled.length}</span>
           </span>
@@ -93,6 +93,6 @@ const dot: React.CSSProperties = {
 const count: React.CSSProperties = {
   marginLeft: 'auto',
   fontSize: 12,
-  color: '#94a3b8',
+  color: 'var(--am-ink-3)',
   fontVariantNumeric: 'tabular-nums',
 };

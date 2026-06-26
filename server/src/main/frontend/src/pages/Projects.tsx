@@ -14,6 +14,7 @@ import {
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
 import { formatTime, formatTokens } from '../utils/format';
+import { indigo, semantic } from '../styles/tokens';
 
 /**
  * 项目透视页（v2.1 Phase 2）
@@ -156,7 +157,7 @@ export default function Projects() {
         <Space size={4}>
           消息
           <Tooltip title="时间窗内用户消息（发送）/ 助手消息（接收）">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
           </Tooltip>
         </Space>
       ),
@@ -175,7 +176,7 @@ export default function Projects() {
         <Space size={4}>
           Token
           <Tooltip title="时间窗内 input / output token">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
           </Tooltip>
         </Space>
       ),
@@ -257,7 +258,7 @@ export default function Projects() {
               onClick: () => setSelected(row.project_name),
               style: {
                 cursor: 'pointer',
-                background: row.project_name === selected ? '#eff6ff' : undefined,
+                background: row.project_name === selected ? 'var(--am-brand-bg)' : undefined,
               },
             })}
           />
@@ -360,9 +361,9 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
         { type: 'value', name: '人/会话', position: 'right' },
       ],
       series: [
-        { name: 'Token', type: 'line', smooth: true, data: tokens, areaStyle: { opacity: 0.15 }, color: '#2563eb' },
-        { name: '会话数', type: 'bar', yAxisIndex: 1, data: sessions, color: '#10b981', barWidth: 12 },
-        { name: '参与员工', type: 'bar', yAxisIndex: 1, data: users, color: '#f59e0b', barWidth: 12 },
+        { name: 'Token', type: 'line', smooth: true, data: tokens, areaStyle: { opacity: 0.15 }, color: indigo[600] },
+        { name: '会话数', type: 'bar', yAxisIndex: 1, data: sessions, color: semantic.success.base, barWidth: 12 },
+        { name: '参与员工', type: 'bar', yAxisIndex: 1, data: users, color: semantic.warning.base, barWidth: 12 },
       ],
     };
   }, [detail]);
@@ -395,7 +396,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
         <Space size={4}>
           消息
           <Tooltip title="时间窗内用户消息（发送）/ 助手消息（接收）">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
           </Tooltip>
         </Space>
       ),
@@ -415,7 +416,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
         <Space size={4}>
           Token
           <Tooltip title="时间窗内 input / output token">
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
           </Tooltip>
         </Space>
       ),
@@ -484,7 +485,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
               <Space size={4}>
                 消息
                 <Tooltip title="时间窗内用户消息（发送）/ 助手消息（接收）">
-                  <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+                  <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                 </Tooltip>
               </Space>
             }
@@ -498,7 +499,7 @@ function ProjectDetailPanel({ detail, loading, projectName, onSessionLink, onOpe
               <Space size={4}>
                 Token
                 <Tooltip title="时间窗内 input / output token">
-                  <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+                  <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                 </Tooltip>
               </Space>
             }

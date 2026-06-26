@@ -5,36 +5,41 @@ import zhCN from 'antd/locale/zh_CN';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './styles/global.css';
+import { indigo, semantic, ink, surface, border, radius, fontFamily, fontSize } from './styles/tokens';
 
-// 全局 design tokens（v1.6 设计系统）。
+// 全局 design tokens（v3 · Apple-native / indigo）。统一从 styles/tokens.ts 取值，
+// 与 global.css 的 :root 变量同源。
 //
 // 取舍：
-//   - 主色用克制的 #2563eb（slate / indigo 偏冷蓝），与 dashboard 数据色板拉开层级；
-//   - 圆角统一 6（卡片 / 按钮 / 输入），不再混用 4 / 6 / 8；
-//   - 表面颜色：页面底色 #f5f7fa，卡片白；与 global.css 的 --am-bg-* 对齐；
-//   - 字号沿用 AntD 默认 14，但全局走 tabular-nums（global.css），数据表格不抖动；
-//   - 控件高度 32（默认）；密集表格里靠 size="small" 单独收口到 28。
+//   - 单一强调色 = 品牌靛紫 indigo-600 (#4f46e5)，与 logo / 字标同源；不再有「功能蓝 vs 品牌靛」分裂；
+//   - 圆角走苹果连续档：卡片 14 / 控件 8 / 紧凑 6；
+//   - Layout 表面透明，交给 global.css 的 Liquid Glass 材质层；
+//   - 字号沿用 14，但全局走 tabular-nums（global.css），数据表格不抖动；
+//   - 控件高度 32；密集表格靠 size="small" 收口到 28。
 const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
   algorithm: antdTheme.defaultAlgorithm,
   token: {
-    colorPrimary: '#2563eb',
-    colorInfo: '#2563eb',
-    colorSuccess: '#10b981',
-    colorWarning: '#f59e0b',
-    colorError: '#ef4444',
+    colorPrimary: indigo[600],
+    colorInfo: indigo[600],
+    colorLink: indigo[600],
+    colorLinkHover: indigo[500],
+    colorLinkActive: indigo[700],
+    colorSuccess: semantic.success.base,
+    colorWarning: semantic.warning.base,
+    colorError: semantic.error.base,
+    colorTextBase: ink[1],
     // Layout 表面交给 global.css 的 Liquid Glass 材质层接管（透明 → 露出底层柔光背景）
     colorBgLayout: 'transparent',
-    colorBgContainer: '#ffffff',
-    colorBorder: 'rgba(15, 23, 42, 0.10)',
-    colorBorderSecondary: 'rgba(15, 23, 42, 0.06)',
+    colorBgContainer: surface.card,
+    colorBorder: border.default,
+    colorBorderSecondary: border.subtle,
     // 苹果式连续大圆角：卡片 14 / 控件 8 / 紧凑 6
-    borderRadius: 8,
+    borderRadius: radius.sm,
     borderRadiusLG: 14,
     borderRadiusSM: 6,
-    fontSize: 14,
-    fontSizeSM: 13,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif",
+    fontSize: fontSize.md,
+    fontSizeSM: fontSize.sm,
+    fontFamily,
     controlHeight: 32,
     // 苹果分层投影：贴地接触阴影 + 柔和环境阴影（替掉 AntD 默认偏灰单层投影）
     boxShadow:
@@ -52,10 +57,10 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
     },
     // 表格：sticky thead 由 .am-sticky-table 接管；这里只统一行高
     Table: {
-      headerBg: '#fafbfc',
-      headerColor: 'rgba(15, 23, 42, 0.72)',
+      headerBg: surface.sunken,
+      headerColor: ink[2],
       headerSplitColor: 'transparent',
-      rowHoverBg: '#f5f7fa',
+      rowHoverBg: surface.sunken,
       cellPaddingBlockSM: 8,
     },
     Layout: {
@@ -70,15 +75,23 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
       itemBorderRadius: 8,
       itemMarginInline: 8,
       itemHeight: 38,
-      itemSelectedBg: 'rgba(37, 99, 235, 0.10)',
-      itemSelectedColor: '#1d4ed8',
+      itemSelectedBg: 'rgba(79, 70, 229, 0.10)',
+      itemSelectedColor: indigo[700],
     },
     Tag: {
-      defaultBg: '#f1f5f9',
+      defaultBg: semantic.neutral.bg,
     },
     Statistic: {
       titleFontSize: 13,
       contentFontSize: 22,
+    },
+    Button: {
+      primaryShadow: '0 1px 2px rgba(79, 70, 229, 0.28)',
+      defaultShadow: 'none',
+    },
+    Segmented: {
+      itemSelectedColor: indigo[700],
+      trackBg: 'rgba(15, 23, 42, 0.05)',
     },
   },
 };

@@ -191,13 +191,13 @@ function ActiveAgentsPanel() {
         if (!turningOff) return resolve(true);
         modal.confirm({
           title: `禁用 ${target.type_name}？`,
-          icon: <ExclamationCircleOutlined style={{ color: '#f59e0b' }} />,
+          icon: <ExclamationCircleOutlined style={{ color: 'var(--am-warning)' }} />,
           content: (
             <div style={{ lineHeight: 1.8 }}>
               <div>
                 禁用后，所有展示页（员工数据、看板、分析报告）将<strong>立即不再统计</strong> {target.type_name} 的数据。
               </div>
-              <div style={{ color: '#94a3b8', marginTop: 8 }}>
+              <div style={{ color: 'var(--am-ink-3)', marginTop: 8 }}>
                 · 客户端将在下次同步策略后停止采集并上报<br />
                 · 之后如重新启用，采集与展示都会恢复<br />
                 · 最近 14 天 daily_summary 会自动按新口径重算（员工数据 / 分析报告立即生效）<br />
@@ -208,8 +208,8 @@ function ActiveAgentsPanel() {
                   style={{
                     marginTop: 10,
                     padding: '8px 12px',
-                    background: '#fef3c7',
-                    color: '#92400e',
+                    background: 'var(--am-warning-bg)',
+                    color: 'var(--am-warning-fg)',
                     borderRadius: 6,
                   }}
                 >
@@ -277,7 +277,7 @@ function ActiveAgentsPanel() {
             <Card bordered>
               <Statistic
                 title={
-                  <span style={{ color: '#64748b' }}>
+                  <span style={{ color: 'var(--am-ink-3)' }}>
                     启用中 Agent
                   </span>
                 }
@@ -287,7 +287,7 @@ function ActiveAgentsPanel() {
                     / 全部 {counters.total}
                   </Text>
                 }
-                valueStyle={{ color: '#16a34a' }}
+                valueStyle={{ color: 'var(--am-success)' }}
                 prefix={<CheckCircleFilled />}
               />
             </Card>
@@ -295,9 +295,9 @@ function ActiveAgentsPanel() {
           <Col xs={24} sm={8}>
             <Card bordered>
               <Statistic
-                title={<span style={{ color: '#64748b' }}>禁用中 Agent</span>}
+                title={<span style={{ color: 'var(--am-ink-3)' }}>禁用中 Agent</span>}
                 value={counters.disabled}
-                valueStyle={{ color: counters.disabled > 0 ? '#dc2626' : '#94a3b8' }}
+                valueStyle={{ color: counters.disabled > 0 ? 'var(--am-error-fg)' : 'var(--am-ink-3)' }}
                 prefix={<PauseCircleFilled />}
               />
             </Card>
@@ -307,7 +307,7 @@ function ActiveAgentsPanel() {
               <Statistic
                 title={
                   <Tooltip title="过去 7 天落入白名单的会话数 / 全部上报会话数。差值就是被白名单过滤掉的部分。">
-                    <span style={{ color: '#64748b' }}>
+                    <span style={{ color: 'var(--am-ink-3)' }}>
                       近 7 天会话（白名单内 / 全部）<InfoCircleOutlined style={{ marginLeft: 4 }} />
                     </span>
                   </Tooltip>
@@ -318,7 +318,7 @@ function ActiveAgentsPanel() {
                     / {counters.recentTotal}
                   </Text>
                 }
-                valueStyle={{ color: '#0f172a' }}
+                valueStyle={{ color: 'var(--am-ink)' }}
               />
             </Card>
           </Col>
@@ -376,9 +376,9 @@ function AgentCard({
       size="small"
       bordered
       style={{
-        borderColor: isEnabled ? target.display_color : '#e2e8f0',
+        borderColor: isEnabled ? target.display_color : 'var(--am-border)',
         borderWidth: isEnabled ? 1.5 : 1,
-        background: isEnabled ? '#ffffff' : '#f8fafc',
+        background: isEnabled ? '#ffffff' : 'var(--am-surface-sunken)',
         transition: 'all .2s',
       }}
       styles={{ body: { padding: 16 } }}
@@ -409,7 +409,7 @@ function AgentCard({
               style={{
                 fontSize: 15,
                 fontWeight: 600,
-                color: isEnabled ? '#0f172a' : '#64748b',
+                color: isEnabled ? 'var(--am-ink)' : 'var(--am-ink-3)',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -424,7 +424,7 @@ function AgentCard({
           <Badge
             status={isEnabled ? 'success' : 'default'}
             text={
-              <span style={{ fontSize: 12, color: isEnabled ? '#16a34a' : '#94a3b8' }}>
+              <span style={{ fontSize: 12, color: isEnabled ? 'var(--am-success)' : 'var(--am-ink-3)' }}>
                 {isEnabled ? '已启用' : '已禁用'}
               </span>
             }
@@ -436,7 +436,7 @@ function AgentCard({
           <Paragraph
             type="secondary"
             ellipsis={{ rows: 2 }}
-            style={{ fontSize: 12, margin: 0, color: '#64748b' }}
+            style={{ fontSize: 12, margin: 0, color: 'var(--am-ink-3)' }}
           >
             {target.description}
           </Paragraph>
@@ -449,7 +449,7 @@ function AgentCard({
             alignItems: 'center',
             justifyContent: 'space-between',
             paddingTop: 8,
-            borderTop: '1px solid #f1f5f9',
+            borderTop: '1px solid var(--am-border-subtle)',
           }}
         >
           <div>
@@ -460,7 +460,7 @@ function AgentCard({
               style={{
                 fontSize: 18,
                 fontWeight: 600,
-                color: target.recent7d_session_count > 0 ? '#0f172a' : '#cbd5e1',
+                color: target.recent7d_session_count > 0 ? 'var(--am-ink)' : 'var(--am-ink-5)',
                 fontVariantNumeric: 'tabular-nums',
                 lineHeight: 1.2,
               }}
@@ -645,8 +645,8 @@ function ScheduledTaskCard({
       size="small"
       bordered
       style={{
-        borderColor: task.enabled ? '#cbd5e1' : '#e2e8f0',
-        background: task.enabled ? '#ffffff' : '#f8fafc',
+        borderColor: task.enabled ? 'var(--am-ink-5)' : 'var(--am-border)',
+        background: task.enabled ? '#ffffff' : 'var(--am-surface-sunken)',
       }}
       styles={{ body: { padding: 16 } }}
     >
@@ -654,7 +654,7 @@ function ScheduledTaskCard({
         {/* 头部 */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 600, color: '#0f172a' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--am-ink)' }}>
               {task.display_name}
             </div>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -680,7 +680,7 @@ function ScheduledTaskCard({
           <Paragraph
             type="secondary"
             ellipsis={{ rows: 3 }}
-            style={{ fontSize: 12, margin: 0, color: '#64748b' }}
+            style={{ fontSize: 12, margin: 0, color: 'var(--am-ink-3)' }}
           >
             {task.description}
           </Paragraph>
@@ -689,7 +689,7 @@ function ScheduledTaskCard({
         {/* cron 编辑 */}
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <Text style={{ fontSize: 12, color: '#475569', fontWeight: 500 }}>Cron 表达式</Text>
+            <Text style={{ fontSize: 12, color: 'var(--am-ink-3)', fontWeight: 500 }}>Cron 表达式</Text>
             {!task.cron_editable && (
               <Tag color="default" style={{ marginLeft: 4 }}>
                 只读
@@ -730,7 +730,7 @@ function ScheduledTaskCard({
             gridTemplateColumns: 'repeat(2, 1fr)',
             gap: 12,
             paddingTop: 8,
-            borderTop: '1px solid #f1f5f9',
+            borderTop: '1px solid var(--am-border-subtle)',
             fontSize: 12,
           }}
         >
@@ -741,7 +741,7 @@ function ScheduledTaskCard({
             <div style={{ marginTop: 2 }}>
               {task.last_start_time ? (
                 <Tooltip title={task.last_start_time}>
-                  <span style={{ color: '#0f172a' }}>
+                  <span style={{ color: 'var(--am-ink)' }}>
                     {dayjs(task.last_start_time).format('MM-DD HH:mm:ss')}
                   </span>
                 </Tooltip>
@@ -762,7 +762,7 @@ function ScheduledTaskCard({
             <div style={{ marginTop: 2 }}>
               {task.enabled && task.next_run_time ? (
                 <Tooltip title={task.next_run_time}>
-                  <span style={{ color: '#0f172a' }}>
+                  <span style={{ color: 'var(--am-ink)' }}>
                     {dayjs(task.next_run_time).format('MM-DD HH:mm:ss')}
                   </span>
                 </Tooltip>
@@ -775,7 +775,7 @@ function ScheduledTaskCard({
             <Text type="secondary" style={{ fontSize: 12 }}>
               累计成功
             </Text>
-            <div style={{ color: '#16a34a', fontWeight: 600 }}>
+            <div style={{ color: 'var(--am-success)', fontWeight: 600 }}>
               <CheckCircleOutlined style={{ marginRight: 4 }} />
               {task.success_count.toLocaleString()}
             </div>
@@ -786,7 +786,7 @@ function ScheduledTaskCard({
             </Text>
             <div
               style={{
-                color: task.failure_count > 0 ? '#dc2626' : '#94a3b8',
+                color: task.failure_count > 0 ? 'var(--am-error-fg)' : 'var(--am-ink-3)',
                 fontWeight: task.failure_count > 0 ? 600 : 400,
               }}
             >
@@ -1061,7 +1061,7 @@ function CaptureConfigPanel() {
         <Space size={4}>
           <span>{def.label}</span>
           <Tooltip title={def.tooltip}>
-            <InfoCircleOutlined style={{ color: '#94a3b8', fontSize: 13, cursor: 'help' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)', fontSize: 13, cursor: 'help' }} />
           </Tooltip>
         </Space>
       }
@@ -1295,7 +1295,7 @@ function JudgeConfigPanel() {
                 label={
                   <Tooltip title="单次报告调用 LLM 的硬上限（双 judge 计 2 次），超出后报告停审计但仍出 partial 结果">
                     单报告 LLM 调用上限
-                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 }
               >
@@ -1312,7 +1312,7 @@ function JudgeConfigPanel() {
                 label={
                   <Tooltip title="已审计会话再增长 N 条消息后会进入重审队列；调小 = 重审更频繁，调大 = 节省 token">
                     重审消息阈值
-                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 }
               >
@@ -1329,7 +1329,7 @@ function JudgeConfigPanel() {
                 label={
                   <Tooltip title="审计 worker 并发数；外网网关建议 ≤ 4 防止速率限制，自建本地模型可以拉到 16+">
                     审计并发数
-                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 }
               >
@@ -1350,7 +1350,7 @@ function JudgeConfigPanel() {
                 label={
                   <Tooltip title="关闭则后台不自动审计会话、仅生成报告时按需审；打开后台扫描器开始清积压。改后热生效，无需重启。">
                     后台审计扫描
-                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 }
               >
@@ -1365,7 +1365,7 @@ function JudgeConfigPanel() {
                 label={
                   <Tooltip title="拼 LLM 审计 prompt 前对密钥/令牌/私钥打码，降低把会话原文里的密钥发给第三方模型网关的泄露风险。">
                     LLM 外发脱敏
-                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 }
               >
@@ -1385,7 +1385,7 @@ function JudgeConfigPanel() {
                 label={
                   <Tooltip title="Rubric YAML 版本号，会写入 ai_session_audit.audit_version；改 rubric 内容时 bump 这里会让历史会话进入重审">
                     Rubric 版本
-                    <InfoCircleOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 }
               >
@@ -1423,7 +1423,7 @@ function JudgeConfigPanel() {
           bottom: 0,
           background: '#ffffff',
           padding: '12px 16px',
-          borderTop: '1px solid #e2e8f0',
+          borderTop: '1px solid var(--am-border)',
           borderRadius: 6,
           boxShadow: '0 -2px 8px rgba(0,0,0,0.04)',
           display: 'flex',
@@ -1472,7 +1472,7 @@ function RubricEditorCard({ value, originalValue, onChange, rubricVersion }: Rub
     <Card
       title={
         <Space size={8}>
-          <FileTextOutlined style={{ color: '#7c3aed' }} />
+          <FileTextOutlined style={{ color: 'var(--am-violet)' }} />
           <span style={{ fontSize: 15, fontWeight: 600 }}>Rubric 模板</span>
           {dirty && (
             <Tag color="orange" style={{ marginLeft: 4 }}>
@@ -1524,11 +1524,11 @@ function RubricEditorCard({ value, originalValue, onChange, rubricVersion }: Rub
             'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
           fontSize: 12.5,
           lineHeight: '20px',
-          background: '#fafafa',
+          background: 'var(--am-surface-sunken)',
         }}
         placeholder={'# Rubric YAML 示例\nsystem: |\n  你是一位资深技术经理...\n\ncapabilities:\n  problem_decomposition: ...\n'}
       />
-      <div style={{ marginTop: 10, fontSize: 12, color: '#94a3b8' }}>
+      <div style={{ marginTop: 10, fontSize: 12, color: 'var(--am-ink-3)' }}>
         <InfoCircleOutlined style={{ marginRight: 4 }} />
         sys_config 字段：<Text code style={{ fontSize: 11 }}>insight.rubric_yaml</Text>
         ；变更会写入操作日志，可在 <Text strong>操作日志</Text> Tab 回溯。
@@ -1625,7 +1625,7 @@ function JudgeCard({
         <Form.Item
           label={
             <span>
-              API Key <KeyOutlined style={{ marginLeft: 4, color: '#94a3b8' }} />
+              API Key <KeyOutlined style={{ marginLeft: 4, color: 'var(--am-ink-3)' }} />
             </span>
           }
         >
@@ -1686,7 +1686,7 @@ function JudgeCard({
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  color: testResult.success ? '#475569' : '#dc2626',
+                  color: testResult.success ? 'var(--am-ink-3)' : 'var(--am-error-fg)',
                 }}
               >
                 {testResult.message}
@@ -1761,11 +1761,11 @@ function AuthPanel() {
       if (!willChangeCreds) return resolve(true);
       modal.confirm({
         title: '确认修改登录凭证？',
-        icon: <ExclamationCircleOutlined style={{ color: '#f59e0b' }} />,
+        icon: <ExclamationCircleOutlined style={{ color: 'var(--am-warning)' }} />,
         content: (
           <div style={{ lineHeight: 1.8 }}>
             <div>修改后<strong>下一次登录</strong>立即生效。</div>
-            <div style={{ color: '#94a3b8', marginTop: 6 }}>
+            <div style={{ color: 'var(--am-ink-3)', marginTop: 6 }}>
               · 当前已登录的会话不会被踢出（避免改错把自己锁死）<br />
               · 新密码请妥善保存，如忘记需到数据库 sys_config 表手工修改
             </div>
@@ -1799,11 +1799,11 @@ function AuthPanel() {
     const ok = await new Promise<boolean>((resolve) => {
       modal.confirm({
         title: '轮换 admin token？',
-        icon: <ExclamationCircleOutlined style={{ color: '#f59e0b' }} />,
+        icon: <ExclamationCircleOutlined style={{ color: 'var(--am-warning)' }} />,
         content: (
           <div style={{ lineHeight: 1.8 }}>
             <div>服务器将生成一个 32 字符随机 token，<strong>立即生效</strong>。</div>
-            <div style={{ color: '#94a3b8', marginTop: 6 }}>
+            <div style={{ color: 'var(--am-ink-3)', marginTop: 6 }}>
               · 旧 token 立即失效；所有自动化脚本 / curl 命令需同步更新<br />
               · 浏览器登录态不受影响（走 Session，不依赖 token）
             </div>
@@ -1825,7 +1825,7 @@ function AuthPanel() {
       await load();
       modal.success({
         title: '新 admin token 已生成',
-        icon: <CheckCircleFilled style={{ color: '#22c55e' }} />,
+        icon: <CheckCircleFilled style={{ color: 'var(--am-success)' }} />,
         content: (
           <div>
             <Paragraph type="secondary" style={{ marginTop: 0 }}>
@@ -1869,7 +1869,7 @@ function AuthPanel() {
             <div>· 这里所有变更<strong>立即生效</strong>，无需重启服务。</div>
             <div>· 当前已登录的会话<strong>不会被踢出</strong>——避免误操作把自己锁死；新密码仅作用于下一次登录。</div>
             <div>· <code>admin token</code> 用于 <code>X-Admin-Token</code> 请求头通道（自动化脚本 / curl），轮换会即时影响所有外部脚本。</div>
-            <div style={{ color: '#b91c1c' }}>
+            <div style={{ color: 'var(--am-error-fg)' }}>
               · 修改前请确认有另一种回滚路径（数据库直接改 <code>sys_config</code> 表）。
             </div>
           </div>
@@ -1882,7 +1882,7 @@ function AuthPanel() {
           <Card
             title={
               <span>
-                <KeyOutlined style={{ color: '#3b82f6', marginRight: 6 }} />
+                <KeyOutlined style={{ color: 'var(--am-blue)', marginRight: 6 }} />
                 后台登录账号
               </span>
             }
@@ -1923,7 +1923,7 @@ function AuthPanel() {
           <Card
             title={
               <span>
-                <ThunderboltOutlined style={{ color: '#a855f7', marginRight: 6 }} />
+                <ThunderboltOutlined style={{ color: 'var(--am-purple)', marginRight: 6 }} />
                 X-Admin-Token（自动化通道）
               </span>
             }
@@ -1980,7 +1980,7 @@ function AuthPanel() {
             padding: '12px 20px',
             background: 'rgba(255,255,255,0.92)',
             backdropFilter: 'blur(8px)',
-            border: '1px solid #e2e8f0',
+            border: '1px solid var(--am-border)',
             borderRadius: 10,
             display: 'flex',
             justifyContent: 'space-between',
@@ -2129,7 +2129,7 @@ function AuditPanel() {
                 icon={<KeyOutlined />}
                 onClick={() => toggleReveal(row.id)}
                 style={{
-                  color: revealed.has(row.id) ? '#3b82f6' : '#94a3b8',
+                  color: revealed.has(row.id) ? 'var(--am-blue)' : 'var(--am-ink-3)',
                   padding: '0 4px',
                 }}
               />
@@ -2157,9 +2157,9 @@ function AuditPanel() {
           <Tag
             className="am-break"
             style={{
-              background: '#f1f5f9',
+              background: 'var(--am-surface-sunken)',
               border: 'none',
-              color: '#475569',
+              color: 'var(--am-ink-3)',
               maxWidth: '100%',
               whiteSpace: 'normal',
             }}

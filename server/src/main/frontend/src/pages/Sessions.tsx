@@ -7,11 +7,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchMonitorTargets, fetchSessionAuditDetail, fetchSessions } from '../api/client';
 import type { AiSession, AiSessionAuditDetail, MonitorTarget, PageDto } from '../api/types';
 import SourceFilter from '../components/SourceFilter';
+import StatusDot from '../components/StatusDot';
 import { useSse } from '../hooks/useSse';
 import {
   formatTime,
   formatTokens,
-  statusColor,
   statusLabel,
   targetTypeColor,
   targetTypeLabel,
@@ -341,14 +341,14 @@ export default function Sessions() {
           <Space size={12} wrap>
             {projectName && (
               <Space size={6}>
-                <span style={{ color: '#64748b', fontSize: 13 }}>项目：</span>
+                <span style={{ color: 'var(--am-ink-3)', fontSize: 13 }}>项目：</span>
                 <Tag color="blue" style={{ fontSize: 13 }}>{projectName}</Tag>
                 <Button size="small" type="link" onClick={clearProject}>清除</Button>
               </Space>
             )}
             {userCode && (
               <Space size={6}>
-                <span style={{ color: '#64748b', fontSize: 13 }}>员工工号：</span>
+                <span style={{ color: 'var(--am-ink-3)', fontSize: 13 }}>员工工号：</span>
                 <Tag color="geekblue" style={{ fontSize: 13 }}>{userCode}</Tag>
                 <Button size="small" type="link" onClick={clearUserCode}>清除</Button>
               </Space>
@@ -395,7 +395,7 @@ export default function Sessions() {
                 : '选择精确日期区间后，列表会展示在该区间内有过对话的会话；其消息数 / Token 列也会按区间内消息重算（而不是会话生命周期累计）。'
             }
           >
-            <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+            <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
           </Tooltip>
           {activeOnly && (
             <Tag closable onClose={clearActiveOnly} color="green" style={{ marginInlineEnd: 0 }}>
@@ -411,7 +411,7 @@ export default function Sessions() {
                 checked={includeInvalid}
                 onChange={onIncludeInvalidChange}
               />
-              <span style={{ color: '#64748b', fontSize: 13 }}>显示无效会话</span>
+              <span style={{ color: 'var(--am-ink-3)', fontSize: 13 }}>显示无效会话</span>
             </Space>
           </Tooltip>
           <span className="am-toolbar-spacer" />
@@ -431,9 +431,9 @@ export default function Sessions() {
         size="small"
         title={
           <Space size={8}>
-            <RobotOutlined style={{ color: '#2563eb' }} />
+            <RobotOutlined style={{ color: 'var(--am-brand)' }} />
             <span style={{ fontWeight: 600 }}>AI 会话列表</span>
-            <span style={{ color: '#94a3b8', fontSize: 13, fontWeight: 400 }}>
+            <span style={{ color: 'var(--am-ink-3)', fontSize: 13, fontWeight: 400 }}>
               共 {data?.total ?? 0} 条
               {activeOnly && ' · 仅非空闲'}
               {includeInvalid && ' · 含无效会话'}
@@ -486,15 +486,7 @@ export default function Sessions() {
               // v2.11：当包含无效会话时，状态后面加一个"无效"小 Tag，避免运维误把它当正常会话排查。
               render: (v, r) => (
                 <Space size={6}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                      background: statusColor(v),
-                    }}
-                  />
+                  <StatusDot status={v} />
                   <span>{statusLabel(v)}</span>
                   {r.invalid_reason && (
                     <Tooltip title={
@@ -528,12 +520,12 @@ export default function Sessions() {
               ellipsis: true,
               render: (v, row) => {
                 let sub: React.ReactNode = (
-                  <span style={{ color: '#cbd5e1' }}>非 git 仓库</span>
+                  <span style={{ color: 'var(--am-ink-5)' }}>非 git 仓库</span>
                 );
-                if (row.git_branch) sub = <span style={{ color: '#94a3b8' }}>@{row.git_branch}</span>;
+                if (row.git_branch) sub = <span style={{ color: 'var(--am-ink-3)' }}>@{row.git_branch}</span>;
                 else if (row.repo_url)
                   sub = (
-                    <span style={{ color: '#94a3b8' }} title={row.repo_url}>
+                    <span style={{ color: 'var(--am-ink-3)' }} title={row.repo_url}>
                       {row.repo_url}
                     </span>
                   );
@@ -566,7 +558,7 @@ export default function Sessions() {
                       + ' 标签颜色区分 command / skill / nl_skill / noise。'
                     }
                   >
-                    <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 </Space>
               ),
@@ -574,7 +566,7 @@ export default function Sessions() {
               render: (_, r) => {
                 const hits = r.slash_invocations;
                 if (!hits || hits.length === 0) {
-                  return <span style={{ color: '#94a3b8' }}>—</span>;
+                  return <span style={{ color: 'var(--am-ink-3)' }}>—</span>;
                 }
                 return (
                   <Space size={[4, 4]} wrap>
@@ -604,7 +596,7 @@ export default function Sessions() {
                       + '难度 1–5、完成度、协作模式均为双 judge 合成结果，与「分析报告」口径一致。'
                     }
                   >
-                    <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 </Space>
               ),
@@ -612,11 +604,11 @@ export default function Sessions() {
               render: (_, r) => {
                 const a = r.audit;
                 if (!a) {
-                  return <span style={{ color: '#94a3b8' }}>未审计</span>;
+                  return <span style={{ color: 'var(--am-ink-3)' }}>未审计</span>;
                 }
                 const outcomeLabel = OUTCOME_META[a.outcome]?.label ?? a.outcome;
                 const modeLabel = MODE_META[a.mode]?.label ?? a.mode;
-                const modeColor = MODE_META[a.mode]?.color ?? '#94a3b8';
+                const modeColor = MODE_META[a.mode]?.color ?? 'var(--am-ink-3)';
                 const tip = (
                   <Space direction="vertical" size={0}>
                     <span>难度（合成）：{a.difficulty}</span>
@@ -675,7 +667,7 @@ export default function Sessions() {
                         : '会话生命周期累计的用户/助手消息数；选定时间区间后会切换为窗内值'
                     }
                   >
-                    <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 </Space>
               ),
@@ -686,7 +678,7 @@ export default function Sessions() {
                   return (
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                       <strong>{win}</strong>
-                      <span style={{ color: '#94a3b8', fontSize: 12 }}>
+                      <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
                         {' '}
                         / 累计 {r.user_messages + r.assistant_messages}
                       </span>
@@ -711,7 +703,7 @@ export default function Sessions() {
                         : '会话生命周期累计的 input / output token；选定时间区间后会切换为窗内总和'
                     }
                   >
-                    <InfoCircleOutlined style={{ color: '#94a3b8' }} />
+                    <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                   </Tooltip>
                 </Space>
               ),
@@ -722,7 +714,7 @@ export default function Sessions() {
                   return (
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                       <strong>{formatTokens(winTok)}</strong>
-                      <span style={{ color: '#94a3b8', fontSize: 12 }}>
+                      <span style={{ color: 'var(--am-ink-3)', fontSize: 12 }}>
                         {' '}
                         / 累计 {formatTokens(r.input_tokens + r.output_tokens)}
                       </span>
@@ -801,8 +793,8 @@ export default function Sessions() {
                   margin: 0,
                   padding: 12,
                   borderRadius: 8,
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
+                  background: 'var(--am-surface-sunken)',
+                  border: '1px solid var(--am-border)',
                   maxHeight: 360,
                   overflow: 'auto',
                   whiteSpace: 'pre-wrap',
@@ -816,7 +808,7 @@ export default function Sessions() {
             </div>
           </Space>
         ) : (
-          <div style={{ color: '#94a3b8', textAlign: 'center', padding: 24 }}>
+          <div style={{ color: 'var(--am-ink-3)', textAlign: 'center', padding: 24 }}>
             未能加载评判详情（可能没有审计记录）。
           </div>
         )}

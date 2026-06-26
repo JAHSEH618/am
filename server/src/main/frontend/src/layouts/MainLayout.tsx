@@ -112,7 +112,7 @@ export default function MainLayout() {
             fontWeight: 600,
             fontSize: collapsed ? 14 : 15,
             letterSpacing: collapsed ? 0 : 0.2,
-            color: '#0f172a',
+            color: 'var(--am-ink)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
           }}
@@ -160,7 +160,7 @@ export default function MainLayout() {
               cursor: 'pointer',
               fontSize: 18,
               padding: 6,
-              color: '#64748b',
+              color: 'var(--am-ink-3)',
               borderRadius: 6,
               display: 'inline-flex',
               alignItems: 'center',
@@ -184,7 +184,7 @@ export default function MainLayout() {
               style={{
                 fontSize: 16,
                 fontWeight: 600,
-                color: '#0f172a',
+                color: 'var(--am-ink)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
@@ -196,7 +196,7 @@ export default function MainLayout() {
               <span
                 style={{
                   fontSize: 12,
-                  color: '#94a3b8',
+                  color: 'var(--am-ink-3)',
                   marginTop: 2,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -221,8 +221,8 @@ export default function MainLayout() {
                 <span
                   style={{
                     fontSize: 12,
-                    color: '#475569',
-                    background: '#f1f5f9',
+                    color: 'var(--am-ink-3)',
+                    background: 'var(--am-surface-sunken)',
                     padding: '4px 10px',
                     borderRadius: 999,
                     fontVariantNumeric: 'tabular-nums',
@@ -259,7 +259,7 @@ export default function MainLayout() {
                 size="small"
                 icon={<UserOutlined />}
                 type="text"
-                style={{ color: '#475569' }}
+                style={{ color: 'var(--am-ink-3)' }}
               >
                 {getCurrentUser() || '未登录'}
               </Button>

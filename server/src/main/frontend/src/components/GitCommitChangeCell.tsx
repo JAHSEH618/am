@@ -42,16 +42,16 @@ function DiffBody({
           lineHeight: 1.45,
           overflow: 'auto',
           maxHeight: 'calc(100vh - 180px)',
-          background: '#fafafa',
-          border: '1px solid #f0f0f0',
+          background: 'var(--am-surface-sunken)',
+          border: '1px solid var(--am-border)',
           borderRadius: 6,
         }}
       >
         {patch.split('\n').map((line, i) => {
           let bg: string | undefined;
-          if (line.startsWith('+') && !line.startsWith('+++')) bg = '#ecfdf5';
-          else if (line.startsWith('-') && !line.startsWith('---')) bg = '#fef2f2';
-          else if (line.startsWith('@@')) bg = '#eff6ff';
+          if (line.startsWith('+') && !line.startsWith('+++')) bg = 'var(--am-success-bg)';
+          else if (line.startsWith('-') && !line.startsWith('---')) bg = 'var(--am-error-bg)';
+          else if (line.startsWith('@@')) bg = 'var(--am-brand-bg)';
           return (
             <div
               key={i}
@@ -80,9 +80,9 @@ export function GitCommitChangeCell({ row }: Props) {
 
   const summary = (
     <Text type="secondary">
-      <Text style={{ color: '#16a34a' }}>+{row.lines_added}</Text>
+      <Text style={{ color: 'var(--am-success-fg)' }}>+{row.lines_added}</Text>
       {' / '}
-      <Text style={{ color: '#dc2626' }}>-{row.lines_deleted}</Text>
+      <Text style={{ color: 'var(--am-error-fg)' }}>-{row.lines_deleted}</Text>
     </Text>
   );
 
@@ -124,7 +124,7 @@ export function GitCommitChangeCell({ row }: Props) {
 
   const popoverBody = (
     <div style={{ maxWidth: 480, maxHeight: 360, overflowY: 'auto' }}>
-      <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13, color: '#111827' }}>
+      <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13, color: 'var(--am-ink)' }}>
         文件变更（{paths.length}）
         {row.detail_status && row.detail_status !== 'none' && (
           <Tag style={{ marginLeft: 8 }} color={row.detail_status === 'full' ? 'green' : 'default'}>
@@ -150,14 +150,14 @@ export function GitCommitChangeCell({ row }: Props) {
             }
             style={{
               padding: '8px 0',
-              borderBottom: idx < paths.length - 1 ? '1px solid #f0f0f0' : undefined,
+              borderBottom: idx < paths.length - 1 ? '1px solid var(--am-border)' : undefined,
               cursor: clickable ? 'pointer' : 'default',
             }}
           >
             <div style={{ fontSize: 12, marginBottom: 4 }}>
-              <Text style={{ color: '#16a34a', fontWeight: 500 }}>+{p.lines_added}</Text>
-              <Text style={{ color: '#9ca3af', margin: '0 4px' }}>/</Text>
-              <Text style={{ color: '#dc2626', fontWeight: 500 }}>-{p.lines_deleted}</Text>
+              <Text style={{ color: 'var(--am-success-fg)', fontWeight: 500 }}>+{p.lines_added}</Text>
+              <Text style={{ color: 'var(--am-ink-4)', margin: '0 4px' }}>/</Text>
+              <Text style={{ color: 'var(--am-error-fg)', fontWeight: 500 }}>-{p.lines_deleted}</Text>
               {clickable && (
                 <Text type="secondary" style={{ marginLeft: 8, fontSize: 11 }}>
                   点击查看 diff
@@ -168,7 +168,7 @@ export function GitCommitChangeCell({ row }: Props) {
               style={{
                 fontSize: 12,
                 lineHeight: 1.5,
-                color: clickable ? '#2563eb' : '#374151',
+                color: clickable ? 'var(--am-brand)' : 'var(--am-ink-2)',
                 wordBreak: 'break-all',
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               }}

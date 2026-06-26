@@ -7,6 +7,7 @@ import ReactECharts from 'echarts-for-react';
 import { fetchModelDistribution, fetchModelHeatmap } from '../api/client';
 import type { ModelDistribution, ModelHeatmap } from '../api/types';
 import { formatTokens } from '../utils/format';
+import { ink, indigo, semantic } from '../styles/tokens';
 import Tools from './Tools';
 
 /**
@@ -96,7 +97,7 @@ export default function ModelsTools() {
           type: 'text',
           left: 'center',
           top: 'middle',
-          style: { text: '暂无数据', fill: '#94a3b8', fontSize: 14 },
+          style: { text: '暂无数据', fill: ink[3], fontSize: 14 },
         },
         xAxis: { type: 'value', show: false },
         yAxis: { type: 'category', show: false, data: [] },
@@ -138,7 +139,7 @@ export default function ModelsTools() {
           overflow: 'truncate',
           ellipsis: '…',
           fontSize: 11,
-          color: '#475569',
+          color: ink[3],
         },
       },
       series: [
@@ -148,7 +149,7 @@ export default function ModelsTools() {
           stack: 'tokens',
           barMaxWidth: 22,
           data: rows.map((d) => d.input_tokens),
-          itemStyle: { color: '#2563eb' },
+          itemStyle: { color: indigo[600] },
         },
         {
           name: 'output',
@@ -156,7 +157,7 @@ export default function ModelsTools() {
           stack: 'tokens',
           barMaxWidth: 22,
           data: rows.map((d) => d.output_tokens),
-          itemStyle: { color: '#10b981' },
+          itemStyle: { color: semantic.success.base },
         },
       ],
     };
@@ -189,7 +190,8 @@ export default function ModelsTools() {
         orient: 'horizontal',
         left: 'center',
         bottom: 0,
-        inRange: { color: ['#eef2ff', '#6366f1', '#1e3a8a'] },
+        // 燃烧热力图渐变沿品牌 indigo 色阶（浅→中→深），深端用 indigo[900] 替代原 #1e3a8a 收敛到品牌色阶
+        inRange: { color: [indigo[50], indigo[500], indigo[900]] },
         formatter: (v: number) => formatTokens(v),
       },
       series: [{
@@ -197,7 +199,7 @@ export default function ModelsTools() {
         type: 'heatmap',
         data: heatmap.cells.map((c) => [c.day_index, c.model_index, c.tokens]),
         label: { show: false },
-        emphasis: { itemStyle: { borderColor: '#1e293b', borderWidth: 1 } },
+        emphasis: { itemStyle: { borderColor: ink[1], borderWidth: 1 } },
       }],
     };
   }, [heatmap]);

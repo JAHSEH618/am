@@ -259,10 +259,10 @@ export default function Analysis() {
   const actionsLocked = reportBusy || triggering;
 
   return (
-    <Layout style={{ background: '#f8fafc', minHeight: 'calc(100vh - 64px)' }}>
-      <Sider width={220} theme="light" style={{ background: '#fff', borderRight: '1px solid #e8edf3' }}>
+    <Layout style={{ background: 'var(--am-surface-sunken)', minHeight: 'calc(100vh - 64px)' }}>
+      <Sider width={220} theme="light" style={{ background: 'var(--am-bg-card)', borderRight: '1px solid var(--am-border)' }}>
         <div style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <Text strong style={{ fontSize: 13, color: '#334155' }}>生成报告</Text>
+          <Text strong style={{ fontSize: 13, color: 'var(--am-ink-2)' }}>生成报告</Text>
           <Space direction="vertical" style={{ width: '100%', marginTop: 10 }} size={8}>
             <RangePicker
               value={range}
@@ -307,13 +307,13 @@ export default function Analysis() {
             style={{
               marginTop: 20,
               paddingTop: 14,
-              borderTop: '1px solid #eef2f6',
+              borderTop: '1px solid var(--am-border-subtle)',
               flex: 1,
               minHeight: 0,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-              <Text strong style={{ fontSize: 12, color: '#64748b', flex: 1 }}>历史</Text>
+              <Text strong style={{ fontSize: 12, color: 'var(--am-ink-3)', flex: 1 }}>历史</Text>
               <Button
                 size="small"
                 type="text"
@@ -339,8 +339,8 @@ export default function Analysis() {
                   borderRadius: 6,
                   padding: '6px 8px',
                   marginBottom: 4,
-                  border: active ? '1px solid #bfdbfe' : '1px solid transparent',
-                  background: active ? '#eff6ff' : 'transparent',
+                  border: active ? '1px solid var(--am-brand-border)' : '1px solid transparent',
+                  background: active ? 'var(--am-brand-bg)' : 'transparent',
                 }}
                 actions={[
                   <Popconfirm
@@ -473,25 +473,25 @@ export default function Analysis() {
             <div
               style={{
                 marginTop: 20,
-                border: '1px solid #e8edf3',
-                borderRadius: 10,
+                border: '1px solid var(--am-border)',
+                borderRadius: 12,
                 overflow: 'hidden',
-                background: '#fff',
+                background: 'var(--am-bg-card)',
               }}
             >
               <div
                 style={{
                   padding: '12px 16px',
-                  borderBottom: '1px solid #eef2f6',
+                  borderBottom: '1px solid var(--am-border-subtle)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 12,
                   flexWrap: 'wrap',
-                  background: '#fafbfc',
+                  background: 'var(--am-surface-sunken)',
                 }}
               >
-                <Text strong style={{ fontSize: 13, color: '#334155' }}>员工数据列表</Text>
+                <Text strong style={{ fontSize: 13, color: 'var(--am-ink-2)' }}>员工数据列表</Text>
                 <Input.Search
                   placeholder="按姓名 / 工号搜索"
                   size="small"
@@ -639,7 +639,7 @@ function UserListTable({
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', fontSize: 13 }}>
         <thead>
-          <tr style={{ color: '#64748b', borderBottom: '1px solid #e2e8f0' }}>
+          <tr style={{ color: 'var(--am-ink-3)', borderBottom: '1px solid var(--am-border)' }}>
             <th style={{ textAlign: 'left', padding: '8px 6px' }}>员工</th>
             <th><MetricLabel name="composite_bucket" /></th>
             <th><MetricLabel name="ai_active_hours_list" /></th>
@@ -655,7 +655,7 @@ function UserListTable({
           {pagedUsers.map((u) => (
               <tr
                 key={u.user_code}
-                style={{ borderBottom: '1px solid #f1f5f9', cursor: 'pointer' }}
+                style={{ borderBottom: '1px solid var(--am-border-subtle)', cursor: 'pointer' }}
                 onClick={() => onPick(u)}
               >
                 <td style={{ padding: '8px 6px' }}>

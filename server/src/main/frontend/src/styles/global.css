@@ -10,6 +10,11 @@
  */
 
 :root {
+  /* ===================================================================
+   * 设计令牌 —— CSS 侧镜像。数值与 src/styles/tokens.ts 保持一致，改色两处一起改。
+   * 规范见 DESIGN.md。
+   * =================================================================== */
+
   /* 字号 scale，组件里用 var(--am-fs-xs) 等引用；与 AntD token 字号一致 */
   --am-fs-xs: 12px;
   --am-fs-sm: 13px;
@@ -17,6 +22,15 @@
   --am-fs-lg: 16px;
   --am-fs-xl: 20px;
   --am-fs-2xl: 28px;
+  /* 表达式高级感：Hero 数字展示档 */
+  --am-fs-display-sm: 30px;
+  --am-fs-display: 36px;
+  --am-fs-display-lg: 44px;
+
+  /* 字重 */
+  --am-fw-medium: 500;
+  --am-fw-semibold: 600;
+  --am-fw-bold: 680;
 
   /* 间距 scale (8pt rhythm)，需要在非 antd 元素上保持节奏感时使用 */
   --am-sp-1: 4px;
@@ -25,26 +39,82 @@
   --am-sp-4: 16px;
   --am-sp-5: 24px;
   --am-sp-6: 32px;
+  --am-sp-8: 48px;
 
-  /* 语义状态色（与 format.ts statusColor 对齐，方便 css 也能引用） */
+  /* —— 品牌主色阶 (indigo) —— 单一强调色，与 logo / 字标同源 —— */
+  --am-indigo-50: #eef2ff;
+  --am-indigo-100: #e0e7ff;
+  --am-indigo-200: #c7d2fe;
+  --am-indigo-300: #a5b4fc;
+  --am-indigo-400: #818cf8;
+  --am-indigo-500: #6366f1;
+  --am-indigo-600: #4f46e5; /* primary */
+  --am-indigo-700: #4338ca;
+  --am-indigo-800: #3730a3;
+  --am-brand: #4f46e5;
+  --am-brand-fg: #4338ca;
+  --am-brand-bg: #eef2ff;
+  --am-brand-border: #c7d2fe;
+
+  /* 语义状态色：base（圆点/描边）+ fg（达标文字）+ bg（浅底）+ border（浅描边） */
   --am-color-idle: #94a3b8;
   --am-color-running: #6366f1;
-  --am-color-success: #10b981;
-  --am-color-warn: #f59e0b;
-  --am-color-error: #ef4444;
-  --am-color-info: #2563eb;
+  --am-success: #10b981;
+  --am-success-fg: #047857;
+  --am-success-bg: #ecfdf5;
+  --am-success-border: #a7f3d0;
+  --am-warning: #f59e0b;
+  --am-warning-fg: #b45309;
+  --am-warning-bg: #fffbeb;
+  --am-warning-border: #fde68a;
+  --am-error: #ef4444;
+  --am-error-fg: #dc2626;
+  --am-error-bg: #fef2f2;
+  --am-error-border: #fecaca;
+  --am-info: #6366f1; /* was #2563eb → 收敛到品牌靛 */
+  --am-info-fg: #4338ca;
+
+  /* 分类强调色（消息角色 / 分区图标 / 图表系列；非状态语义）—— 与 tokens.ts accent 同源 */
+  --am-sky: #0ea5e9;
+  --am-sky-fg: #0369a1;
+  --am-sky-bg: #f0f9ff;
+  --am-sky-border: #bae6fd;
+  --am-violet: #7c3aed;
+  --am-violet-fg: #6d28d9;
+  --am-violet-bg: #f5f3ff;
+  --am-violet-border: #ddd6fe;
+  --am-purple: #a855f7;
+  --am-purple-fg: #7e22ce;
+  --am-purple-bg: #faf5ff;
+  --am-purple-border: #e9d5ff;
+  --am-blue: #3b82f6;
+  --am-blue-fg: #1d4ed8;
+  --am-blue-bg: #eff6ff;
+  --am-blue-border: #bfdbfe;
+  --am-rose: #f43f5e;
+  --am-rose-fg: #e11d48;
+  --am-rose-bg: #fff1f2;
+  --am-rose-border: #fecdd3;
+  /* 兼容旧引用名 */
+  --am-color-success: var(--am-success);
+  --am-color-warn: var(--am-warning);
+  --am-color-error: var(--am-error);
+  --am-color-info: var(--am-info);
 
   /* 表面分层：从最低到最高 */
   --am-bg-page: #f4f5f8;
   --am-bg-card: #ffffff;
+  --am-surface-sunken: #f7f8fa; /* 第二中性层：工具栏 / 过滤条 / 表头区 */
   --am-border-subtle: rgba(15, 23, 42, 0.06);
-  --am-border-strong: rgba(15, 23, 42, 0.12);
+  --am-border: rgba(15, 23, 42, 0.10);
+  --am-border-strong: rgba(15, 23, 42, 0.14);
 
-  /* —— Apple-native v2：墨色层级（高对比，行文 ≥ 4.5:1）—— */
+  /* —— Apple-native：墨色层级（高对比，行文 ≥ 4.5:1）—— */
   --am-ink: #1d1f26;            /* 标题 / 数据：近黑 */
   --am-ink-2: #44464f;          /* 正文 / 主要标签 ≈ 8.4:1 */
   --am-ink-3: #6a6c75;          /* 次级标签 / 说明 ≈ 4.9:1 */
-  --am-ink-4: #8a8c94;          /* 仅用于大字/弱提示（不承载关键信息）*/
+  --am-ink-4: #8a8c94;          /* 弱提示 / 大字辅文（不承载关键信息）*/
+  --am-ink-5: #b3b5bd;          /* 占位符 / 禁用 / 「—」空值 */
 
   /* —— 苹果式连续圆角 —— */
   --am-r-sm: 8px;
@@ -64,9 +134,11 @@
   --am-shadow-pop: 0 8px 24px -6px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08);
   --am-inner-hi: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 
-  /* —— 苹果缓动 + 时长 —— */
+  /* —— 苹果缓动 + 时长（产品态 150–250ms）—— */
   --am-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --am-dur-fast: 0.14s;
   --am-dur: 0.2s;
+  --am-dur-slow: 0.32s;
 
   /* —— 品牌强调（与 BrandIcon 同源的靛→紫渐变，仅供字标这一处）—— */
   --am-brand-grad: linear-gradient(118deg, #4f46e5 0%, #7c3aed 52%, #6366f1 100%);
@@ -134,15 +206,15 @@
     transform var(--am-dur) var(--am-ease), border-color var(--am-dur) var(--am-ease);
 }
 
-/* 主按钮：苹果式高光 + 柔影，hover 微亮、active 微沉 */
+/* 主按钮：苹果式高光 + 柔影，hover 微亮、active 微沉（靛紫主色调） */
 .ant-btn-primary {
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  box-shadow: 0 1px 2px rgba(79, 70, 229, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.22);
   transition: transform var(--am-dur) var(--am-ease), box-shadow var(--am-dur) var(--am-ease),
     filter var(--am-dur) var(--am-ease);
 }
 .ant-btn-primary:hover {
   filter: brightness(1.06);
-  box-shadow: 0 4px 12px -2px rgba(37, 99, 235, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: 0 6px 16px -3px rgba(79, 70, 229, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 .ant-btn-primary:active {
   transform: translateY(0.5px);
@@ -165,6 +237,20 @@
 .ant-tag,
 .ant-btn {
   transition-timing-function: var(--am-ease) !important;
+}
+
+/* 键盘可达性：自定义可点元素（Hero 卡 / Header 折叠按钮等非 AntD 控件）统一品牌色
+   focus-visible 环——仅键盘 Tab 出现，鼠标点击不出现；AntD 自带控件保留其原生 focus，不叠加。 */
+.am-clickable:focus-visible,
+[role='button']:focus-visible:not(.ant-btn):not(.ant-switch):not(.ant-segmented-item):not(.ant-tag) {
+  outline: 2px solid var(--am-brand);
+  outline-offset: 2px;
+  border-radius: var(--am-r-md);
+}
+
+/* 文本选区：品牌靛紫淡调，呼应整体强调色 */
+::selection {
+  background: rgba(79, 70, 229, 0.16);
 }
 
 /* 无障碍：尊重"减少动态"——关掉过渡/动画，避免眩晕 */
@@ -283,6 +369,35 @@ body,
   box-shadow: var(--am-shadow-1);
 }
 
+/* ===== 统一状态圆点（components/StatusDot.tsx）===== */
+.am-status-dot {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+}
+/* 活跃脉冲：以点色向外扩散的柔光环；reduced-motion 由全局兜底关闭 */
+.am-status-dot--pulse {
+  position: relative;
+}
+.am-status-dot--pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  animation: am-dot-pulse 1.8s var(--am-ease) infinite;
+}
+@keyframes am-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--am-dot-color, currentColor) 50%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--am-dot-color, currentColor) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 /* Dashboard：顶部 4 张 Hero 卡同高（列 stretch + 卡片撑满） */
 .am-dashboard-hero-row {
   align-items: stretch;
@@ -295,45 +410,65 @@ body,
   width: 100%;
 }
 
-/* Hero metric：dashboard 顶部 4 个核心指标卡的容器（强语义色背景 + 大字号） */
+/* Hero metric：dashboard 顶部 4 个核心指标卡（表达式高级感）。
+ * 设计取舍：底色回白、数字回近黑（监控台读数要被信任，不在彩底上读数）；语义色只活在
+ *   「图标 chip + 角落极淡晕染 + 状态文字」三处。比旧版四色糖果卡更高级，hierarchy 也更利落：
+ *   36px/680 的近黑数字独占视觉重心，标签与脚注退到 ink-3。 */
 .am-hero {
   position: relative;
   overflow: hidden;
-  min-height: 132px;
+  min-height: 138px;
   border-radius: var(--am-r-lg) !important; /* 苹果连续大圆角，盖过内联 8 */
-  box-shadow: var(--am-shadow-1), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  background: var(--am-bg-card);
+  box-shadow: var(--am-shadow-1), var(--am-inner-hi);
 }
-/* 顶部柔光内沿：苹果材质"被照亮"的高光边，叠在语义底色之上 */
+/* 角落极淡的语义色晕染（--am-hero-tint 由 HeroCard 注入），暗示"这张卡属于哪个指标" */
 .am-hero::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: radial-gradient(120% 82% at 12% -12%, rgba(255, 255, 255, 0.55), transparent 56%);
+  background: radial-gradient(130% 90% at 100% 0%, var(--am-hero-tint, transparent), transparent 62%);
+  opacity: 0.6;
   pointer-events: none;
 }
 .am-hero > .ant-card-body {
-  position: relative; /* 抬到高光之上 */
+  position: relative; /* 抬到晕染之上 */
 }
-.am-hero .am-hero-icon {
+.am-hero-extra {
   position: absolute;
-  right: 14px;
   top: 12px;
-  opacity: 0.16;
-  font-size: 58px;
-  pointer-events: none;
+  right: 12px;
+  z-index: 1;
+}
+.am-hero-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.am-hero-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 18px;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 .am-hero-label {
   font-size: var(--am-fs-sm);
   color: var(--am-ink-3);
-  font-weight: 500;
-  margin-bottom: 8px;
+  font-weight: var(--am-fw-semibold);
+  letter-spacing: 0.01em;
 }
 .am-hero-value {
-  font-size: 30px;
-  font-weight: 650;
+  font-size: var(--am-fs-display);
+  font-weight: var(--am-fw-bold);
   color: var(--am-ink);
-  line-height: 1.08;
-  letter-spacing: -0.022em;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
 .am-hero-suffix {
@@ -341,13 +476,14 @@ body,
   color: var(--am-ink-3);
   margin-left: 6px;
   font-weight: 500;
+  letter-spacing: 0;
 }
 .am-hero-subnote {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: var(--am-fs-sm);
   color: var(--am-ink-3);
   font-weight: 400;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 /* metric list：次级指标紧凑形态（一行一个） */
