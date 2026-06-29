@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.am'
-version = '1.0.18'
+version = '1.0.19'
 
 java {
     toolchain {

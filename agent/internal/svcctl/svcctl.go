@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/procutil"
 )
 
 const (
@@ -114,8 +116,8 @@ func startSystemd() error {
 // ---------- Windows ----------
 
 func stopWindowsTask() error {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		fmt.Sprintf("Stop-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue", WindowsTaskName))
+	cmd := procutil.Hidden(exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf("Stop-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue", WindowsTaskName)))
 	_ = cmd.Run()
 	// Windows 上 .exe 在被 stop 后还可能短暂被锁；给它 1 秒缓冲让进程退干净。
 	time.Sleep(1 * time.Second)
@@ -123,8 +125,8 @@ func stopWindowsTask() error {
 }
 
 func startWindowsTask() error {
-	out, err := exec.Command("powershell", "-NoProfile", "-Command",
-		fmt.Sprintf("Start-ScheduledTask -TaskName '%s'", WindowsTaskName)).CombinedOutput()
+	out, err := procutil.Hidden(exec.Command("powershell", "-NoProfile", "-Command",
+		fmt.Sprintf("Start-ScheduledTask -TaskName '%s'", WindowsTaskName))).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("Start-ScheduledTask failed: %v: %s", err, string(out))
 	}
@@ -180,6 +182,6 @@ func removeWindowsAutostart() error {
 			"Unregister-ScheduledTask -TaskName '%s' -Confirm:$false; "+
 			"Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'aiwatchd'",
 		WindowsTaskName)
-	_ = exec.Command("powershell", "-NoProfile", "-Command", ps).Run()
+	_ = procutil.Hidden(exec.Command("powershell", "-NoProfile", "-Command", ps)).Run()
 	return nil
 }

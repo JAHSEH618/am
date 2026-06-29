@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/am/aiwatch-agent/internal/procutil"
 )
 
 const maxMessageBodyLen = 8192
@@ -206,7 +208,7 @@ func patchMapKey(e nameStatusEntry) string {
 }
 
 func loadMessageBody(repoDir, hash string) string {
-	out, err := exec.Command("git", "-C", repoDir, "show", "-s", "--format=%B", hash).Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", repoDir, "show", "-s", "--format=%B", hash)).Output()
 	if err != nil {
 		return ""
 	}
@@ -214,7 +216,7 @@ func loadMessageBody(repoDir, hash string) string {
 }
 
 func loadParents(repoDir, hash string) ([]string, bool) {
-	out, err := exec.Command("git", "-C", repoDir, "rev-list", "--parents", "-n", "1", hash).Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", repoDir, "rev-list", "--parents", "-n", "1", hash)).Output()
 	if err != nil {
 		return nil, false
 	}
@@ -226,8 +228,8 @@ func loadParents(repoDir, hash string) ([]string, bool) {
 }
 
 func loadNameStatus(repoDir, hash string) []nameStatusEntry {
-	out, err := exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false",
-		"diff-tree", "--no-commit-id", "--name-status", "-r", hash).Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false",
+		"diff-tree", "--no-commit-id", "--name-status", "-r", hash)).Output()
 	if err != nil {
 		return nil
 	}
@@ -264,8 +266,8 @@ func loadPatchesByPath(repoDir, hash string, contextLines int) map[string]string
 	if contextLines <= 0 {
 		contextLines = DefaultPatchContextLines
 	}
-	out, err := exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false",
-		"show", "--no-color", fmt.Sprintf("-U%d", contextLines), "--format=", hash).Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", repoDir, "-c", "core.quotepath=false",
+		"show", "--no-color", fmt.Sprintf("-U%d", contextLines), "--format=", hash)).Output()
 	if err != nil {
 		return map[string]string{}
 	}

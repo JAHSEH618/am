@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/am/aiwatch-agent/internal/monitor"
+	"github.com/am/aiwatch-agent/internal/procutil"
 )
 
 // NormalizeAuthorEmail 将 Git author_email 规范化（trim + 全小写），与文档 AllowedEmails 判定一致。
@@ -21,7 +22,7 @@ func NormalizeAuthorEmail(s string) string {
 
 // effectiveGitEmail 读取仓库解析后的 user.email（不设 --global，由 Git 按 local/global 规则解析）。
 func effectiveGitEmail(repoDir string) string {
-	out, err := exec.Command("git", "-C", repoDir, "config", "user.email").Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", repoDir, "config", "user.email")).Output()
 	if err != nil {
 		return ""
 	}
@@ -64,7 +65,7 @@ func scanRepo(repoDir, repoURL, sinceHash string, lim Limits) ([]Commit, string,
 		args = append(args, "--since="+since)
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := procutil.Hidden(exec.Command("git", args...))
 	out, err := cmd.Output()
 	if err != nil {
 		// sinceHash 不在历史里（rebase / 重写）会导致 fatal: bad revision；
@@ -163,7 +164,7 @@ func parseLog(blob, repoURL, branch string, maxPaths int) []Commit {
 }
 
 func currentBranch(repoDir string) string {
-	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", repoDir, "rev-parse", "--abbrev-ref", "HEAD")).Output()
 	if err != nil {
 		return ""
 	}

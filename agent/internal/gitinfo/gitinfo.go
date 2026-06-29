@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/procutil"
 )
 
 // Info 描述 Git 项目识别结果。
@@ -75,7 +77,7 @@ func TopLevel(dir string) string {
 func runGit(dir string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := procutil.Hidden(exec.CommandContext(ctx, "git", args...))
 	if dir != "" {
 		cmd.Dir = dir
 	}

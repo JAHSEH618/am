@@ -93,7 +93,30 @@ type Reporter struct {
 	dedupeReplayStreak int
 	// uncappedTail 本 tick 因 cap 截断而未发完的 session 游标候选（key = provider:sessionID）。
 	uncappedTail map[string]MsgCursor
+
+	// v1.0.19 设备心跳解耦：让"在线状态"不被任何慢 provider（如重度用户 cursor 全量扫描，单 tick 可达数分钟）
+	// 阻塞——单独一个 goroutine 按 heartbeatInterval 仅上报设备态刷新 last_seen，数据报文仍由 tickOnce 正常上报。
+	//
+	// userCode 不可变快照（cfg.UserCode 永不变），供 heartbeat 计算 HostHash，避免读 r.cfg 竞态。
+	userCode string
+	// creds 是 agent 凭证的原子快照。tickOnce 所在 goroutine 经 ensureRegistered/handleReportError 改 r.cfg，
+	// heartbeat goroutine 只读这里，避免与 r.cfg 指针/字段写入竞态。
+	creds atomic.Pointer[agentCreds]
+	// lastAccount 最近一次非空账户信息（如 cursor 邮箱/档位），供心跳复用，避免心跳清掉设备态账户字段。
+	lastAccount atomic.Pointer[monitor.Account]
+	// lastReportUnix 最近一次成功上报（数据 tick 或心跳）的 Unix 秒，用于心跳去抖（刚报过就跳过）。
+	lastReportUnix atomic.Int64
 }
+
+// agentCreds 是 agent 凭证的不可变快照，配合 atomic.Pointer 让 heartbeat goroutine 无锁一致读取。
+type agentCreds struct {
+	id     string
+	secret string
+}
+
+// heartbeatInterval 设备心跳间隔：远小于服务端在线窗口（默认 300s），保证慢 provider 拖慢数据 tick 时
+// 设备仍判定在线。v1.0.19。
+const heartbeatInterval = 60 * time.Second
 
 // New 构造一个 Reporter。游标 / outbox 任一加载失败时降级为"无断点续传"模式继续运行
 // （记录 warn，不阻断 reporter 启动）。
@@ -123,7 +146,9 @@ func New(cfg *config.Config, registry *monitor.Registry, agentVersion, binaryHas
 		binaryHash:   binaryHash,
 		cursors:      cursors,
 		outbox:       outbox,
+		userCode:     cfg.UserCode,
 	}
+	r.creds.Store(&agentCreds{id: cfg.AgentID, secret: cfg.AgentSecret})
 	if cursors.IsEmpty() {
 		r.bootstrap = true
 		applyLookback(registry, monitor.BootstrapLookback)
@@ -182,6 +207,11 @@ func (r *Reporter) Run(ctx context.Context) error {
 	fast := time.Duration(r.activeIntervalMs.Load()) * time.Millisecond
 	logger.Infof("reporter started: interval=%s active_interval=%s report_timeout=%s providers=%d installed=%d %v registered=%v cursors=%d outbox_pending=%d bootstrap=%v",
 		interval, fast, r.cfg.ReportTimeout(), len(all), len(installed), installed, r.cfg.IsRegistered(), r.cursors.Size(), pending, r.bootstrap)
+
+	// v1.0.19 设备心跳解耦：独立 goroutine 按 heartbeatInterval 仅上报设备态刷新 last_seen，
+	// 使"在线状态"不被慢 provider 拖累（如重度 cursor 用户单 tick 数分钟、首 tick bootstrap 可达数十分钟）。
+	// 在首 tick 之前启动，正好覆盖耗时最长的 bootstrap 首扫。
+	go r.runHeartbeat(ctx)
 
 	if err := r.tickOnce(ctx); err != nil {
 		logger.Warnf("first report failed: %v", err)
@@ -310,6 +340,7 @@ func (r *Reporter) ensureRegistered(ctx context.Context) error {
 		return fmt.Errorf("register: %w", err)
 	}
 	r.cfg = cfg2
+	r.creds.Store(&agentCreds{id: cfg2.AgentID, secret: cfg2.AgentSecret})
 	return nil
 }
 
@@ -328,9 +359,79 @@ func (r *Reporter) handleReportError(err error) {
 		r.cfg.AgentID)
 	r.cfg.AgentID = ""
 	r.cfg.AgentSecret = ""
+	r.creds.Store(&agentCreds{})
 	if saveErr := config.Save(r.cfg); saveErr != nil {
 		logger.Warnf("save config after AGENT_NOT_FOUND failed (will still retry in-memory): %v", saveErr)
 	}
+}
+
+// runHeartbeat 是与采集解耦的设备心跳循环：每 heartbeatInterval 单独上报一次"仅设备态"的报文刷新
+// last_seen，使设备在线判定不被任何慢 provider 阻塞。数据报文仍由 tickOnce 正常上报；心跳只兜底在线。v1.0.19。
+func (r *Reporter) runHeartbeat(ctx context.Context) {
+	t := time.NewTicker(heartbeatInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			r.sendHeartbeat(ctx)
+		}
+	}
+}
+
+// sendHeartbeat 上报一次"空 monitors + 设备态"的报文。失败仅 Debug，不入 outbox、不动游标——
+// 心跳是尽力而为的在线兜底，真正的数据与重试由 tickOnce / outbox 负责。
+func (r *Reporter) sendHeartbeat(ctx context.Context) {
+	// 刚有过成功上报（数据 tick 或上次心跳）就跳过，避免冗余 POST。
+	if last := r.lastReportUnix.Load(); last > 0 && time.Since(time.Unix(last, 0)) < heartbeatInterval {
+		return
+	}
+	c := r.creds.Load()
+	if c == nil || c.id == "" || c.secret == "" {
+		return // 未注册：注册交给数据 tick 的 ensureRegistered，心跳不驱动注册
+	}
+	info, err := device.Collect(r.userCode)
+	if err != nil {
+		logger.Debugf("heartbeat: collect device failed: %v", err)
+		return
+	}
+	state := &deviceStateDto{
+		OSType:       info.OSType,
+		Hostname:     info.Hostname,
+		HostHash:     info.HostHash,
+		LocalIP:      info.LocalIP,
+		GitUserName:  info.GitUserName,
+		GitUserEmail: info.GitUserEmail,
+	}
+	if a := r.lastAccount.Load(); a != nil && a.Provider == "cursor" {
+		state.CursorEmail = a.Email
+		state.CursorMembershipType = a.MembershipType
+		state.CursorSubscriptionStat = a.SubscriptionStatus
+		state.CursorSignUpType = a.SignUpType
+	}
+	req := reportRequest{
+		AgentID:      c.id,
+		AgentVersion: r.agentVersion,
+		BinaryHash:   r.binaryHash,
+		CapturedAt:   monitor.Now(),
+		DeviceState:  state,
+		Monitors:     []monitor.Snapshot{},
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return
+	}
+	body, encoding, err := maybeCompress(raw)
+	if err != nil {
+		body, encoding = raw, ""
+	}
+	if _, err := r.client.Report(ctx, c.id, c.secret, body, encoding); err != nil {
+		logger.Debugf("heartbeat failed (data tick will cover): %v", err)
+		return
+	}
+	r.lastReportUnix.Store(time.Now().Unix())
+	logger.Debugf("heartbeat ok (decoupled, host=%s)", info.HostHash)
 }
 
 // reportRequest 与服务端 AgentReportRequest 对齐（snake_case）。
@@ -471,6 +572,11 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 		state.CursorSubscriptionStat = account.SubscriptionStatus
 		state.CursorSignUpType = account.SignUpType
 	}
+	// 缓存非空账户给解耦心跳复用，避免心跳上报把设备态账户字段清空（v1.0.19）。
+	if !account.IsZero() {
+		acct := account
+		r.lastAccount.Store(&acct)
+	}
 
 	req := reportRequest{
 		AgentID:      r.cfg.AgentID,
@@ -528,6 +634,8 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	}
 
 	r.mergeMonitorPolicy(summary)
+	// 记录成功上报时刻，供解耦心跳去抖（刚有数据 tick 落地就不必再补心跳）。v1.0.19。
+	r.lastReportUnix.Store(time.Now().Unix())
 
 	// 3) 上报成功：把暂存的游标 commit 到内存 + 落盘
 	r.commitPendingCursors()

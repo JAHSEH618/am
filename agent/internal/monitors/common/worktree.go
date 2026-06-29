@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/am/aiwatch-agent/internal/procutil"
 )
 
 // DetectWorktree 判断 path 是否为 git worktree，并在确认时返回主仓库根目录。
@@ -31,7 +33,7 @@ func DetectWorktree(path string) (isWorktree bool, mainRepo string) {
 	if path == "" {
 		return false, ""
 	}
-	out, err := exec.Command("git", "-C", path, "rev-parse", "--git-dir").Output()
+	out, err := procutil.Hidden(exec.Command("git", "-C", path, "rev-parse", "--git-dir")).Output()
 	if err != nil {
 		return false, ""
 	}

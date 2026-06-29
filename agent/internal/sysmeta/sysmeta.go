@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/procutil"
 )
 
 var (
@@ -152,7 +154,7 @@ func GlobalGitUser() GitUser {
 func runGit(args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", args...).Output()
+	out, err := procutil.Hidden(exec.CommandContext(ctx, "git", args...)).Output()
 	if err != nil {
 		return ""
 	}
