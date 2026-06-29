@@ -3,6 +3,7 @@
 package cursor
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -73,9 +74,9 @@ type sessionRef struct {
 // <p>cutoff 字符串格式选 "2006-01-02T15:04:05.000Z"：与 cursor JS 端 Date.toISOString() 输出
 // 严格一致，ISO 8601 + UTC + 毫秒精度，可直接做 lex 比较代替时间戳数值比较。
 // bubble.createdAt 大约 1.4% 缺失，缺的 row json_extract NULL 比较为 NULL 自动被丢弃。
-func queryRecentSessions(db *sql.DB, cutoff time.Time) ([]sessionRef, error) {
+func queryRecentSessions(ctx context.Context, db *sql.DB, cutoff time.Time) ([]sessionRef, error) {
 	cutoffStr := cutoff.UTC().Format("2006-01-02T15:04:05.000Z")
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT substr(key, 10, 36) AS sid,
 		       MAX(json_extract(value, '$.createdAt')) AS last_at
 		FROM cursorDiskKV
@@ -105,4 +106,52 @@ func queryRecentSessions(db *sql.DB, cutoff time.Time) ([]sessionRef, error) {
 
 func openStateDBRO(path string) (*sql.DB, error) {
 	return sql.Open("sqlite", path+"?mode=ro")
+}
+
+// queryMaxRowid 返回 cursorDiskKV 的最大 rowid（O(log n)，走 rowid B 树末端）。
+// WITHOUT ROWID 表会报 "no such column: rowid"，调用方据此永久回退全量扫描。v1.2.0。
+func queryMaxRowid(ctx context.Context, db *sql.DB) (int64, error) {
+	var max sql.NullInt64
+	if err := db.QueryRowContext(ctx, "SELECT MAX(rowid) FROM cursorDiskKV").Scan(&max); err != nil {
+		return 0, err
+	}
+	return max.Int64, nil // 空表 → invalid → 0
+}
+
+// bubbleRow 是 queryBubblesAfter 的输出：一条新增 bubble 的 (rowid, 会话 ID, 创建时间)。
+type bubbleRow struct {
+	rowid int64
+	sid   string
+	at    time.Time
+}
+
+// queryBubblesAfter 增量扫描：只读 rowid 大于 afterRowid 的新 bubble 行。
+//
+// <p>性能：rowid > ? 走 rowid B 树范围扫，只触达自上次扫描以来新增的行（通常个位数），
+// 配合 key LIKE 'bubbleId:%' 过滤，整体毫秒级——取代每 tick 对全部 bubble 的全表 json_extract。
+func queryBubblesAfter(ctx context.Context, db *sql.DB, afterRowid int64) ([]bubbleRow, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT rowid,
+		       substr(key, 10, 36) AS sid,
+		       json_extract(value, '$.createdAt') AS created_at
+		FROM cursorDiskKV
+		WHERE rowid > ? AND key LIKE 'bubbleId:%'
+	`, afterRowid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []bubbleRow
+	for rows.Next() {
+		var b bubbleRow
+		var createdAt sql.NullString
+		if err := rows.Scan(&b.rowid, &b.sid, &createdAt); err != nil {
+			continue
+		}
+		if createdAt.Valid {
+			b.at = parseISO(createdAt.String)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }

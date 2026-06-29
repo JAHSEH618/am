@@ -118,6 +118,10 @@ type agentCreds struct {
 // 设备仍判定在线。v1.0.19。
 const heartbeatInterval = 60 * time.Second
 
+// providerCollectBudget 单个 provider 的采集超时上限（< 45s 基线）：任一 provider 超此时长即被取消、
+// 本轮略过，避免一个慢 provider 拖垮整轮采集。v1.2.0。
+const providerCollectBudget = 25 * time.Second
+
 // New 构造一个 Reporter。游标 / outbox 任一加载失败时降级为"无断点续传"模式继续运行
 // （记录 warn，不阻断 reporter 启动）。
 //
@@ -521,7 +525,13 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 					results[idx].err = fmt.Errorf("provider %s panic: %v", p.Type(), rec)
 				}
 			}()
-			snap, err := p.Snapshot(ctx)
+			// v1.2.0 通用采集预算：给每个 provider 的 Snapshot 套独立超时 ctx，任何 provider
+			// 卡住都不拖垮整轮——超时者本轮返回 DeadlineExceeded、走下面"略过该 provider"逻辑，
+			// 下个 tick 再补。会响应 ctx 的 provider（cursor 等 SQLite 类）硬生效；JSONL 类本就
+			// 毫秒级、不触发。与解耦心跳(1.0.19)形成"在线 + 数据轮"双层兜底。
+			pctx, cancel := context.WithTimeout(ctx, providerCollectBudget)
+			snap, err := p.Snapshot(pctx)
+			cancel()
 			if err != nil {
 				results[idx].err = err
 				return

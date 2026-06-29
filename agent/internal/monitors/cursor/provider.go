@@ -145,6 +145,19 @@ type Provider struct {
 	lastSig   dbSig
 	lastAlive []sessionRef
 
+	// v1.2.0 增量发现：避免每 tick 对 cursorDiskKV 全表 json_extract（重度用户 2-3GB 库单次 5-6 分钟）。
+	//   sessionMaxAt     每 session 已知最后活动时间（增量累积）
+	//   lastRowid        上次扫描时的 cursorDiskKV 最大 rowid（增量水位）
+	//   incrementalReady 增量基线是否已由一次全量建立
+	//   rowidUnusable    探测到 rowid 不可用（WITHOUT ROWID）→ 永久回退全量，零退化
+	//   lastFullScanAt   上次全量时刻；每 fullRescanInterval 强制全量兜底 rowid 复用漏扫
+	// 仅 discoverSessions 串行访问（reporter tickMu 保证同一 provider 的 Snapshot 不并发），无需额外锁。
+	sessionMaxAt     map[string]time.Time
+	lastRowid        int64
+	incrementalReady bool
+	rowidUnusable    bool
+	lastFullScanAt   time.Time
+
 	// v2.8 持久化 PRAGMA 连接：每次 Snapshot 仅用它读一行 data_version 判断 fast path 是否命中。
 	//
 	// <p>动机：cursor state.vscdb 在重度用户机器上 2-3 GB，modernc.org/sqlite 在 sql.Open 时
@@ -170,11 +183,12 @@ type Provider struct {
 // New 创建 Provider。watchDir 在气泡未带 workspaceUri 时用作 CWD / git 探测兜底目录。
 func New(watchDir string) *Provider {
 	return &Provider{
-		watchDir: watchDir,
-		tracker:  newActivityTracker(),
-		lookback: monitor.DefaultLookback,
-		cache:    newParsedSessionCache(),
-		gitCache: make(map[string]gitinfo.Info),
+		watchDir:     watchDir,
+		tracker:      newActivityTracker(),
+		lookback:     monitor.DefaultLookback,
+		cache:        newParsedSessionCache(),
+		gitCache:     make(map[string]gitinfo.Info),
+		sessionMaxAt: make(map[string]time.Time),
 	}
 }
 
@@ -239,7 +253,6 @@ func (p *Provider) TargetVersion() string {
 }
 
 func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
-	_ = ctx
 	dbPath := stateDBPath()
 	if dbPath == "" {
 		return p.emptySnapshot(), nil
@@ -249,7 +262,7 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 	}
 
 	now := time.Now()
-	parsed, err := p.discoverSessions(dbPath, now, p.lookback)
+	parsed, err := p.discoverSessions(ctx, dbPath, now, p.lookback)
 	if err != nil {
 		return monitor.Snapshot{}, err
 	}
@@ -290,7 +303,7 @@ func (p *Provider) emptySnapshot() monitor.Snapshot {
 // 仍优于串行 14 倍最差情况。
 const parseConcurrency = 8
 
-func (p *Provider) discoverSessions(dbPath string, now time.Time, lookback time.Duration) ([]*parsedSession, error) {
+func (p *Provider) discoverSessions(ctx context.Context, dbPath string, now time.Time, lookback time.Duration) ([]*parsedSession, error) {
 	// v2.8 fast path：用 SQLite PRAGMA data_version 判断 cursor 自上次 tick 以来是否
 	// 真有新写。无写 → 跳过整段 SQLite 扫描，直接从缓存里把上次 alive 的 sid 全量返回。
 	// idle 时段（员工早晨开机但没用 cursor / 中午吃饭 / 写 git commit 中）90% 的 tick
@@ -322,10 +335,9 @@ func (p *Provider) discoverSessions(dbPath string, now time.Time, lookback time.
 		return nil, err
 	}
 
-	// v2.8：单次 GROUP BY 查询直接拿到 (sid, lastBubbleAt) 列表，
-	// 由 SQL 层完成 cutoff 过滤，跳过旧实现的"queryComposers + N 次点查 lastBubble"循环。
+	// v1.2.0：增量发现——优先只扫新增 bubble（rowid 水位），冷启动/周期性/无 rowid 时回退全量。
 	cutoff := now.Add(-lookback)
-	refs, err := queryRecentSessions(db, cutoff)
+	refs, err := p.discoverRefs(ctx, db, now, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -393,6 +405,71 @@ func (p *Provider) discoverSessions(dbPath string, now time.Time, lookback time.
 	p.sigMu.Unlock()
 
 	return out, nil
+}
+
+// fullRescanInterval：即便增量可用，也每隔这么久强制一次全量重扫，兜底 SQLite 删最大 rowid 行后
+// 新插入复用该 rowid 导致的增量漏扫（cursor 基本只追加，此路径极罕见，30 分钟一次足够）。
+const fullRescanInterval = 30 * time.Minute
+
+// discoverRefs 返回 cutoff 之后有活动的会话 (sid,lastAt) 列表，维护增量基线 p.sessionMaxAt/p.lastRowid。
+//
+//   - 全量（冷启动 / 每 fullRescanInterval / rowid 不可用）：沿用 queryRecentSessions 的 GROUP BY，
+//     用结果重建 sessionMaxAt，并记录当前 MAX(rowid) 作为增量水位。
+//   - 增量：只读 rowid > lastRowid 的新 bubble（毫秒级），合并进 sessionMaxAt，推进水位。
+//
+// 取消安全：任何 SQL 出错（含 ctx 预算取消）都在改动 p.* 之前 return，绝不留半更新状态——
+// 全量的大扫描被取消时直接丢弃、下个 tick 重试；增量同理。
+func (p *Provider) discoverRefs(ctx context.Context, db *sql.DB, now, cutoff time.Time) ([]sessionRef, error) {
+	full := !p.incrementalReady || p.rowidUnusable || now.Sub(p.lastFullScanAt) >= fullRescanInterval
+	if full {
+		maxRowid, rerr := queryMaxRowid(ctx, db)
+		refs, err := queryRecentSessions(ctx, db, cutoff)
+		if err != nil {
+			return nil, err // 全量被取消/失败：状态不动，下个 tick 重试
+		}
+		p.sessionMaxAt = make(map[string]time.Time, len(refs))
+		for _, r := range refs {
+			p.sessionMaxAt[r.sid] = r.lastAt
+		}
+		p.lastFullScanAt = now
+		switch {
+		case rerr == nil:
+			p.lastRowid = maxRowid
+			p.incrementalReady = true
+		case ctx.Err() != nil:
+			p.incrementalReady = false // MAX(rowid) 被预算取消（非 schema 问题）：下个 tick 再探测
+		default:
+			p.rowidUnusable = true // 真·无 rowid（WITHOUT ROWID 等）→ 永久全量，零退化
+			p.incrementalReady = false
+		}
+		return refs, nil
+	}
+
+	rows, err := queryBubblesAfter(ctx, db, p.lastRowid)
+	if err != nil {
+		return nil, err // 增量被取消/失败：状态不动，下个 tick 重试
+	}
+	for _, b := range rows {
+		if b.at.IsZero() {
+			continue
+		}
+		if cur, ok := p.sessionMaxAt[b.sid]; !ok || b.at.After(cur) {
+			p.sessionMaxAt[b.sid] = b.at
+		}
+	}
+	// 推进水位越过所有新增行（含非 bubble 写），避免增量范围随无关写入累积变大。
+	if maxRowid, rerr := queryMaxRowid(ctx, db); rerr == nil {
+		p.lastRowid = maxRowid
+	}
+	refs := make([]sessionRef, 0, len(p.sessionMaxAt))
+	for sid, at := range p.sessionMaxAt {
+		if at.After(cutoff) {
+			refs = append(refs, sessionRef{sid: sid, lastAt: at})
+		} else {
+			delete(p.sessionMaxAt, sid) // prune 过期会话，约束内存
+		}
+	}
+	return refs, nil
 }
 
 func ping(db *sql.DB) error {
