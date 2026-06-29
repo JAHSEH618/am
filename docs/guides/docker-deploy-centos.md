@@ -134,11 +134,11 @@ curl http://localhost:9527/actuator/health      # 期望 {"status":"UP"}
 ### 6.1 在有外网的机器编 jar 与 agent 分发包
 
 ```bash
-cd server && ./gradlew clean bootJar          # 产物 server/build/libs/aiwatch-server-1.0.17.jar
-cd ../agent && VERSION=1.0.17 bash build-dist.sh   # 产物 agent/dist/install/
+cd server && ./gradlew clean bootJar          # 产物 server/build/libs/aiwatch-server-1.0.18.jar
+cd ../agent && VERSION=1.0.18 bash build-dist.sh   # 产物 agent/dist/install/
 ```
 
-把 `aiwatch-server-1.0.17.jar` 和 `agent/dist/install/` 拷到生产机仓库对应位置。
+把 `aiwatch-server-1.0.18.jar` 和 `agent/dist/install/` 拷到生产机仓库对应位置。
 
 ### 6.2 生产机用精简 Dockerfile（只 COPY，不构建）
 
@@ -187,7 +187,7 @@ ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
 
 ```bash
 # 1) 重新编分发包（用 Go 容器，避免本机装 Go）
-docker run --rm -e VERSION=1.0.17 -e GOPROXY=https://goproxy.cn,direct \
+docker run --rm -e VERSION=1.0.18 -e GOPROXY=https://goproxy.cn,direct \
   -v "$PWD/agent:/agent" -w /agent golang:1.25-bookworm bash build-dist.sh
 
 # 2) 解开 docker-compose.yml 中 server 的 volumes 挂载：

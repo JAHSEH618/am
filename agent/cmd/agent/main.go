@@ -215,6 +215,11 @@ func cmdStart() error {
 		return err
 	}
 
+	// Windows：脱离启动时的控制台，避免安装窗口 / 会话关闭（CTRL_CLOSE/CTRL_LOGOFF → SIGTERM）
+	// 把后台 daemon 一并关停——"装完冒一次就永久离线"的根因（v1.0.18）。其他平台 no-op。
+	// 必须在 NotifyContext 之前、进入常驻循环之前完成。
+	detachConsole()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

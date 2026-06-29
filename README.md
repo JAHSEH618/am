@@ -8,7 +8,7 @@
 
 读取每位开发者机器上的本地 AI 工具会话，量化「AI 用得有多深、有多好、产出了什么」。
 
-![version](https://img.shields.io/badge/version-1.0.17-blue)
+![version](https://img.shields.io/badge/version-1.0.18-blue)
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
@@ -181,7 +181,7 @@ cd server/src/main/frontend && pnpm install && pnpm dev
 
 # 客户端
 cd agent && go test ./...
-VERSION=1.0.17 bash build-dist.sh   # 交叉编译四平台 → dist/install/
+VERSION=1.0.18 bash build-dist.sh   # 交叉编译四平台 → dist/install/
 ```
 
 > [!WARNING]
@@ -226,7 +226,7 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 │       └── monitors/     每个 AI 工具一个子包（cursor/claude/codex/.../zcode/gitlog）
 │
 ├── server/               Spring Boot 单体（前后端不分离，一个 jar）
-│   ├── build.gradle      artifact = aiwatch-server，version 1.0.17
+│   ├── build.gradle      artifact = aiwatch-server，version 1.0.18
 │   └── src/main/
 │       ├── java/com/am/server/   web · agent · aggregator · insight · system · domain
 │       ├── frontend/             React + Vite + TS + AntD（npm name = aiwatch-web）
@@ -258,4 +258,4 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 
 ## 版本
 
-当前发布版本 **1.0.17**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+当前发布版本 **1.0.18**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
