@@ -408,8 +408,15 @@ func (p *Provider) discoverSessions(ctx context.Context, dbPath string, now time
 }
 
 // fullRescanInterval：即便增量可用，也每隔这么久强制一次全量重扫，兜底 SQLite 删最大 rowid 行后
-// 新插入复用该 rowid 导致的增量漏扫（cursor 基本只追加，此路径极罕见，30 分钟一次足够）。
-const fullRescanInterval = 30 * time.Minute
+// 新插入复用该 rowid 导致的增量漏扫。cursor 基本只追加、几乎不删最新行，该路径极罕见；又因全量在大库
+// 要数分钟（见下方 fullScanTimeout，会阻塞本轮 tick），故取较长间隔——冷启动/进程重启已自然重建基线。
+const fullRescanInterval = 6 * time.Hour
+
+// fullScanTimeout：全量扫描（冷启动 / 周期性 / 无 rowid 回退）的自有超时。全量在重度用户 2-3GB 库要
+// 5-6 分钟（bootstrap 30 天首扫更久），不能受 25s 采集预算约束——否则永远扫不完、建不起增量基线。
+// 故全量用 context.Background() 派生的宽松 ctx，本轮 tick 会被它阻塞，但 1.0.19 解耦心跳保证此间设备
+// 仍在线；进程退出时该扫描随进程结束。增量路径（毫秒级）仍走 tick 预算 ctx。
+const fullScanTimeout = 15 * time.Minute
 
 // discoverRefs 返回 cutoff 之后有活动的会话 (sid,lastAt) 列表，维护增量基线 p.sessionMaxAt/p.lastRowid。
 //
@@ -422,24 +429,26 @@ const fullRescanInterval = 30 * time.Minute
 func (p *Provider) discoverRefs(ctx context.Context, db *sql.DB, now, cutoff time.Time) ([]sessionRef, error) {
 	full := !p.incrementalReady || p.rowidUnusable || now.Sub(p.lastFullScanAt) >= fullRescanInterval
 	if full {
-		maxRowid, rerr := queryMaxRowid(ctx, db)
-		refs, err := queryRecentSessions(ctx, db, cutoff)
+		// 全量用自有宽松 ctx（脱离 tick 采集预算），否则大库 5-6 分钟的全量会被 25s 预算反复取消、
+		// 永远建不起增量基线。本轮 tick 会被它阻塞，但解耦心跳保证此间设备仍在线。
+		fctx, cancel := context.WithTimeout(context.Background(), fullScanTimeout)
+		defer cancel()
+		maxRowid, rerr := queryMaxRowid(fctx, db)
+		refs, err := queryRecentSessions(fctx, db, cutoff)
 		if err != nil {
-			return nil, err // 全量被取消/失败：状态不动，下个 tick 重试
+			return nil, err // 全量被取消(超 15min)/失败：状态不动，下个 tick 重试
 		}
 		p.sessionMaxAt = make(map[string]time.Time, len(refs))
 		for _, r := range refs {
 			p.sessionMaxAt[r.sid] = r.lastAt
 		}
 		p.lastFullScanAt = now
-		switch {
-		case rerr == nil:
+		if rerr == nil {
 			p.lastRowid = maxRowid
 			p.incrementalReady = true
-		case ctx.Err() != nil:
-			p.incrementalReady = false // MAX(rowid) 被预算取消（非 schema 问题）：下个 tick 再探测
-		default:
-			p.rowidUnusable = true // 真·无 rowid（WITHOUT ROWID 等）→ 永久全量，零退化
+		} else {
+			// queryRecentSessions 成功而 MAX(rowid) 失败 ⇒ 该表无 rowid（WITHOUT ROWID）→ 永久全量、零退化。
+			p.rowidUnusable = true
 			p.incrementalReady = false
 		}
 		return refs, nil
