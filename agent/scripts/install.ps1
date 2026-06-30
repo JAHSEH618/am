@@ -219,7 +219,16 @@ Write-AwInfo "principal: name=$fullUserName sid=$userSid"
 
 # 三条策略共享的 action / trigger / settings。
 $action   = New-ScheduledTaskAction -Execute $installPath -Argument 'start' -WorkingDirectory $env:USERPROFILE
-$trigger  = New-ScheduledTaskTrigger -AtLogOn -User $fullUserName
+$triggerLogon = New-ScheduledTaskTrigger -AtLogOn -User $fullUserName
+# 周期自愈触发器：每 10 分钟再拉一次 `aiwatchd start`。配合 daemon 端单实例锁
+# （internal/singleton）——在跑就 no-op、死了（崩溃 / exit 0 / RestartCount 用尽）就在
+# ≤10min 内被拉回，无需等下次 AtLogon。根治"工作时间也离线""装完冒一次就再不上报"。
+# RepetitionDuration 用 9999 天等价 forever（[TimeSpan]::MaxValue 在部分 Win10 被 CIM 判
+# invalid，与本文件 ExecutionTimeLimit 同坑）。
+$triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+    -RepetitionInterval (New-TimeSpan -Minutes 10) `
+    -RepetitionDuration (New-TimeSpan -Days 9999)
+$triggers = @($triggerLogon, $triggerRepeat)
 
 # ExecutionTimeLimit 取很大值代替"无限"（[TimeSpan]::Zero / 'PT0S' 在部分 Win10 build
 # 上被 CIM 层判定为 invalid arg，触发 0x80070057；9999 天 ≈ 27 年，等价 forever
@@ -248,7 +257,7 @@ foreach ($strat in $strategies) {
         $regArgs = @{
             TaskName    = $taskName
             Action      = $action
-            Trigger     = $trigger
+            Trigger     = $triggers
             Settings    = $settings
             Description = 'AIWatch agent (aiwatchd) — AI 使用观测'
             ErrorAction = 'Stop'

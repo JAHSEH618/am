@@ -43,6 +43,7 @@ import (
 	"github.com/am/aiwatch-agent/internal/monitors/zcode"
 	"github.com/am/aiwatch-agent/internal/registrar"
 	"github.com/am/aiwatch-agent/internal/reporter"
+	"github.com/am/aiwatch-agent/internal/singleton"
 	"github.com/am/aiwatch-agent/internal/uninstall"
 	"github.com/am/aiwatch-agent/internal/updater"
 )
@@ -219,6 +220,16 @@ func cmdStart() error {
 	// 把后台 daemon 一并关停——"装完冒一次就永久离线"的根因（v1.0.18）。其他平台 no-op。
 	// 必须在 NotifyContext 之前、进入常驻循环之前完成。
 	detachConsole()
+
+	// 单实例幂等：AtLogon / 周期自愈触发器 / 手动可能并发拉起多个 `aiwatchd start`。
+	// 已有常驻实例时本次直接干净退出（exit 0），让 install.ps1 的"每 10 分钟拉一次"
+	// 成为安全自愈而非进程风暴；进程死后该触发器又能在 ≤10min 内把 daemon 拉回。
+	if ok, err := singleton.Acquire(); err != nil {
+		logger.Warnf("singleton: 锁检查失败，按 daemon 继续: %v", err)
+	} else if !ok {
+		logger.Infof("singleton: 已有 aiwatchd daemon 在运行，本次启动退出")
+		return nil
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
