@@ -295,7 +295,6 @@ public class AiSessionController {
 
     private AiSessionDto toSessionDetailDto(AiSession s) {
         SessionMessageCountSupport.reconcileSessionEntity(s, messageRepository);
-        sessionRepository.save(s);
         AiSessionDto d = toSessionDto(s);
         attachStoredMessageCount(d, s);
         return d;
@@ -308,7 +307,6 @@ public class AiSessionController {
      */
     private AiSessionDto toSessionDetailDtoWithWindow(AiSession s, LocalDateTime from, LocalDateTime to) {
         SessionMessageCountSupport.reconcileSessionEntity(s, messageRepository);
-        sessionRepository.save(s);
         AiSessionDto d = toSessionDto(s);
         attachStoredMessageCount(d, s);
 
@@ -374,9 +372,7 @@ public class AiSessionController {
         int reported = d.getReportedSnapshotMessages() == null ? 0 : d.getReportedSnapshotMessages();
         int effective = BackfillSnapshotSupport.reconcileForDisplay(storedN, reported);
         if (effective != reported) {
-            d.setReportedSnapshotMessages(effective);
-            s.setReportedSnapshotMessages(effective);
-            sessionRepository.save(s);
+            d.setReportedSnapshotMessages(effective); // 仅改 DTO 展示;持久化交给 ingest/聚合
         }
     }
 
