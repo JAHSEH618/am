@@ -49,6 +49,14 @@ services:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
       AIWATCH_INSTALL_DIR: /srv/aiwatch/install
+      # 离线提醒邮件 SMTP（值在 .env 配；未配 HOST 时不发信、不影响启动）。
+      # 465 端口→SSL=true STARTTLS=false；587 端口→SSL=false STARTTLS=true。
+      AIWATCH_SMTP_HOST: ${AIWATCH_SMTP_HOST:-}
+      AIWATCH_SMTP_PORT: ${AIWATCH_SMTP_PORT:-465}
+      AIWATCH_SMTP_USER: ${AIWATCH_SMTP_USER:-}
+      AIWATCH_SMTP_PASS: ${AIWATCH_SMTP_PASS:-}
+      AIWATCH_SMTP_SSL: ${AIWATCH_SMTP_SSL:-true}
+      AIWATCH_SMTP_STARTTLS: ${AIWATCH_SMTP_STARTTLS:-false}
       TZ: Asia/Shanghai
     ports:
       - "9527:9527"
