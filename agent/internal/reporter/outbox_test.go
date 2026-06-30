@@ -51,6 +51,18 @@ func TestAppend_EvictsOldestOverCap(t *testing.T) {
 	if len(list) != 3 {
 		t.Fatalf("list = %d, want 3", len(list))
 	}
+	// 显式校验淘汰的是最旧 3 个(n=0/1/2)、留存的是最新 3 个(n=3/4/5),
+	// 防回归把淘汰方向写反(误删最新)。
+	for _, p := range list {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(b)
+		if strings.Contains(s, `"n":0`) || strings.Contains(s, `"n":1`) || strings.Contains(s, `"n":2`) {
+			t.Fatalf("oldest file survived eviction: %s", s)
+		}
+	}
 }
 
 func TestDrain_PacedToMaxPerCall(t *testing.T) {

@@ -132,9 +132,11 @@ func (o *Outbox) Pending() int {
 }
 
 // Drain 按文件名时序逐个发送，成功就删；任一失败立即停下并返回 (sent, err)。
+// 单次最多发送 maxDrainPerCall 个，避免重连时一 tick 内同步爆发重发。
 //
 // 调用方语义：
-//   - err == nil 时表示队列已清空（含本次没有任何待发文件的情况）
+//   - err == nil 时表示本次无发送失败；队列可能已清空，也可能因单次上限提前停止，
+//     此时 Pending() 反映余量、下次 tick 自动继续
 //   - err != nil 时调用方应把当前 tick 的 body 也 Append，下次 tick 再一起重试
 func (o *Outbox) Drain(ctx context.Context, send Sender) (int, error) {
 	if o.Pending() == 0 {
