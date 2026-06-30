@@ -25,9 +25,9 @@ import java.io.IOException;
  * 校验顺序：
  * 1. 头齐全：X-Agent-Id / X-Agent-Ts / X-Agent-Nonce / X-Agent-Sign
  * 2. 时间戳在 ±300 秒窗口内
- * 3. nonce 在 (agent_id, nonce) 唯一索引上未占用
- * 4. agent_id 存在 agent_device 且 status=ACTIVE
- * 5. HMAC-SHA256(agent_secret, body+ts+nonce) 与 X-Agent-Sign 等值（常量时间比较）
+ * 3. agent_id 存在 agent_device 且 status=ACTIVE
+ * 4. HMAC-SHA256(agent_secret, body+ts+nonce) 与 X-Agent-Sign 等值（常量时间比较）
+ * 5. nonce 在 (agent_id, nonce) 唯一索引上未占用（验签通过后才写 DB）
  *
  * 不参与校验的路径：/api/v1/agent/register（首次注册时还没有密钥）
  *
@@ -109,18 +109,20 @@ public class AgentSignatureFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (!nonceStoreService.tryClaim(agentId, nonce, ts)) {
-            writeFail(response, ErrorCode.NONCE_REPLAY, "nonce replay detected");
-            alertService.error(agentId, device.getUserCode(), device.getHostHash(),
-                    AlertType.NONCE_REPLAY, "nonce=" + nonce);
-            return;
-        }
-
+        // 先验签(无状态、纯 CPU):坏签名直接拒,避免给伪造请求写 agent_nonce 行
         String expected = HmacUtil.sign(device.getAgentSecret(), wrapped.getCachedBody(), ts, nonce);
         if (!HmacUtil.equalsConstantTime(expected, sign.toLowerCase())) {
             writeFail(response, ErrorCode.INVALID_SIGNATURE, "signature mismatch");
             alertService.error(agentId, device.getUserCode(), device.getHostHash(),
                     AlertType.SIGNATURE_INVALID, "signature mismatch");
+            return;
+        }
+
+        // 验签通过后再占 nonce(此时才有写 DB 的资格)
+        if (!nonceStoreService.tryClaim(agentId, nonce, ts)) {
+            writeFail(response, ErrorCode.NONCE_REPLAY, "nonce replay detected");
+            alertService.error(agentId, device.getUserCode(), device.getHostHash(),
+                    AlertType.NONCE_REPLAY, "nonce=" + nonce);
             return;
         }
 
