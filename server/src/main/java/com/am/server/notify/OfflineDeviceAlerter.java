@@ -178,8 +178,7 @@ public class OfflineDeviceAlerter {
 
     /** 按设备 OS 给出可直接复制执行的重装命令，并预填该员工的 user-code；未配服务器地址时退化为通用指引。 */
     private String buildReinstallSteps(AgentDevice d) {
-        String base = config.getString(SystemConfigKeys.NOTIF_OFFLINE_INSTALL_BASE_URL, "").trim()
-                .replaceAll("/+$", "");
+        String base = normalizeBaseUrl(config.getString(SystemConfigKeys.NOTIF_OFFLINE_INSTALL_BASE_URL, ""));
         String code = nz(d.getUserCode());
         if (base.isEmpty()) {
             return "请重新安装客户端以恢复上报：访问 AIWatch 安装页（地址请向管理员或 IT 获取），按页面提示完成安装。\n";
@@ -198,6 +197,14 @@ public class OfflineDeviceAlerter {
                 + "     curl -fsSL " + base + "/install/aiwatchd.sh | bash -s -- --clean --user-code '"
                 + code + "' --server-url " + base + "\n\n"
                 + "  3) 出现安装成功提示后即可。\n";
+    }
+
+    /** 归一化公网基址：折叠重复协议头（http://http://x → http://x）+ 去尾部斜杠，避免配置多写一截 scheme 把重装命令写坏。 */
+    static String normalizeBaseUrl(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        s = s.replaceFirst("^(https?://)(?:https?://)+", "$1");
+        s = s.replaceAll("/+$", "");
+        return s;
     }
 
     private static String nz(String s) {
