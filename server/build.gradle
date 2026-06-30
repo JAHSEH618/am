@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.am'
-version = '1.2.0'
+version = '1.2.1'
 
 java {
     toolchain {
@@ -38,6 +38,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
 
     implementation 'net.javacrumbs.shedlock:shedlock-spring:5.13.0'
     implementation 'net.javacrumbs.shedlock:shedlock-provider-jdbc-template:5.13.0'

@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS agent_device
     cursor_signup_type          VARCHAR(32)  DEFAULT NULL COMMENT 'Auth_0 / Google / GitHub / Email',
     status          VARCHAR(32)  NOT NULL COMMENT 'ACTIVE / INACTIVE / REVOKED',
     last_seen_time  DATETIME     DEFAULT NULL,
+    last_offline_email_time DATETIME DEFAULT NULL COMMENT '上次离线提醒邮件发送时间（12h 去重）',
     created_time    DATETIME     NOT NULL,
     updated_time    DATETIME     NOT NULL,
     PRIMARY KEY (id),

@@ -93,6 +93,10 @@ public class AgentDevice {
     @Column(name = "last_seen_time")
     private LocalDateTime lastSeenTime;
 
+    /** 上次"离线提醒邮件"发送时间，用于 12h 去重；恢复在线时不主动清空，靠 dedup 窗口自然过期。 */
+    @Column(name = "last_offline_email_time")
+    private LocalDateTime lastOfflineEmailTime;
+
     @CreatedDate
     @Column(name = "created_time", nullable = false, updatable = false)
     private LocalDateTime createdTime;

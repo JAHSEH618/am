@@ -69,6 +69,18 @@ public final class SystemConfigKeys {
     /** 安装端点预共享令牌；非空则 /install/** 需带 ?t= 或 X-Install-Token，空=不启用。 */
     public static final String INSTALL_TOKEN    = "install.token";
 
+    // ========== category: notifications ==========
+    /** 离线提醒邮件发件人地址；留空 = 功能不发信（连同 spring.mail.* 一起视为"未配置"）。 */
+    public static final String NOTIF_OFFLINE_EMAIL_FROM      = "notifications.offline_email.from";
+    /** 设备离线超过几小时才发提醒邮件（避免给下班正常关机的机器发信）。 */
+    public static final String NOTIF_OFFLINE_THRESHOLD_HOURS = "notifications.offline_email.threshold_hours";
+    /** 同一设备两封提醒邮件的最小间隔小时数（默认 2，即"每 2 小时提醒一次"）。 */
+    public static final String NOTIF_OFFLINE_DEDUP_HOURS     = "notifications.offline_email.dedup_hours";
+    /** 工作时段起始小时（含）；只在 [start, end) 内发信，避免下班 / 夜间打扰。 */
+    public static final String NOTIF_OFFLINE_WORK_HOUR_START = "notifications.offline_email.work_hour_start";
+    /** 工作时段结束小时（不含）。 */
+    public static final String NOTIF_OFFLINE_WORK_HOUR_END   = "notifications.offline_email.work_hour_end";
+
     // ========== category: console ==========
     /**
      * 管理控制台 IP 白名单（逗号分隔，支持精确 IP 或前缀如 10.0.，留空=放行所有）。
@@ -85,4 +97,5 @@ public final class SystemConfigKeys {
     public static final String CAT_AUTH       = "auth";
     public static final String CAT_INSTALL    = "install";
     public static final String CAT_CONSOLE    = "console";
+    public static final String CAT_NOTIFICATIONS = "notifications";
 }
