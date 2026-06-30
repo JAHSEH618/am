@@ -122,16 +122,20 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
                             + "\n--- raw response ---\n" + previewRaw, e);
         }
 
-        int difficulty = clamp(root.path("difficulty").asInt(0), 1, 5);
+        int difficulty = requireScore(root, "difficulty");
         String outcome = normalizeOutcome(root.path("outcome").asText("").trim().toLowerCase());
         String mode = normalizeMode(root.path("mode").asText("").trim().toLowerCase());
 
         JsonNode cap = root.path("capabilities");
-        int problem = clamp(cap.path("problem_decomposition").asInt(0), 1, 5);
-        int context = clamp(cap.path("context_management").asInt(0), 1, 5);
-        int debugging = clamp(cap.path("debugging_skill").asInt(0), 1, 5);
-        int tool = clamp(cap.path("tool_orchestration").asInt(0), 1, 5);
-        int self = clamp(cap.path("self_correction").asInt(0), 1, 5);
+        if (cap.isMissingNode() || cap.isNull() || !cap.isObject()) {
+            throw new JudgeException(
+                    "openai-compatible judge: missing/invalid required 'capabilities' object", null);
+        }
+        int problem = requireScore(cap, "problem_decomposition");
+        int context = requireScore(cap, "context_management");
+        int debugging = requireScore(cap, "debugging_skill");
+        int tool = requireScore(cap, "tool_orchestration");
+        int self = requireScore(cap, "self_correction");
 
         String reason = root.path("reason").asText("");
         if (reason.length() > 500) {
@@ -168,6 +172,16 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
 
     private static int clamp(int v, int min, int max) {
         return Math.max(min, Math.min(max, v));
+    }
+
+    /** 必填评分字段:缺失 / null / 非整数一律抛 JudgeException(触发上层重试),不再静默降级为 1。 */
+    private static int requireScore(JsonNode parent, String field) {
+        JsonNode v = parent.path(field);
+        if (v.isMissingNode() || v.isNull() || !v.canConvertToInt()) {
+            throw new JudgeException(
+                    "openai-compatible judge: missing/invalid required score field '" + field + "'", null);
+        }
+        return clamp(v.asInt(), 1, 5);
     }
 
     /**
