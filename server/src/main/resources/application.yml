@@ -25,6 +25,8 @@ spring:
           auth: ${AIWATCH_SMTP_AUTH:true}
           ssl:
             enable: ${AIWATCH_SMTP_SSL:true}
+          starttls:
+            enable: ${AIWATCH_SMTP_STARTTLS:false}
           connectiontimeout: 10000
           timeout: 10000
           writetimeout: 10000
