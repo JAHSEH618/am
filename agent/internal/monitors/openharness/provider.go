@@ -24,6 +24,12 @@ type Provider struct {
 	// lookback 决定扫描多久之前的 session 文件（按 mtime）。默认 monitor.DefaultLookback (48h)；
 	// reporter 在 bootstrap 模式下会通过 SetLookback 切到 monitor.BootstrapLookback。
 	lookback time.Duration
+
+	// 解析缓存:session-*.json 整文件按 (path, mtime) memoize。
+	// parseFile 输出仅取决于「文件内容 + mtime」,而 OpenHarness 每次写出都刷新 mtime,
+	// 故 mtime 未变 = 解析结果不变 → 跳过未变文件的重读+重解析(消除空闲 tick 全量扫描)。
+	cacheMu sync.Mutex
+	cache   map[string]ohCacheEntry
 }
 
 func New(watchDir string) *Provider {
@@ -31,6 +37,7 @@ func New(watchDir string) *Provider {
 		watchDir: watchDir,
 		gitCache: make(map[string]gitinfo.Info),
 		lookback: monitor.DefaultLookback,
+		cache:    make(map[string]ohCacheEntry),
 	}
 }
 
@@ -88,12 +95,48 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 	}, nil
 }
 
+type ohCacheEntry struct {
+	mtime time.Time
+	ps    *parsedSession
+}
+
+// cachedParse 按 (path, mtime) memoize parseFile:mtime 未变直接复用上次解析结果。
+func (p *Provider) cachedParse(path string, info os.FileInfo, userHash string) *parsedSession {
+	mtime := info.ModTime()
+	p.cacheMu.Lock()
+	if ent, ok := p.cache[path]; ok && ent.mtime.Equal(mtime) {
+		ps := ent.ps
+		p.cacheMu.Unlock()
+		return ps
+	}
+	p.cacheMu.Unlock()
+
+	ps, err := parseFile(path, info, userHash)
+	if err != nil || ps == nil {
+		return nil
+	}
+	p.cacheMu.Lock()
+	p.cache[path] = ohCacheEntry{mtime: mtime, ps: ps}
+	p.cacheMu.Unlock()
+	return ps
+}
+
+// pruneCache 丢弃本轮未出现(已删除 / 超出 lookback)的缓存项,防内存随历史文件无限增长。
+func (p *Provider) pruneCache(seen map[string]struct{}) {
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	for path := range p.cache {
+		if _, ok := seen[path]; !ok {
+			delete(p.cache, path)
+		}
+	}
+}
+
 // scan 遍历 sessions/<userhash>/*.json，仅解析 mtime > cutoff 的文件。
-//
-// 不做增量缓存：每个文件本身体积很小（通常 < 100 KB），48h 窗口内文件数也有限；
-// 全量重读比维护 FileCache 简单且不易出错。如果未来文件量明显增长再优化。
+// mtime 未变的文件命中解析缓存，跳过重读+重解析（消除空闲 tick 全量扫描）。
 func (p *Provider) scan(root string, cutoff time.Time) []*parsedSession {
 	var out []*parsedSession
+	seen := make(map[string]struct{})
 	userDirs, err := os.ReadDir(root)
 	if err != nil {
 		return nil
@@ -120,13 +163,15 @@ func (p *Provider) scan(root string, cutoff time.Time) []*parsedSession {
 			if info.ModTime().Before(cutoff) {
 				continue
 			}
-			ps, err := parseFile(path, info, userHash)
-			if err != nil || ps == nil {
+			seen[path] = struct{}{}
+			ps := p.cachedParse(path, info, userHash)
+			if ps == nil {
 				continue
 			}
 			out = append(out, ps)
 		}
 	}
+	p.pruneCache(seen)
 	return out
 }
 
