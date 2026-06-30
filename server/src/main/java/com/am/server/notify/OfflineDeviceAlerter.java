@@ -60,6 +60,9 @@ public class OfflineDeviceAlerter {
                 SystemConfigKeys.CAT_NOTIFICATIONS, false, "工作时段起始小时（含），只在此时段内发信");
         config.seedIfAbsent(SystemConfigKeys.NOTIF_OFFLINE_WORK_HOUR_END, "18", "int",
                 SystemConfigKeys.CAT_NOTIFICATIONS, false, "工作时段结束小时（不含），只在此时段内发信");
+        config.seedIfAbsent(SystemConfigKeys.NOTIF_OFFLINE_INSTALL_BASE_URL, "", "string",
+                SystemConfigKeys.CAT_NOTIFICATIONS, false,
+                "AIWatch 服务器公网地址（如 https://aiwatch.公司.com）；用于邮件里的重装命令，留空则只给通用指引");
 
         scheduledTaskManager.register(
                 new ScheduledTaskDefinition(
@@ -157,19 +160,44 @@ public class OfflineDeviceAlerter {
     }
 
     private String buildSubject() {
-        return "[AIWatch] 你的 AI 监测客户端已离线，请重新启动";
+        return "[AIWatch] 您的客户端已离线，请重新安装";
     }
 
     private String buildBody(AgentDevice d) {
         String emp = employeeDisplayService.displayOf(d.getUserCode());
         String lastSeen = d.getLastSeenTime() == null ? "从未上报" : d.getLastSeenTime().toString();
-        return emp + " 你好，\n\n"
-                + "检测到你机器上的 AIWatch 客户端（aiwatchd）已离线，可能已被关闭或异常退出：\n\n"
+        return emp + "，您好：\n\n"
+                + "系统监测到您电脑上的 AIWatch 客户端（aiwatchd）已离线，当前无法上报 AI 使用数据。设备信息如下：\n\n"
                 + "  主机名：" + nz(d.getHostname()) + "\n"
                 + "  系统：" + nz(d.getOsType()) + "\n"
                 + "  客户端版本：" + nz(d.getAgentVersion()) + "\n"
                 + "  最后在线：" + lastSeen + "\n\n"
-                + "请重新启动客户端，或重新运行安装脚本以恢复上报。若已离职 / 已换机请忽略本邮件。\n";
+                + buildReinstallSteps(d)
+                + "\n如您已离职或更换设备，请忽略本通知。\n";
+    }
+
+    /** 按设备 OS 给出可直接复制执行的重装命令，并预填该员工的 user-code；未配服务器地址时退化为通用指引。 */
+    private String buildReinstallSteps(AgentDevice d) {
+        String base = config.getString(SystemConfigKeys.NOTIF_OFFLINE_INSTALL_BASE_URL, "").trim()
+                .replaceAll("/+$", "");
+        String code = nz(d.getUserCode());
+        if (base.isEmpty()) {
+            return "请重新安装客户端以恢复上报：访问 AIWatch 安装页（地址请向管理员或 IT 获取），按页面提示完成安装。\n";
+        }
+        if ("windows".equalsIgnoreCase(d.getOsType())) {
+            return "请按以下步骤重新安装，恢复数据上报：\n\n"
+                    + "  1) 以管理员身份运行 PowerShell（按 Win 键，搜索 PowerShell，右键选择“以管理员身份运行”）\n"
+                    + "  2) 复制并执行以下命令：\n\n"
+                    + "     & ([scriptblock]::Create((irm " + base + "/install/aiwatchd.ps1))) -Clean -UserCode '"
+                    + code + "' -ServerUrl '" + base + "'\n\n"
+                    + "  3) 出现安装成功提示后即可。\n";
+        }
+        return "请按以下步骤重新安装，恢复数据上报：\n\n"
+                + "  1) 打开“终端”(Terminal)\n"
+                + "  2) 复制并执行以下命令：\n\n"
+                + "     curl -fsSL " + base + "/install/aiwatchd.sh | bash -s -- --clean --user-code '"
+                + code + "' --server-url " + base + "\n\n"
+                + "  3) 出现安装成功提示后即可。\n";
     }
 
     private static String nz(String s) {

@@ -80,6 +80,8 @@ public final class SystemConfigKeys {
     public static final String NOTIF_OFFLINE_WORK_HOUR_START = "notifications.offline_email.work_hour_start";
     /** 工作时段结束小时（不含）。 */
     public static final String NOTIF_OFFLINE_WORK_HOUR_END   = "notifications.offline_email.work_hour_end";
+    /** AIWatch 服务器公网地址（如 https://aiwatch.公司.com），用于邮件正文里的重装命令；留空则只给通用指引。 */
+    public static final String NOTIF_OFFLINE_INSTALL_BASE_URL = "notifications.offline_email.install_base_url";
 
     // ========== category: console ==========
     /**

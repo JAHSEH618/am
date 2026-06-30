@@ -7,6 +7,7 @@ import com.am.server.system.SystemConfigService;
 import com.am.server.system.scheduling.DynamicScheduledTaskManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -46,6 +47,8 @@ class OfflineDeviceAlerterTest {
         // 默认把工作时段开成全天，让发信类测试与运行时刻无关；工作时段本身另有专测。
         when(config.getInt(contains("work_hour_start"), anyInt())).thenReturn(0);
         when(config.getInt(contains("work_hour_end"), anyInt())).thenReturn(24);
+        // getString 默认返回空串（install_base_url 未配 → 重装步骤走通用指引分支，不 NPE）。
+        when(config.getString(anyString(), anyString())).thenReturn("");
         when(employeeDisplayService.displayOf(anyString())).thenReturn("张三|U001");
     }
 
@@ -139,6 +142,41 @@ class OfflineDeviceAlerterTest {
 
         verify(deviceRepository, never()).findByStatusAndOfflineBefore(any(), any());
         verify(mailService, never()).send(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void includesWindowsReinstallCommandWhenBaseUrlSet() {
+        when(config.getString(contains("install_base_url"), anyString()))
+                .thenReturn("https://aiwatch.example.com");
+        AgentDevice d = device("dev@corp.com", null, null);
+        d.setOsType("windows");
+        when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
+
+        alerter.scanAndAlert();
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(mailService).send(eq("dev@corp.com"), anyString(), body.capture());
+        assertThat(body.getValue())
+                .contains("aiwatchd.ps1")
+                .contains("https://aiwatch.example.com")
+                .contains("-UserCode 'U001'");
+    }
+
+    @Test
+    void includesUnixReinstallCommandForMacDevice() {
+        when(config.getString(contains("install_base_url"), anyString()))
+                .thenReturn("https://aiwatch.example.com");
+        AgentDevice d = device("dev@corp.com", null, null);
+        d.setOsType("macos");
+        when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
+
+        alerter.scanAndAlert();
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(mailService).send(eq("dev@corp.com"), anyString(), body.capture());
+        assertThat(body.getValue())
+                .contains("aiwatchd.sh")
+                .contains("--user-code 'U001'");
     }
 
     @Test
