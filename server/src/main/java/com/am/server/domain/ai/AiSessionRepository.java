@@ -346,7 +346,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
      */
     @Query("""
         SELECT s FROM AiSession s
-        WHERE LOWER(s.status) <> 'idle'
+        WHERE s.status <> 'idle'
           AND s.invalidReason IS NULL
         ORDER BY s.lastActivity DESC
         """)
@@ -360,7 +360,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
      */
     @Query("""
         SELECT s FROM AiSession s
-        WHERE LOWER(s.status) <> 'idle'
+        WHERE s.status <> 'idle'
           AND s.targetType IN :activeTypes
           AND s.invalidReason IS NULL
         ORDER BY s.lastActivity DESC
@@ -371,7 +371,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     /** 大盘 overview：非 idle 会话条数（与 {@link #findAllNonIdleByTargetTypeInList} 同口径）。 */
     @Query("""
         SELECT COUNT(s) FROM AiSession s
-        WHERE LOWER(s.status) <> 'idle'
+        WHERE s.status <> 'idle'
           AND s.targetType IN :activeTypes
           AND s.invalidReason IS NULL
         """)
@@ -380,7 +380,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     /** 大盘 overview：非 idle 会话涉及的去重 agent_id 数。 */
     @Query("""
         SELECT COUNT(DISTINCT s.agentId) FROM AiSession s
-        WHERE LOWER(s.status) <> 'idle'
+        WHERE s.status <> 'idle'
           AND s.agentId IS NOT NULL
           AND s.targetType IN :activeTypes
           AND s.invalidReason IS NULL
@@ -391,7 +391,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     /** 管理端「仅活跃」列表：与大盘 {@link #findAllNonIdle()} 同口径，分页。 */
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.invalidReason IS NULL
             ORDER BY s.lastActivity DESC
             """)
@@ -399,7 +399,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
 
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.targetType IN :targetTypes
               AND s.invalidReason IS NULL
             ORDER BY s.lastActivity DESC
@@ -409,7 +409,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
 
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.userCode IN :userCodes
               AND s.invalidReason IS NULL
             ORDER BY s.lastActivity DESC
@@ -419,7 +419,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
 
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.targetType IN :targetTypes
               AND s.userCode IN :userCodes
               AND s.invalidReason IS NULL
@@ -432,7 +432,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
 
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.projectName = :projectName
               AND s.invalidReason IS NULL
             ORDER BY s.lastActivity DESC
@@ -443,7 +443,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     /** v2.10：non-idle + projectName + target_type 白名单。 */
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.projectName = :projectName
               AND s.targetType IN :targetTypes
               AND s.invalidReason IS NULL
@@ -456,7 +456,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
 
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.projectName = :projectName
               AND s.userCode = :userCode
               AND s.invalidReason IS NULL
@@ -470,7 +470,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     /** v2.10：non-idle + projectName + userCode + target_type 白名单。 */
     @Query("""
             SELECT s FROM AiSession s
-            WHERE LOWER(s.status) <> 'idle'
+            WHERE s.status <> 'idle'
               AND s.projectName = :projectName
               AND s.userCode = :userCode
               AND s.targetType IN :targetTypes
@@ -489,7 +489,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
      */
     @Query("""
         SELECT s FROM AiSession s
-        WHERE LOWER(s.status) <> 'idle'
+        WHERE s.status <> 'idle'
           AND s.lastActivity < :cutoff
         """)
     List<AiSession> findStaleNonIdle(LocalDateTime cutoff);
@@ -752,7 +752,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     @Query("""
         SELECT s.agentId, s.targetType, s.lastActivity, s.status, s.currentTool, s.model, s.projectName
         FROM AiSession s
-        WHERE LOWER(s.status) <> 'idle'
+        WHERE s.status <> 'idle'
           AND s.targetType IN :activeTypes
           AND s.invalidReason IS NULL
         ORDER BY s.lastActivity DESC

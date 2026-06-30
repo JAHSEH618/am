@@ -329,7 +329,9 @@ CREATE TABLE IF NOT EXISTS ai_session
     KEY idx_last_activity (last_activity),
     KEY idx_agent_id (agent_id),
     KEY idx_insight_audit (insight_audit_status, id),
-    KEY idx_target_last_invalid (target_type, last_activity, invalid_reason)
+    KEY idx_target_last_invalid (target_type, last_activity, invalid_reason),
+    KEY idx_target_status (target_type, status),
+    KEY idx_project_last (project_name, last_activity)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'AI 编码会话主表';
 
 CREATE TABLE IF NOT EXISTS ai_session_event
