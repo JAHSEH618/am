@@ -24,20 +24,37 @@ func TestQuerySessions_HoistedCountsAndLastActivity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if len(snap.Sessions) != 1 {
-		t.Fatalf("sessions = %d, want 1 (%+v)", len(snap.Sessions), snap.Sessions)
+	if len(snap.Sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2 (%+v)", len(snap.Sessions), snap.Sessions)
 	}
-	s := snap.Sessions[0]
-	if s.SessionID != "sess-h-1" {
-		t.Errorf("SessionID = %q", s.SessionID)
+	var have1, have2 bool
+	var u1, a1, u2, a2 int
+	var last1 time.Time
+	for _, s := range snap.Sessions {
+		switch s.SessionID {
+		case "sess-h-1":
+			have1, u1, a1, last1 = true, s.UserMessages, s.AssistantMessages, s.LastActivity.Time()
+		case "sess-h-2":
+			have2, u2, a2 = true, s.UserMessages, s.AssistantMessages
+		}
 	}
-	if s.UserMessages != 2 || s.AssistantMessages != 1 {
-		t.Errorf("counts user=%d assistant=%d, want 2/1", s.UserMessages, s.AssistantMessages)
+	if !have1 {
+		t.Fatalf("missing sess-h-1")
+	}
+	if u1 != 2 || a1 != 1 {
+		t.Errorf("sess-h-1 counts user=%d assistant=%d, want 2/1", u1, a1)
 	}
 	// LastActivity 应取 messages 里最大 timestamp(= base+30)
 	wantLast := time.Unix(int64(base+30), 0)
-	if got := s.LastActivity.Time(); got.Unix() != wantLast.Unix() {
-		t.Errorf("LastActivity = %v, want ~%v", got, wantLast)
+	if last1.Unix() != wantLast.Unix() {
+		t.Errorf("sess-h-1 LastActivity = %v, want ~%v", last1, wantLast)
+	}
+	// 无消息会话:必须出现(LEFT JOIN 不丢行)、计数为 0
+	if !have2 {
+		t.Fatalf("sess-h-2 (no messages) missing — LEFT JOIN/COALESCE 回退路径漏掉了无消息会话")
+	}
+	if u2 != 0 || a2 != 0 {
+		t.Errorf("sess-h-2 counts user=%d assistant=%d, want 0/0", u2, a2)
 	}
 }
 
@@ -71,6 +88,14 @@ func seedHermesDB(t *testing.T, path string, base float64) {
 		(id,source,user_id,model,title,started_at,ended_at,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,tool_call_count)
 		VALUES('sess-h-1','hermes-cli','u','glm','t',?,0,10,5,0,0,0,0)`, base); err != nil {
 		t.Fatalf("session: %v", err)
+	}
+	// 第二个会话:无任何消息且 ended_at 为 NULL —— 走 hoist 的关键边界:
+	// CTE LEFT JOIN 的 lm.ts=NULL 须与原关联子查询返回 NULL 一致,COALESCE 回退到 started_at,
+	// 该会话仍应出现在快照里(LEFT JOIN 不丢行)、计数为 0。
+	if _, err := db.Exec(`INSERT INTO sessions
+		(id,source,user_id,model,title,started_at,ended_at,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,tool_call_count)
+		VALUES('sess-h-2','hermes-cli','u','glm','t2',?,NULL,0,0,0,0,0,0)`, base); err != nil {
+		t.Fatalf("session2: %v", err)
 	}
 	msgs := []struct {
 		id, role, content string
