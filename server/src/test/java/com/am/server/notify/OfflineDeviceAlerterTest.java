@@ -180,6 +180,35 @@ class OfflineDeviceAlerterTest {
     }
 
     @Test
+    void reinstallCommandHasNoDoubledSchemeWhenBaseUrlMisconfigured() {
+        // 管理员把公网地址误填成 http://http://...（粘贴/手打重复了一截 scheme）
+        when(config.getString(contains("install_base_url"), anyString()))
+                .thenReturn("http://http://183.214.120.190:9527");
+        AgentDevice d = device("dev@corp.com", null, null);
+        d.setOsType("macos");
+        when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
+
+        alerter.scanAndAlert();
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(mailService).send(eq("dev@corp.com"), anyString(), body.capture());
+        assertThat(body.getValue())
+                .contains("http://183.214.120.190:9527/install/aiwatchd.sh")
+                .doesNotContain("http://http://");
+    }
+
+    @Test
+    void normalizeBaseUrlCollapsesDuplicateSchemeAndTrailingSlash() {
+        assertThat(OfflineDeviceAlerter.normalizeBaseUrl("http://http://183.214.120.190:9527"))
+                .isEqualTo("http://183.214.120.190:9527");
+        assertThat(OfflineDeviceAlerter.normalizeBaseUrl("https://https://aiwatch.x.com/"))
+                .isEqualTo("https://aiwatch.x.com");
+        assertThat(OfflineDeviceAlerter.normalizeBaseUrl("http://a.com/")).isEqualTo("http://a.com");
+        assertThat(OfflineDeviceAlerter.normalizeBaseUrl("  http://a.com  ")).isEqualTo("http://a.com");
+        assertThat(OfflineDeviceAlerter.normalizeBaseUrl("")).isEqualTo("");
+    }
+
+    @Test
     void withinWorkHoursBoundaries() {
         assertThat(OfflineDeviceAlerter.withinWorkHours(8, 9, 18)).isFalse();
         assertThat(OfflineDeviceAlerter.withinWorkHours(9, 9, 18)).isTrue();
