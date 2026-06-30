@@ -19,6 +19,8 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -87,6 +89,11 @@ import java.util.concurrent.TimeUnit;
 public class DailySummaryAggregator {
 
     private static final Logger log = LoggerFactory.getLogger(DailySummaryAggregator.class);
+
+    /** 自代理:让内部自调用经过 Spring 代理,@Transactional(aggregate) 才生效。见 GitCommitIngestService 同款。 */
+    @Autowired
+    @Lazy
+    private DailySummaryAggregator self;
 
     /** 计算"首次响应"时认为超过这个值就是异常会话（用户开了又消息不连贯），不入平均 */
     private static final long FIRST_RESPONSE_OUTLIER_MS = 30 * 60 * 1000L;
@@ -205,7 +212,7 @@ public class DailySummaryAggregator {
                 }
                 return refreshExecutor.schedule(() -> {
                     try {
-                        int users = aggregate(date);
+                        int users = self.aggregate(date);
                         lastAggregatedAt.put(date, LocalDateTime.now());
                         if (users > 0) {
                             log.debug("daily summary refreshed (debounced): date={} users={}", date, users);
@@ -228,7 +235,7 @@ public class DailySummaryAggregator {
     public void dailyJob() {
         LocalDate yesterday = LocalDate.now().minusDays(1);
         try {
-            int touched = aggregate(yesterday);
+            int touched = self.aggregate(yesterday);
             log.info("daily summary aggregated: date={} users={}", yesterday, touched);
         } catch (Exception e) {
             log.error("daily summary aggregate failed: date={}", yesterday, e);
@@ -247,8 +254,8 @@ public class DailySummaryAggregator {
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
         try {
-            int t = aggregate(today);
-            int y = aggregate(yesterday);
+            int t = self.aggregate(today);
+            int y = self.aggregate(yesterday);
             lastAggregatedAt.put(today, LocalDateTime.now());
             lastAggregatedAt.put(yesterday, LocalDateTime.now());
             log.info("hourly daily summary aggregated: today={} users={} yesterday={} users={}",
@@ -279,7 +286,7 @@ public class DailySummaryAggregator {
                 return false;
             }
             try {
-                aggregate(date);
+                self.aggregate(date);
                 lastAggregatedAt.put(date, LocalDateTime.now());
                 return true;
             } catch (Exception e) {
