@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/logger"
 )
 
 const outboxDirName = "outbox"
@@ -38,6 +40,11 @@ type Outbox struct {
 	dir     string
 	seqCnt  atomic.Uint64
 	pending atomic.Int32 // -1 = 未知；≥0 时 Drain 可跳过 ReadDir
+
+	// maxFiles 是队列文件数上限；Append 超过时按 FIFO 淘汰最旧。0 视为不限。
+	maxFiles int
+	// maxDrainPerCall 是单次 Drain 最多发送的文件数；余量留到下次 tick，避免重连时同步爆发。0 视为不限。
+	maxDrainPerCall int
 }
 
 // LoadOutbox 创建（或挂载已存在的）outbox 目录。
@@ -50,7 +57,7 @@ func LoadOutbox() (*Outbox, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	o := &Outbox{dir: dir}
+	o := &Outbox{dir: dir, maxFiles: 2000, maxDrainPerCall: 200}
 	o.pending.Store(-1)
 	return o, nil
 }
@@ -72,7 +79,30 @@ func (o *Outbox) Append(body []byte) error {
 		return err
 	}
 	o.bumpPending()
+	if o.maxFiles > 0 && o.Pending() > o.maxFiles {
+		o.evictOldest()
+	}
 	return nil
+}
+
+// evictOldest 在文件数超过 maxFiles 时，按文件名时序删除最旧的若干个，使其回落到上限。
+// 离线过久（misconfig / 长时间 server 宕机）下保护本地磁盘；最旧的报文最可能已被 server 去重
+// 或超出采集 lookback，故优先淘汰。删除发生即记 warn（数据丢失提示）。
+func (o *Outbox) evictOldest() {
+	entries, err := o.list()
+	if err != nil {
+		return
+	}
+	if len(entries) <= o.maxFiles {
+		o.pending.Store(int32(len(entries)))
+		return
+	}
+	drop := len(entries) - o.maxFiles
+	for _, p := range entries[:drop] {
+		_ = os.Remove(p)
+	}
+	logger.Warnf("outbox over cap: evicted %d oldest file(s) (cap=%d)", drop, o.maxFiles)
+	o.pending.Store(int32(o.maxFiles))
 }
 
 func (o *Outbox) bumpPending() {
@@ -119,7 +149,12 @@ func (o *Outbox) Drain(ctx context.Context, send Sender) (int, error) {
 		return 0, nil
 	}
 	sent := 0
-	for _, p := range entries {
+	for i, p := range entries {
+		if o.maxDrainPerCall > 0 && sent >= o.maxDrainPerCall {
+			// 达到单次上限：余量留到下次 tick；pending 反映剩余数。
+			o.pending.Store(int32(len(entries) - i))
+			return sent, nil
+		}
 		body, err := os.ReadFile(p)
 		if err != nil {
 			// 文件读不出来直接清掉，避免坏文件无限阻塞队列
