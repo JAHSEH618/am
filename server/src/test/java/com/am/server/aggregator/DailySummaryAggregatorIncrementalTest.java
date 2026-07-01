@@ -82,4 +82,24 @@ class DailySummaryAggregatorIncrementalTest {
         verify(summaryRepository).saveAll(captor.capture());
         assertThat(captor.getValue()).extracting(DailySummary::getUserCode).containsExactly("U9");
     }
+
+    @Test
+    void aggregateChunkIsTransactional() throws Exception {
+        java.lang.reflect.Method m = DailySummaryAggregator.class.getDeclaredMethod(
+                "aggregateChunk", LocalDate.class, List.class,
+                java.time.LocalDateTime.class, java.time.LocalDateTime.class,
+                java.util.Collection.class, java.util.Map.class);
+        assertThat(m.isAnnotationPresent(org.springframework.transaction.annotation.Transactional.class))
+                .as("每批聚合必须自成事务以缩短锁窗口").isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void incrementalStillSavesAllUsersViaChunks() {
+        aggregator.aggregate(LocalDate.of(2026, 7, 1), new java.util.LinkedHashSet<>(List.of("A", "B", "C")));
+        ArgumentCaptor<List<DailySummary>> captor = ArgumentCaptor.forClass(List.class);
+        verify(summaryRepository).saveAll(captor.capture()); // 3 人 < 一批 50，仍一次 saveAll
+        assertThat(captor.getValue()).extracting(DailySummary::getUserCode)
+                .containsExactlyInAnyOrder("A", "B", "C");
+    }
 }

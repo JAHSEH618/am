@@ -118,6 +118,9 @@ public class DailySummaryAggregator {
      */
     private static final long ACTIVE_FILL_CAP_MS = 5 * 60 * 1000L;
 
+    /** 全量重算按此人数分批，每批一个独立事务，避免整天所有人共用一个长事务锁 daily_summary。 */
+    private static final int AGGREGATE_TX_CHUNK = 50;
+
     private final AiSessionRepository sessionRepository;
     private final AiSessionMessageRepository messageRepository;
     private final AiSessionEventRepository eventRepository;
@@ -329,9 +332,8 @@ public class DailySummaryAggregator {
 
     /**
      * 增量核：只重算 {@code onlyUsers} 的当日 daily_summary。ingest 追新直接走这条；
-     * 全量版发现用户后也委托到这里。commit 计数按 onlyUsers 过滤，避免全表扫 git_commit。
+     * 全量版发现用户后也委托到这里。按 {@link #AGGREGATE_TX_CHUNK} 分批，每批一个独立事务。
      */
-    @Transactional
     public int aggregate(LocalDate workDate, Set<String> onlyUsers) {
         if (onlyUsers == null || onlyUsers.isEmpty()) {
             return 0;
@@ -352,9 +354,23 @@ public class DailySummaryAggregator {
             commitCountByUser.put(row[0].toString(), toLong(row[1]));
         }
 
-        List<DailySummary> rowsToSave = new ArrayList<>(onlyUsers.size());
+        List<String> all = new ArrayList<>(onlyUsers);
         int touched = 0;
-        for (String userCode : onlyUsers) {
+        for (int i = 0; i < all.size(); i += AGGREGATE_TX_CHUNK) {
+            List<String> chunk = new ArrayList<>(all.subList(i, Math.min(i + AGGREGATE_TX_CHUNK, all.size())));
+            touched += self.aggregateChunk(workDate, chunk, dayStart, dayEnd, activeTypes, commitCountByUser);
+        }
+        return touched;
+    }
+
+    /** 单批（≤{@link #AGGREGATE_TX_CHUNK} 用户）在独立事务内 compute + 一次 saveAll。 */
+    @Transactional
+    public int aggregateChunk(LocalDate workDate, List<String> chunkUsers,
+                              LocalDateTime dayStart, LocalDateTime dayEnd,
+                              java.util.Collection<String> activeTypes,
+                              Map<String, Long> commitCountByUser) {
+        List<DailySummary> rowsToSave = new ArrayList<>(chunkUsers.size());
+        for (String userCode : chunkUsers) {
             UserDailyStats stats = computeForUser(userCode, dayStart, dayEnd, activeTypes);
             stats.aiCommitCount = commitCountByUser.getOrDefault(userCode, 0L).intValue();
             rowsToSave.add(buildSummaryRow(userCode, workDate, stats));
@@ -363,12 +379,11 @@ public class DailySummaryAggregator {
                     stats.totalInputTokens + stats.totalOutputTokens,
                     stats.aiActiveSeconds, stats.aiThinkingSeconds,
                     stats.aiRetryCount, stats.aiFirstResponseAvgMs, stats.aiCommitCount);
-            touched++;
         }
         if (!rowsToSave.isEmpty()) {
             summaryRepository.saveAll(rowsToSave);
         }
-        return touched;
+        return rowsToSave.size();
     }
 
     /**
