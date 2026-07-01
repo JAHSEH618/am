@@ -7,6 +7,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -150,4 +151,12 @@ public class AiSession {
     @LastModifiedDate
     @Column(name = "updated_time", nullable = false)
     private LocalDateTime updatedTime;
+
+    /**
+     * 乐观锁版本(P3-2)。并发同会话 ingest 时,先提交者 version+1,后提交者 flush 检测不一致抛
+     * ObjectOptimisticLockingFailureException → ingest 重试环重读+重算+重写。新行由 Hibernate 置 0。
+     */
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 }

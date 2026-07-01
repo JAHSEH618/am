@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS ai_session
     insight_audit_lease_until DATETIME(3) DEFAULT NULL COMMENT 'RUNNING 租约，防止崩溃永久占用',
     created_time        DATETIME      NOT NULL,
     updated_time        DATETIME      NOT NULL,
+    version             BIGINT        NOT NULL DEFAULT 0 COMMENT '乐观锁版本(P3-2)',
     PRIMARY KEY (id),
     UNIQUE KEY uk_target_extid (target_type, external_session_id),
     KEY idx_user_last (user_code, last_activity),
