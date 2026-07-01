@@ -678,7 +678,10 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         event.setTokensDelta(inputTokensDelta + outputTokensDelta);
         event.setMessagesDelta(messagesDelta);
         if (sourceRef != null && !sourceRef.isBlank()) {
-            event.setSourceRef(sourceRef);
+            // source_ref 列上限 191(utf8mb4 索引前缀安全长度)。delta/message 的 ref(UUID / msgid)恒短不受影响;
+            // 仅 TOOL_CALL 的 name+"\0"+ts 可能超长(tool_name 设计上可达 512)——它只作"该会话有 source_ref"的标记、
+            // 不作去重键(工具去重走 existingToolKeys),故截断无害,且避免 strict-mode MySQL "Data too long" 拖垮整份上报。
+            event.setSourceRef(sourceRef.length() > 191 ? sourceRef.substring(0, 191) : sourceRef);
             markSourceRef(sourceRefsInTxn, sourceRef);
         }
         return eventRepository.save(event);

@@ -58,6 +58,17 @@ class AbstractAiSessionIngestServiceSourceRefTest {
     }
 
     @Test
+    void writeEventTruncatesOverlongSourceRefToColumnLimit() {
+        when(eventRepository.save(any(AiSessionEvent.class))).thenAnswer(inv -> inv.getArgument(0));
+        String longRef = "t".repeat(300);
+
+        AiSessionEvent e = ingest.writeEvent(session(), AiSessionEventType.TOOL_CALL, "running", "toolX",
+                0L, 0L, 0, LocalDateTime.now(), longRef, new HashSet<>());
+
+        assertThat(e.getSourceRef()).hasSize(191);
+    }
+
+    @Test
     void prefersPerItemDeltaPathUsesMaterializedCount() {
         com.am.server.agent.api.dto.MonitorSessionDto dto =
                 new com.am.server.agent.api.dto.MonitorSessionDto();   // 无 activityDeltas / recentMessages
