@@ -7,6 +7,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.TableGenerator;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -30,7 +31,10 @@ import java.time.LocalDateTime;
 public class GitCommit {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.TABLE, generator = "gitCommitIdGen")
+    @TableGenerator(name = "gitCommitIdGen", table = "id_sequences",
+            pkColumnName = "seq_name", valueColumnName = "next_val",
+            pkColumnValue = "git_commit", allocationSize = 50)
     private Long id;
 
     @Column(name = "agent_id", nullable = false, length = 64)

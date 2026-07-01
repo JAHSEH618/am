@@ -156,7 +156,7 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
     Page<AiSessionEvent> findByAiSessionIdAndEventTimeGreaterThanEqualAndEventTimeLessThanOrderByEventTimeDesc(
             Long aiSessionId, LocalDateTime from, LocalDateTime to, Pageable pageable);
 
-    /** 实时事件流：取最近 N 条事件 */
+    /** 实时事件流：取最近 N 条事件。id 逆序依赖单实例单调分配；当前无调用方。 */
     List<AiSessionEvent> findTop100ByOrderByIdDesc();
 
     // ============================================================
