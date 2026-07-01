@@ -22,7 +22,8 @@ import java.util.List;
  * 离线设备提醒邮件任务。
  *
  * <p>每 12 小时（默认 cron {@code 0 0 10,22 * * *}，UI 可调）扫描 ACTIVE 且离线超过阈值小时数的设备，
- * 取设备登录邮箱（cursor_email 优先，git_user_email 兜底）发一封"客户端已离线、请重启"的提醒，
+ * 取收件邮箱（工号 user_code 本身是邮箱时优先用它，git_user_email 兜底；不是邮箱的工号直接跳过）发一封
+ * "客户端已离线、请重启"的提醒，
  * 引导员工自助恢复上报——也是对"掉线后自身已无法 auto-update"的僵尸机的召回通道。
  *
  * <p>去重：每台设备两封提醒至少间隔 {@code dedup_hours}（默认 12h），由 agent_device.last_offline_email_time
@@ -134,11 +135,11 @@ public class OfflineDeviceAlerter {
         return hour >= start && hour < end;
     }
 
-    /** cursor_email 优先，git_user_email 兜底；都不可用返回 null。 */
+    /** 工号（user_code）本身是邮箱时优先用它，git_user_email 兜底；不是邮箱的工号直接跳过，都不可用返回 null。 */
     private String pickEmail(AgentDevice d) {
-        String cursor = trimToNull(d.getCursorEmail());
-        if (looksLikeEmail(cursor)) {
-            return cursor;
+        String code = trimToNull(d.getUserCode());
+        if (looksLikeEmail(code)) {
+            return code;
         }
         String git = trimToNull(d.getGitUserEmail());
         if (looksLikeEmail(git)) {
