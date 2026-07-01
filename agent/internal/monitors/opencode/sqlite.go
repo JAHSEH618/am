@@ -43,7 +43,10 @@ func (p *Provider) readDataVersionFast(path string) int64 {
 }
 
 // querySessions 读出 (cutoff, now] 内有更新、且未归档的 session，并填充消息聚合。
-func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
+//
+// 会话级记忆化：time_updated 未变的 session 复用 p.scanCache 里上次 fillRecent 装配好的结果，
+// 跳过本轮的 message/part 重读；time_updated 前进（或为 NULL/0，无法判定）的 session 照常重读。
+func (p *Provider) querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	cutoffMs := cutoff.UnixMilli()
 	rows, err := db.Query(`
 		SELECT id, IFNULL(directory,''), IFNULL(title,''), IFNULL(version,''), IFNULL(model,''),
@@ -61,11 +64,12 @@ func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	defer func() { _ = rows.Close() }()
 
 	out := make([]*parsedSession, 0, 16)
+	updatedMsOf := make([]int64, 0, 16)
 	for rows.Next() {
 		var (
-			id, dir, title, version, model              string
-			tIn, tOut, tReason, tCacheR, tCacheW        int64
-			createdMs, updatedMs                        int64
+			id, dir, title, version, model       string
+			tIn, tOut, tReason, tCacheR, tCacheW int64
+			createdMs, updatedMs                 int64
 		)
 		if err := rows.Scan(&id, &dir, &title, &version, &model,
 			&tIn, &tOut, &tReason, &tCacheR, &tCacheW,
@@ -90,14 +94,44 @@ func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 			ps.LastActivity = ps.StartedAt
 		}
 		out = append(out, ps)
+		updatedMsOf = append(updatedMsOf, updatedMs)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	for _, ps := range out {
+	seen := make(map[string]struct{}, len(out))
+	for i, ps := range out {
+		id := ps.SessionID
+		seen[id] = struct{}{}
+		updatedMs := updatedMsOf[i]
+
+		if updatedMs > 0 {
+			p.scanMu.Lock()
+			ent, ok := p.scanCache[id]
+			p.scanMu.Unlock()
+			if ok && ent.updatedMs == updatedMs && ent.ps != nil {
+				out[i] = ent.ps
+				continue
+			}
+		}
+
 		fillRecent(db, ps)
+		if updatedMs > 0 {
+			p.scanMu.Lock()
+			p.scanCache[id] = sessionCacheEntry{updatedMs: updatedMs, ps: ps}
+			p.scanMu.Unlock()
+		}
 	}
+
+	p.scanMu.Lock()
+	for id := range p.scanCache {
+		if _, ok := seen[id]; !ok {
+			delete(p.scanCache, id)
+		}
+	}
+	p.scanMu.Unlock()
+
 	return out, nil
 }
 

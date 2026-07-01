@@ -320,6 +320,7 @@ CREATE TABLE IF NOT EXISTS ai_session
     insight_audit_lease_until DATETIME(3) DEFAULT NULL COMMENT 'RUNNING 租约，防止崩溃永久占用',
     created_time        DATETIME      NOT NULL,
     updated_time        DATETIME      NOT NULL,
+    version             BIGINT        NOT NULL DEFAULT 0 COMMENT '乐观锁版本(P3-2)',
     PRIMARY KEY (id),
     UNIQUE KEY uk_target_extid (target_type, external_session_id),
     KEY idx_user_last (user_code, last_activity),
@@ -329,7 +330,9 @@ CREATE TABLE IF NOT EXISTS ai_session
     KEY idx_last_activity (last_activity),
     KEY idx_agent_id (agent_id),
     KEY idx_insight_audit (insight_audit_status, id),
-    KEY idx_target_last_invalid (target_type, last_activity, invalid_reason)
+    KEY idx_target_last_invalid (target_type, last_activity, invalid_reason),
+    KEY idx_target_status (target_type, status),
+    KEY idx_project_last (project_name, last_activity)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'AI 编码会话主表';
 
 CREATE TABLE IF NOT EXISTS ai_session_event
@@ -347,6 +350,7 @@ CREATE TABLE IF NOT EXISTS ai_session_event
     output_tokens_delta   BIGINT        DEFAULT 0 COMMENT 'TOKEN_DELTA 时 output 增量',
     messages_delta        INT           DEFAULT 0,
     extra_json     JSON          DEFAULT NULL,
+    source_ref     VARCHAR(191)  DEFAULT NULL COMMENT '去重锚点(P3-3a 物化)',
     created_time   DATETIME      NOT NULL,
     PRIMARY KEY (id),
     KEY idx_session_time (ai_session_id, event_time),
@@ -354,7 +358,8 @@ CREATE TABLE IF NOT EXISTS ai_session_event
     KEY idx_event_type (event_type),
     KEY idx_tool_name (tool_name),
     KEY idx_event_time (event_time),
-    KEY idx_target_event_time (target_type, event_time)
+    KEY idx_target_event_time (target_type, event_time),
+    KEY idx_session_sourceref (ai_session_id, source_ref)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'AI 会话活动事件流水';
 
 -- ai_session_message：external_message_id 是去重锚点。
@@ -774,3 +779,21 @@ INSERT IGNORE INTO sys_config
     (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
 VALUES
     ('console.ip_allowlist', '', 'string', 'console', 0, '管理控制台 IP 白名单（逗号分隔，精确 IP 或前缀如 10.0.；留空=放行所有）。非空时仅这些来源可访问 /console/** 与 admin/dashboard 接口', 'seed', NOW(), NOW());
+
+-- ============================================================================
+-- id 预分配序列表(P3-3b):高写表 IDENTITY→@TableGenerator 解锁 JDBC 批量 INSERT。
+-- 种子 next_val = 各表当前 MAX(id)+1000 缓冲,避免与既有行撞主键(缓冲 >> allocationSize=50,
+-- 任何 pooled 优化器语义下首块 id 都 > MAX(id))。INSERT IGNORE 幂等:行已存在则跳过
+-- (app 已接管 next_val,勿覆盖)。⚠️ 存量 prod 库升级须在 app 启动前先跑本段种子(见计划部署节)。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS id_sequences
+(
+    seq_name VARCHAR(64) NOT NULL,
+    next_val BIGINT      NOT NULL,
+    PRIMARY KEY (seq_name)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'Hibernate 表生成器 id 预分配';
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_event',   COALESCE(MAX(id), 0) + 1000 FROM ai_session_event;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_message', COALESCE(MAX(id), 0) + 1000 FROM ai_session_message;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_audit',   COALESCE(MAX(id), 0) + 1000 FROM ai_session_audit;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit',         COALESCE(MAX(id), 0) + 1000 FROM git_commit;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit_file',    COALESCE(MAX(id), 0) + 1000 FROM git_commit_file;

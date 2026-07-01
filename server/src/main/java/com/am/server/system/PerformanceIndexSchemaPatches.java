@@ -32,6 +32,10 @@ public class PerformanceIndexSchemaPatches {
                 "CREATE INDEX idx_target_message_time ON ai_session_message (target_type, message_time)");
         ensureIndex(dataSource, "ai_session", "idx_target_last_invalid",
                 "CREATE INDEX idx_target_last_invalid ON ai_session (target_type, last_activity, invalid_reason)");
+        ensureIndex(dataSource, "ai_session", "idx_target_status",
+                "CREATE INDEX idx_target_status ON ai_session (target_type, status)");
+        ensureIndex(dataSource, "ai_session", "idx_project_last",
+                "CREATE INDEX idx_project_last ON ai_session (project_name, last_activity)");
     }
 
     private static void ensureIndex(DataSource dataSource, String table, String indexName, String ddl) {

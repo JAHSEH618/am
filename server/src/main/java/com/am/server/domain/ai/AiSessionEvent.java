@@ -7,6 +7,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.TableGenerator;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -29,7 +30,10 @@ import java.time.LocalDateTime;
 public class AiSessionEvent {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.TABLE, generator = "aiSessionEventIdGen")
+    @TableGenerator(name = "aiSessionEventIdGen", table = "id_sequences",
+            pkColumnName = "seq_name", valueColumnName = "next_val",
+            pkColumnValue = "ai_session_event", allocationSize = 50)
     private Long id;
 
     @Column(name = "ai_session_id", nullable = false)
@@ -69,6 +73,10 @@ public class AiSessionEvent {
     /** 复杂额外上下文以 JSON 字符串存储，避免引入 hibernate-types 依赖 */
     @Column(name = "extra_json", columnDefinition = "JSON")
     private String extraJson;
+
+    /** 去重锚点(P3-3a 物化自 extra_json)。activity_delta.source_ref / message id / tool+ts。 */
+    @Column(name = "source_ref", length = 191)
+    private String sourceRef;
 
     @CreatedDate
     @Column(name = "created_time", nullable = false, updatable = false)

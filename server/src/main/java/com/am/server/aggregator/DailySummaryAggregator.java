@@ -19,6 +19,8 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -88,6 +90,11 @@ public class DailySummaryAggregator {
 
     private static final Logger log = LoggerFactory.getLogger(DailySummaryAggregator.class);
 
+    /** 自代理:让内部自调用经过 Spring 代理,@Transactional(aggregate) 才生效。见 GitCommitIngestService 同款。 */
+    @Autowired
+    @Lazy
+    private DailySummaryAggregator self;
+
     /** 计算"首次响应"时认为超过这个值就是异常会话（用户开了又消息不连贯），不入平均 */
     private static final long FIRST_RESPONSE_OUTLIER_MS = 30 * 60 * 1000L;
 
@@ -110,6 +117,9 @@ public class DailySummaryAggregator {
      * </ul>
      */
     private static final long ACTIVE_FILL_CAP_MS = 5 * 60 * 1000L;
+
+    /** 全量重算按此人数分批，每批一个独立事务，避免整天所有人共用一个长事务锁 daily_summary。 */
+    private static final int AGGREGATE_TX_CHUNK = 50;
 
     private final AiSessionRepository sessionRepository;
     private final AiSessionMessageRepository messageRepository;
@@ -175,6 +185,14 @@ public class DailySummaryAggregator {
      */
     private static final long REFRESH_DEBOUNCE_MS = 15_000L;
     private final ConcurrentHashMap<LocalDate, ScheduledFuture<?>> pendingRefresh = new ConcurrentHashMap<>();
+    /** 与 {@link #pendingRefresh} 同键:该日 debounce 窗口内累积的受影响 user 并集,任务触发时 drain。 */
+    private final ConcurrentHashMap<LocalDate, Set<String>> pendingUsers = new ConcurrentHashMap<>();
+    /**
+     * 该日 debounce 窗口内是否存在"全量重算"请求(admin 切换 active-types / backfill 历史回填)。
+     * 全量优先:一旦某日被标记全量,即便随后 ingest 增量入队也必须跑全量,不能被降级为增量
+     * ——否则并发 ingest 会静默吞掉 admin/backfill 的全员重算。
+     */
+    private final Set<LocalDate> pendingFull = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService refreshExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "daily-summary-refresh");
         t.setDaemon(true);
@@ -187,11 +205,9 @@ public class DailySummaryAggregator {
     }
 
     /**
-     * 把本次 ingest 涉及的工作日入队，{@link #REFRESH_DEBOUNCE_MS} 后由后台线程跑一次
-     * {@link #aggregate}。同一天在 debounce 窗口内多次入队只会执行 1 次（取消前一次延迟任务）。
-     *
-     * <p>调用方：{@link com.am.server.agent.ingest.AbstractAiSessionIngestService}
-     * 在 AFTER_COMMIT 时机派发，保证后台线程能读到本次 ingest 写入的 event / message。
+     * 全量追新入队:把涉及的工作日标记为"需全量重算"并 debounce。
+     * <p>调用方:历史 backfill、admin 切换 active-types 等——它们需要重算该日**全体**用户,
+     * 不能被 ingest 增量降级。
      */
     public void enqueueRefresh(Collection<LocalDate> dates) {
         if (dates == null || dates.isEmpty()) {
@@ -199,25 +215,67 @@ public class DailySummaryAggregator {
         }
         for (LocalDate d : dates) {
             if (d == null) continue;
-            pendingRefresh.compute(d, (date, prev) -> {
-                if (prev != null) {
-                    prev.cancel(false);
-                }
-                return refreshExecutor.schedule(() -> {
-                    try {
-                        int users = aggregate(date);
-                        lastAggregatedAt.put(date, LocalDateTime.now());
-                        if (users > 0) {
-                            log.debug("daily summary refreshed (debounced): date={} users={}", date, users);
-                        }
-                    } catch (Exception ex) {
-                        log.warn("daily summary refresh failed: date={} reason={}", date, ex.toString());
-                    } finally {
-                        pendingRefresh.remove(date);
-                    }
-                }, REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-            });
+            pendingFull.add(d);
+            scheduleDebounced(d);
         }
+    }
+
+    /**
+     * ingest 追新:按 (date -> 受影响 user 集) 入队。debounce 窗口内同日多次入队合并用户并集,
+     * {@link #REFRESH_DEBOUNCE_MS} 后跑一次 {@link #aggregate(LocalDate, Set)} 增量核
+     * (除非该日已被 {@link #enqueueRefresh(Collection)} 标记全量——那时跑全量)。
+     */
+    public void enqueueRefresh(Map<LocalDate, Set<String>> dateUsers) {
+        if (dateUsers == null || dateUsers.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<LocalDate, Set<String>> en : dateUsers.entrySet()) {
+            LocalDate d = en.getKey();
+            Set<String> users = en.getValue();
+            if (d == null || users == null || users.isEmpty()) {
+                continue;
+            }
+            pendingUsers.compute(d, (date, acc) -> {
+                Set<String> merged = (acc != null) ? acc : ConcurrentHashMap.newKeySet();
+                merged.addAll(users);
+                return merged;
+            });
+            scheduleDebounced(d);
+        }
+    }
+
+    /**
+     * 共享 debounce 调度:同日 {@link #REFRESH_DEBOUNCE_MS} 内多次入队合并成 1 次(取消前一次延迟任务)。
+     * 触发时"全量优先"——该日若被标记全量则跑 {@link #aggregate(LocalDate)},否则按累积 user 集跑
+     * {@link #aggregate(LocalDate, Set)} 增量核。
+     */
+    private void scheduleDebounced(LocalDate d) {
+        pendingRefresh.compute(d, (date, prev) -> {
+            if (prev != null) {
+                prev.cancel(false);
+            }
+            return refreshExecutor.schedule(() -> {
+                boolean full = pendingFull.remove(date);
+                Set<String> users = pendingUsers.remove(date);
+                try {
+                    int n;
+                    if (full) {
+                        n = self.aggregate(date);
+                    } else {
+                        n = (users == null || users.isEmpty()) ? 0 : self.aggregate(date, users);
+                    }
+                    lastAggregatedAt.put(date, LocalDateTime.now());
+                    if (n > 0) {
+                        log.debug("daily summary refreshed (debounced, {}): date={} users={}",
+                                full ? "full" : "incremental", date, n);
+                    }
+                } catch (Exception ex) {
+                    log.warn("daily summary refresh failed: date={} reason={}", date, ex.toString());
+                } finally {
+                    pendingRefresh.remove(date);
+                }
+            }, REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        });
     }
 
     /**
@@ -228,7 +286,7 @@ public class DailySummaryAggregator {
     public void dailyJob() {
         LocalDate yesterday = LocalDate.now().minusDays(1);
         try {
-            int touched = aggregate(yesterday);
+            int touched = self.aggregate(yesterday);
             log.info("daily summary aggregated: date={} users={}", yesterday, touched);
         } catch (Exception e) {
             log.error("daily summary aggregate failed: date={}", yesterday, e);
@@ -247,8 +305,8 @@ public class DailySummaryAggregator {
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
         try {
-            int t = aggregate(today);
-            int y = aggregate(yesterday);
+            int t = self.aggregate(today);
+            int y = self.aggregate(yesterday);
             lastAggregatedAt.put(today, LocalDateTime.now());
             lastAggregatedAt.put(yesterday, LocalDateTime.now());
             log.info("hourly daily summary aggregated: today={} users={} yesterday={} users={}",
@@ -279,7 +337,7 @@ public class DailySummaryAggregator {
                 return false;
             }
             try {
-                aggregate(date);
+                self.aggregate(date);
                 lastAggregatedAt.put(date, LocalDateTime.now());
                 return true;
             } catch (Exception e) {
@@ -290,16 +348,10 @@ public class DailySummaryAggregator {
     }
 
     /**
-     * 聚合指定日期。手动触发与 cron 都走这里。
-     *
-     * @param workDate 要聚合的工作日（按 server 本地时区解释）
-     * @return 当日产生 / 更新的 user 数
+     * 全量聚合指定日期：发现当日需刷新的全部用户（事件流 distinct user + 仍有非零快照的 user），
+     * 再委托给增量核。手动触发（AdminController）、cron（daily/hourly）、ensureFresh 走这里。
      */
-    @Transactional
     public int aggregate(LocalDate workDate) {
-        LocalDateTime dayStart = workDate.atStartOfDay();
-        LocalDateTime dayEnd = workDate.plusDays(1).atStartOfDay();
-
         // v2.10 起：只聚合 activeTargetTypes 内的 agent 数据。客户端继续采集全部 6 种 agent，
         // 但 monitor_target.enabled=0 的 agent 不参与日聚合 → 下游 daily_summary 自动干净。
         // 切换开关后历史 daily_summary 需要管理员触发"历史重算"才会按新口径回填。
@@ -308,35 +360,65 @@ public class DailySummaryAggregator {
             log.info("aggregate: date={} no active target types (all disabled), skip", workDate);
             return 0;
         }
-
+        LocalDateTime dayStart = workDate.atStartOfDay();
+        LocalDateTime dayEnd = workDate.plusDays(1).atStartOfDay();
         // 拉当日活跃用户：从 ai_session_event 流取 distinct user_code（全 provider 兼容），
         // 且仅统计 ai_session.invalid_reason IS NULL 的有效会话（见 Repository JPQL）。
         // ai_session_message 只在 provider 上报 recentMessages 时才写，event 流是无条件写的，
         // 所以以 event 为活跃判定真相源更准。
-        List<String> fromEvents = eventRepository
-                .findActiveUsersInWindowAndTargetTypeIn(dayStart, dayEnd, activeTypes);
+        LinkedHashSet<String> userCodes = new LinkedHashSet<>(
+                eventRepository.findActiveUsersInWindowAndTargetTypeIn(dayStart, dayEnd, activeTypes));
         // v2.11：并入「该日 daily_summary 仍有非零 AI 快照」的用户——避免收窄口径后无人命中 event、
         // 旧汇总行永远不刷新（典型：窗口内全是 invalid / 禁用 agent 会话，员工数据仍显示虚高协作时长）。
-        java.util.LinkedHashSet<String> userCodes = new java.util.LinkedHashSet<>(fromEvents);
-        for (String u : summaryRepository.findUserCodesWithNonZeroAiStatsOnDate(workDate)) {
-            userCodes.add(u);
-        }
+        userCodes.addAll(summaryRepository.findUserCodesWithNonZeroAiStatsOnDate(workDate));
         if (userCodes.isEmpty()) {
             log.info("aggregate: date={} no users to aggregate, skip", workDate);
             return 0;
         }
+        return self.aggregate(workDate, userCodes);
+    }
+
+    /**
+     * 增量核：只重算 {@code onlyUsers} 的当日 daily_summary。ingest 追新直接走这条；
+     * 全量版发现用户后也委托到这里。按 {@link #AGGREGATE_TX_CHUNK} 分批，每批一个独立事务。
+     */
+    public int aggregate(LocalDate workDate, Set<String> onlyUsers) {
+        if (onlyUsers == null || onlyUsers.isEmpty()) {
+            return 0;
+        }
+        java.util.Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
+        if (activeTypes.isEmpty()) {
+            return 0;
+        }
+        LocalDateTime dayStart = workDate.atStartOfDay();
+        LocalDateTime dayEnd = workDate.plusDays(1).atStartOfDay();
 
         Map<String, Long> commitCountByUser = new HashMap<>();
-        for (Object[] row : gitCommitRepository.countGroupedByUserCodeInCommitWindow(dayStart, dayEnd)) {
+        for (Object[] row : gitCommitRepository
+                .countGroupedByUserCodeInCommitWindowAndUserCodeIn(dayStart, dayEnd, onlyUsers)) {
             if (row == null || row.length < 2 || row[0] == null) {
                 continue;
             }
             commitCountByUser.put(row[0].toString(), toLong(row[1]));
         }
 
-        List<DailySummary> rowsToSave = new ArrayList<>(userCodes.size());
+        List<String> all = new ArrayList<>(onlyUsers);
         int touched = 0;
-        for (String userCode : userCodes) {
+        for (int i = 0; i < all.size(); i += AGGREGATE_TX_CHUNK) {
+            List<String> chunk = new ArrayList<>(all.subList(i, Math.min(i + AGGREGATE_TX_CHUNK, all.size())));
+            touched += self.aggregateChunk(workDate, chunk, dayStart, dayEnd, activeTypes, commitCountByUser);
+        }
+        return touched;
+    }
+
+    /** 单批（≤{@link #AGGREGATE_TX_CHUNK} 用户）在独立事务内 compute + 一次 saveAll。 */
+    @Transactional
+    public int aggregateChunk(LocalDate workDate, List<String> chunkUsers,
+                              LocalDateTime dayStart, LocalDateTime dayEnd,
+                              java.util.Collection<String> activeTypes,
+                              Map<String, Long> commitCountByUser) {
+        List<DailySummary> rowsToSave = new ArrayList<>(chunkUsers.size());
+        for (String userCode : chunkUsers) {
             UserDailyStats stats = computeForUser(userCode, dayStart, dayEnd, activeTypes);
             stats.aiCommitCount = commitCountByUser.getOrDefault(userCode, 0L).intValue();
             rowsToSave.add(buildSummaryRow(userCode, workDate, stats));
@@ -345,12 +427,11 @@ public class DailySummaryAggregator {
                     stats.totalInputTokens + stats.totalOutputTokens,
                     stats.aiActiveSeconds, stats.aiThinkingSeconds,
                     stats.aiRetryCount, stats.aiFirstResponseAvgMs, stats.aiCommitCount);
-            touched++;
         }
         if (!rowsToSave.isEmpty()) {
             summaryRepository.saveAll(rowsToSave);
         }
-        return touched;
+        return rowsToSave.size();
     }
 
     /**

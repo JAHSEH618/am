@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import jakarta.persistence.TableGenerator;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -23,7 +24,10 @@ import lombok.Setter;
 public class GitCommitFile {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.TABLE, generator = "gitCommitFileIdGen")
+    @TableGenerator(name = "gitCommitFileIdGen", table = "id_sequences",
+            pkColumnName = "seq_name", valueColumnName = "next_val",
+            pkColumnValue = "git_commit_file", allocationSize = 50)
     private Long id;
 
     @Column(name = "commit_id", nullable = false)

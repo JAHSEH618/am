@@ -27,23 +27,18 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
     boolean existsByAiSessionIdAndEventTypeAndToolNameAndEventTime(
             Long aiSessionId, String eventType, String toolName, LocalDateTime eventTime);
 
-    /** activity_delta.source_ref 幂等：同会话同 ref 不重复写 TOKEN/MESSAGE_DELTA。 */
-    @Query(value = """
-            SELECT COUNT(*) FROM ai_session_event
-            WHERE ai_session_id = :sessionId
-              AND JSON_UNQUOTE(JSON_EXTRACT(extra_json, '$.source_ref')) = :sourceRef
-            """, nativeQuery = true)
-    long countByAiSessionIdAndSourceRef(
-            @Param("sessionId") Long sessionId,
-            @Param("sourceRef") String sourceRef);
+    /** 预载会话既有 source_ref(P3-3a):COALESCE 列 + JSON 兜底,过渡期(回填未完)也正确。仅返回有 ref 的行。 */
+    @Query(value = "SELECT COALESCE(source_ref, JSON_UNQUOTE(JSON_EXTRACT(extra_json, '$.source_ref'))) "
+            + "FROM ai_session_event WHERE ai_session_id = :sessionId "
+            + "AND (source_ref IS NOT NULL OR JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL)",
+            nativeQuery = true)
+    List<String> findSourceRefsByAiSessionId(@Param("sessionId") Long sessionId);
 
-    /** 会话是否已有带 source_ref 的逐条 TOKEN/MESSAGE 增量（Cursor activity_deltas 等）。 */
-    @Query(value = """
-            SELECT COUNT(*) FROM ai_session_event
-            WHERE ai_session_id = :sessionId
-              AND JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL
-            """, nativeQuery = true)
-    long countByAiSessionIdWithSourceRef(@Param("sessionId") Long sessionId);
+    /** 会话是否已有带 source_ref 的逐条增量(列或 JSON 兜底)。 */
+    @Query(value = "SELECT COUNT(*) FROM ai_session_event WHERE ai_session_id = :sessionId "
+            + "AND (source_ref IS NOT NULL OR JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL)",
+            nativeQuery = true)
+    long countByAiSessionIdWithAnySourceRef(@Param("sessionId") Long sessionId);
 
     Page<AiSessionEvent> findByAiSessionIdOrderByEventTimeDesc(Long aiSessionId, Pageable pageable);
 
@@ -161,7 +156,7 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
     Page<AiSessionEvent> findByAiSessionIdAndEventTimeGreaterThanEqualAndEventTimeLessThanOrderByEventTimeDesc(
             Long aiSessionId, LocalDateTime from, LocalDateTime to, Pageable pageable);
 
-    /** 实时事件流：取最近 N 条事件 */
+    /** 实时事件流：取最近 N 条事件。id 逆序依赖单实例单调分配；当前无调用方。 */
     List<AiSessionEvent> findTop100ByOrderByIdDesc();
 
     // ============================================================

@@ -52,14 +52,15 @@ class OfflineDeviceAlerterTest {
         when(employeeDisplayService.displayOf(anyString())).thenReturn("张三|U001");
     }
 
-    private AgentDevice device(String cursorEmail, String gitEmail, LocalDateTime lastEmail) {
+    /** 第一个参数是工号（user_code）——现在的主收件来源；cursor 设为哨兵值以验证它不再被使用。 */
+    private AgentDevice device(String userCode, String gitEmail, LocalDateTime lastEmail) {
         AgentDevice d = new AgentDevice();
         d.setAgentId("a-1");
-        d.setUserCode("U001");
+        d.setUserCode(userCode);
         d.setHostname("HOST-1");
         d.setOsType("windows");
         d.setAgentVersion("1.0.17");
-        d.setCursorEmail(cursorEmail);
+        d.setCursorEmail("cursor@corp.com"); // 现在应被完全忽略，不作为收件来源
         d.setGitUserEmail(gitEmail);
         d.setLastSeenTime(LocalDateTime.now().minusHours(5));
         d.setLastOfflineEmailTime(lastEmail);
@@ -67,21 +68,23 @@ class OfflineDeviceAlerterTest {
     }
 
     @Test
-    void sendsEmailToCursorEmailAndStampsTime() {
-        AgentDevice d = device("dev@corp.com", "git@corp.com", null);
+    void sendsEmailToUserCodeWhenItIsAnEmail() {
+        // 工号本身就是邮箱 → 直接用工号作收件地址（优先于 git，且忽略 cursor 哨兵）
+        AgentDevice d = device("user@corp.com", "git@corp.com", null);
         when(deviceRepository.findByStatusAndOfflineBefore(eq(AgentDevice.STATUS_ACTIVE), any()))
                 .thenReturn(List.of(d));
 
         alerter.scanAndAlert();
 
-        verify(mailService).send(eq("dev@corp.com"), anyString(), anyString());
+        verify(mailService).send(eq("user@corp.com"), anyString(), anyString());
         assertThat(d.getLastOfflineEmailTime()).isNotNull();
         verify(deviceRepository).save(d);
     }
 
     @Test
-    void fallsBackToGitEmailWhenCursorEmailBlank() {
-        AgentDevice d = device("   ", "git@corp.com", null);
+    void fallsBackToGitEmailWhenUserCodeNotAnEmail() {
+        // 工号 HS10086 不是邮箱 → 跳过工号，退到 git 邮箱（cursor 哨兵仍被忽略）
+        AgentDevice d = device("HS10086", "git@corp.com", null);
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
@@ -91,7 +94,8 @@ class OfflineDeviceAlerterTest {
 
     @Test
     void skipsDeviceWithNoUsableEmail() {
-        AgentDevice d = device(null, null, null);
+        // 工号不是邮箱、git 也没有 → 跳过；即便 cursor 哨兵存在也不发信（证明 cursor 不再兜底）
+        AgentDevice d = device("HS10086", null, null);
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
@@ -103,7 +107,7 @@ class OfflineDeviceAlerterTest {
     @Test
     void skipsDeviceNotifiedWithinDedupWindow() {
         // 上次发信在 3 小时前，dedup 窗口 12 小时内 → 跳过
-        AgentDevice d = device("dev@corp.com", null, LocalDateTime.now().minusHours(3));
+        AgentDevice d = device("user@corp.com", null, LocalDateTime.now().minusHours(3));
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
@@ -114,12 +118,12 @@ class OfflineDeviceAlerterTest {
     @Test
     void reNotifiesWhenLastEmailOlderThanDedupWindow() {
         // 上次发信在 13 小时前，超过 12 小时 dedup 窗口 → 重新提醒
-        AgentDevice d = device("dev@corp.com", null, LocalDateTime.now().minusHours(13));
+        AgentDevice d = device("user@corp.com", null, LocalDateTime.now().minusHours(13));
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
 
-        verify(mailService).send(eq("dev@corp.com"), anyString(), anyString());
+        verify(mailService).send(eq("user@corp.com"), anyString(), anyString());
     }
 
     @Test
@@ -148,14 +152,15 @@ class OfflineDeviceAlerterTest {
     void includesWindowsReinstallCommandWhenBaseUrlSet() {
         when(config.getString(contains("install_base_url"), anyString()))
                 .thenReturn("https://aiwatch.example.com");
-        AgentDevice d = device("dev@corp.com", null, null);
+        // 工号 U001 不是邮箱 → 收件退到 git；重装命令仍用工号 U001 预填 -UserCode
+        AgentDevice d = device("U001", "git@corp.com", null);
         d.setOsType("windows");
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(mailService).send(eq("dev@corp.com"), anyString(), body.capture());
+        verify(mailService).send(eq("git@corp.com"), anyString(), body.capture());
         assertThat(body.getValue())
                 .contains("aiwatchd.ps1")
                 .contains("https://aiwatch.example.com")
@@ -166,14 +171,14 @@ class OfflineDeviceAlerterTest {
     void includesUnixReinstallCommandForMacDevice() {
         when(config.getString(contains("install_base_url"), anyString()))
                 .thenReturn("https://aiwatch.example.com");
-        AgentDevice d = device("dev@corp.com", null, null);
+        AgentDevice d = device("U001", "git@corp.com", null);
         d.setOsType("macos");
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(mailService).send(eq("dev@corp.com"), anyString(), body.capture());
+        verify(mailService).send(eq("git@corp.com"), anyString(), body.capture());
         assertThat(body.getValue())
                 .contains("aiwatchd.sh")
                 .contains("--user-code 'U001'");
@@ -184,14 +189,14 @@ class OfflineDeviceAlerterTest {
         // 管理员把公网地址误填成 http://http://...（粘贴/手打重复了一截 scheme）
         when(config.getString(contains("install_base_url"), anyString()))
                 .thenReturn("http://http://183.214.120.190:9527");
-        AgentDevice d = device("dev@corp.com", null, null);
+        AgentDevice d = device("U001", "git@corp.com", null);
         d.setOsType("macos");
         when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
 
         alerter.scanAndAlert();
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(mailService).send(eq("dev@corp.com"), anyString(), body.capture());
+        verify(mailService).send(eq("git@corp.com"), anyString(), body.capture());
         assertThat(body.getValue())
                 .contains("http://183.214.120.190:9527/install/aiwatchd.sh")
                 .doesNotContain("http://http://");

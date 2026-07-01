@@ -29,8 +29,6 @@ import com.am.server.web.dto.AiSessionAuditSummaryDto;
 import com.am.server.web.dto.AiSessionDto;
 import com.am.server.web.dto.AiSessionEventDto;
 import com.am.server.web.sse.SseHub;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,6 +38,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import jakarta.annotation.PostConstruct;
 
@@ -49,6 +48,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -78,7 +78,9 @@ import java.util.Set;
 public abstract class AbstractAiSessionIngestService implements MonitorIngestor {
 
     private static final Logger log = LoggerFactory.getLogger(AbstractAiSessionIngestService.class);
-    private static final ObjectMapper EXTRA_JSON_MAPPER = new ObjectMapper();
+
+    /** 同会话并发 ingest 触发 @Version 冲突时的最大尝试次数(含首次)。耗尽本轮跳过,outbox/下轮自愈。 */
+    private static final int MAX_OPTIMISTIC_ATTEMPTS = 3;
 
     protected final AiSessionRepository sessionRepository;
     protected final AiSessionEventRepository eventRepository;
@@ -157,7 +159,12 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             List<AiSessionEvent> sseEvents,
             Map<Long, AiSession> sseSessions,
             Set<LocalDate> dates,
-            Set<String> suppressedChildComposerIds) {
+            Set<String> suppressedChildComposerIds,
+            String userCode) {
+        /** 乐观锁重试耗尽时的空切片:不写任何 SSE / 受影响日期,调用方按"本会话本轮跳过"处理。 */
+        static SessionIngestSlice empty() {
+            return new SessionIngestSlice(0, 0, false, List.of(), Map.of(), Set.of(), Set.of(), null);
+        }
     }
 
     protected AbstractAiSessionIngestService(
@@ -207,7 +214,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
 
         LocalDateTime wallNow = LocalDateTime.now();
         LocalDateTime snapshotCapturedAt = snapshot.getCapturedAt();
-        Set<LocalDate> affectedDates = new LinkedHashSet<>();
+        Map<LocalDate, Set<String>> affectedDateUsers = new LinkedHashMap<>();
         Set<String> suppressedChildComposerIds = new LinkedHashSet<>();
 
         if (hasSessions) {
@@ -221,7 +228,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 eventsWritten += slice.eventsWritten();
                 messagesWritten += slice.messagesWritten();
                 hasActive |= slice.active();
-                affectedDates.addAll(slice.dates());
+                accumulateAffected(affectedDateUsers, slice.dates(), slice.userCode());
                 suppressedChildComposerIds.addAll(slice.suppressedChildComposerIds());
                 publishSse(slice.sseEvents(), slice.sseSessions());
             }
@@ -238,9 +245,10 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         allSuppressed.addAll(suppressedChildComposerIds);
         suppressMergedSubagentSessions(new ArrayList<>(allSuppressed), ctx);
 
-        scheduleDailySummaryRefresh(affectedDates);
+        scheduleDailySummaryRefresh(affectedDateUsers);
         log.debug("{} ingest: sessions={} events={} messages={} active={} dates={}",
-                targetType(), sessionsTouched, eventsWritten, messagesWritten, hasActive, affectedDates);
+                targetType(), sessionsTouched, eventsWritten, messagesWritten, hasActive,
+                affectedDateUsers.keySet());
         return new IngestResult(sessionsTouched, eventsWritten, messagesWritten, hasActive);
     }
 
@@ -249,7 +257,35 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (sessionTxTemplate == null) {
             return ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow);
         }
-        return sessionTxTemplate.execute(status -> ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow));
+        return executeWithOptimisticRetry(
+                () -> sessionTxTemplate.execute(status -> ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow)),
+                SessionIngestSlice::empty,
+                incoming.getSessionId());
+    }
+
+    /**
+     * 乐观锁重试(泛型,便于无 DB 单测):{@code action} 抛 {@link ObjectOptimisticLockingFailureException}
+     * 说明同会话被并发 ingest 抢先提交(先提交者 version+1)。每次重试都在新的 REQUIRES_NEW 事务里重跑
+     * {@code action}(重读会话最新 version + 重算 delta + 重写),最多 {@link #MAX_OPTIMISTIC_ATTEMPTS} 次;
+     * 耗尽则返回 {@code onExhausted}(空切片)本轮跳过,下一 tick / P2 outbox 重放自愈。
+     */
+    <T> T executeWithOptimisticRetry(java.util.function.Supplier<T> action,
+                                     java.util.function.Supplier<T> onExhausted, String sessionId) {
+        int attempts = 0;
+        while (true) {
+            try {
+                return action.get();
+            } catch (ObjectOptimisticLockingFailureException ex) {
+                attempts++;
+                if (attempts >= MAX_OPTIMISTIC_ATTEMPTS) {
+                    log.warn("session ingest optimistic-lock retry exhausted: target={} session={} attempts={} reason={}",
+                            targetType(), sessionId, attempts, ex.toString());
+                    return onExhausted.get();
+                }
+                log.debug("session ingest optimistic-lock conflict, retrying {}/{}: target={} session={}",
+                        attempts, MAX_OPTIMISTIC_ATTEMPTS - 1, targetType(), sessionId);
+            }
+        }
     }
 
     private SessionIngestSlice ingestOneSession(MonitorSessionDto incoming, SignatureContext ctx,
@@ -281,7 +317,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 sseEvents,
                 sseSessions,
                 dates,
-                suppressedChildComposerIds);
+                suppressedChildComposerIds,
+                outcome.session.getUserCode());
     }
 
     /**
@@ -290,21 +327,34 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
      * today + yesterday，4 月会话上报后 4-29 那天的 daily_summary 永远生不出来——画像列表全 0。
      * 这里在 AFTER_COMMIT 时机异步入队，避免拖慢 ingest，也避免 aggregate 时事务尚未提交读不到本次数据。
      */
-    private void scheduleDailySummaryRefresh(Set<LocalDate> dates) {
-        if (dailySummaryAggregator == null || dates.isEmpty()) {
+    private void scheduleDailySummaryRefresh(Map<LocalDate, Set<String>> dateUsers) {
+        if (dailySummaryAggregator == null || dateUsers.isEmpty()) {
             return;
         }
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    dailySummaryAggregator.enqueueRefresh(dates);
+                    dailySummaryAggregator.enqueueRefresh(dateUsers);
                 }
             });
         } else {
             // 极端兜底：上层调用方没开事务（不应该出现，ingest 自身有 @Transactional），
             // 直接派发，aggregator 内部会做幂等。
-            dailySummaryAggregator.enqueueRefresh(dates);
+            dailySummaryAggregator.enqueueRefresh(dateUsers);
+        }
+    }
+
+    /** 把单会话的 (dates × userCode) 并进受影响集合;供 ingest 汇总各会话后交给 daily_summary 增量追新。 */
+    static void accumulateAffected(Map<LocalDate, Set<String>> acc, Set<LocalDate> dates, String userCode) {
+        if (userCode == null || userCode.isBlank() || dates == null) {
+            return;
+        }
+        for (LocalDate d : dates) {
+            if (d == null) {
+                continue;
+            }
+            acc.computeIfAbsent(d, k -> new LinkedHashSet<>()).add(userCode);
         }
     }
 
@@ -409,7 +459,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         evaluateInvalidReason(session);
         sessionRepository.save(session);
 
-        Set<String> sourceRefsInTxn = isNew ? new HashSet<>() : null;
+        Set<String> sourceRefsInTxn = isNew
+                ? new HashSet<>()
+                : new HashSet<>(eventRepository.findSourceRefsByAiSessionId(session.getId()));
         int deltaEvents = writeActivityDeltasFromClient(session, incoming, sseEvents, sourceRefsInTxn);
         if (deltaEvents == 0 && !isNew) {
             deltaEvents = writeDeltasFromRecentMessages(session, incoming, sseEvents, sourceRefsInTxn);
@@ -543,7 +595,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             }
             String ref = d.getSourceRef();
             if (ref != null && !ref.isBlank()
-                    && hasSourceRefEvent(session.getId(), ref, sourceRefsInTxn)) {
+                    && hasSourceRefEvent(ref, sourceRefsInTxn)) {
                 continue;
             }
             long inD = nz(d.getInputTokensDelta());
@@ -561,7 +613,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             }
             if (msgD > 0) {
                 String msgRef = ref == null || ref.isBlank() ? null : ref + ":msg";
-                if (msgRef == null || !hasSourceRefEvent(session.getId(), msgRef, sourceRefsInTxn)) {
+                if (msgRef == null || !hasSourceRefEvent(msgRef, sourceRefsInTxn)) {
                     sseEvents.add(writeEvent(session, AiSessionEventType.MESSAGE_DELTA, session.getStatus(), null,
                             0L, 0L, msgD, d.getEventTime(), msgRef, sourceRefsInTxn));
                     written++;
@@ -586,7 +638,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             if (ref == null || ref.isBlank()) {
                 continue;
             }
-            if (hasSourceRefEvent(session.getId(), ref, sourceRefsInTxn)) {
+            if (hasSourceRefEvent(ref, sourceRefsInTxn)) {
                 continue;
             }
             long inD = nz(m.getInputTokens() == null ? null : m.getInputTokens().longValue());
@@ -599,7 +651,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             String role = m.getRole();
             if ("user".equalsIgnoreCase(role) || "assistant".equalsIgnoreCase(role)) {
                 String msgRef = ref + ":msg";
-                if (!hasSourceRefEvent(session.getId(), msgRef, sourceRefsInTxn)) {
+                if (!hasSourceRefEvent(msgRef, sourceRefsInTxn)) {
                     sseEvents.add(writeEvent(session, AiSessionEventType.MESSAGE_DELTA, session.getStatus(), null,
                             0L, 0L, 1, m.getTimestamp(), msgRef, sourceRefsInTxn));
                     written++;
@@ -609,7 +661,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         return written;
     }
 
-    private AiSessionEvent writeEvent(AiSession session, AiSessionEventType type, String status, String tool,
+    AiSessionEvent writeEvent(AiSession session, AiSessionEventType type, String status, String tool,
                                        long inputTokensDelta, long outputTokensDelta,
                                        int messagesDelta, LocalDateTime time, String sourceRef,
                                        Set<String> sourceRefsInTxn) {
@@ -626,30 +678,22 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         event.setTokensDelta(inputTokensDelta + outputTokensDelta);
         event.setMessagesDelta(messagesDelta);
         if (sourceRef != null && !sourceRef.isBlank()) {
-            event.setExtraJson(buildSourceRefExtraJson(sourceRef));
+            // source_ref 列上限 191(utf8mb4 索引前缀安全长度)。delta/message 的 ref(UUID / msgid)恒短不受影响;
+            // 仅 TOOL_CALL 的 name+"\0"+ts 可能超长(tool_name 设计上可达 512)——它只作"该会话有 source_ref"的标记、
+            // 不作去重键(工具去重走 existingToolKeys),故截断无害,且避免 strict-mode MySQL "Data too long" 拖垮整份上报。
+            event.setSourceRef(sourceRef.length() > 191 ? sourceRef.substring(0, 191) : sourceRef);
             markSourceRef(sourceRefsInTxn, sourceRef);
         }
         return eventRepository.save(event);
     }
 
-    private boolean hasSourceRefEvent(Long sessionId, String sourceRef, Set<String> sourceRefsInTxn) {
-        if (sourceRefsInTxn != null) {
-            return sourceRefsInTxn.contains(sourceRef);
-        }
-        return eventRepository.countByAiSessionIdAndSourceRef(sessionId, sourceRef) > 0;
+    private boolean hasSourceRefEvent(String sourceRef, Set<String> sourceRefsInTxn) {
+        return sourceRefsInTxn.contains(sourceRef);
     }
 
     private static void markSourceRef(Set<String> sourceRefsInTxn, String sourceRef) {
         if (sourceRefsInTxn != null && sourceRef != null && !sourceRef.isBlank()) {
             sourceRefsInTxn.add(sourceRef);
-        }
-    }
-
-    static String buildSourceRefExtraJson(String sourceRef) {
-        try {
-            return EXTRA_JSON_MAPPER.writeValueAsString(Map.of("source_ref", sourceRef));
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("source_ref json encode failed", e);
         }
     }
 
@@ -664,7 +708,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (incoming.getRecentMessages() != null && !incoming.getRecentMessages().isEmpty()) {
             return true;
         }
-        return sessionId != null && eventRepository.countByAiSessionIdWithSourceRef(sessionId) > 0;
+        return sessionId != null && eventRepository.countByAiSessionIdWithAnySourceRef(sessionId) > 0;
     }
 
     /** 快照累计 fallback 只允许正向消息增量；计数回退是解析 artifact，不应进 event 流。 */

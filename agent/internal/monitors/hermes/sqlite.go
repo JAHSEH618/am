@@ -60,16 +60,19 @@ func (p *Provider) readDataVersionFast(path string) int64 {
 func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	cutoffEpoch := float64(cutoff.Unix())
 	rows, err := db.Query(`
+		WITH last_msg AS (
+			SELECT session_id, MAX(timestamp) AS ts FROM messages GROUP BY session_id
+		)
 		SELECT s.id, s.source, IFNULL(s.user_id,''), IFNULL(s.model,''),
 		       IFNULL(s.title,''),
 		       s.started_at, IFNULL(s.ended_at, 0),
 		       s.input_tokens, s.output_tokens,
 		       s.cache_read_tokens, s.cache_write_tokens, s.reasoning_tokens,
 		       s.tool_call_count,
-		       (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id) AS last_msg_ts
+		       lm.ts AS last_msg_ts
 		FROM sessions s
-		WHERE COALESCE((SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = s.id),
-		               s.ended_at, s.started_at) >= ?
+		LEFT JOIN last_msg lm ON lm.session_id = s.id
+		WHERE COALESCE(lm.ts, s.ended_at, s.started_at) >= ?
 		ORDER BY last_msg_ts DESC
 	`, cutoffEpoch)
 	if err != nil {
@@ -124,7 +127,7 @@ func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	}
 
 	// 先把 user/assistant 消息计数批量查出来，避免每个 session 一次往返。
-	if err := fillCounts(db, cutoffEpoch, out); err != nil {
+	if err := fillCounts(db, out); err != nil {
 		return out, err
 	}
 
@@ -135,19 +138,24 @@ func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	return out, nil
 }
 
-func fillCounts(db *sql.DB, cutoffEpoch float64, sessions []*parsedSession) error {
+func fillCounts(db *sql.DB, sessions []*parsedSession) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	// 每个已筛 session 绑一个 host variable 进 IN(...)。hermes 数据集很小（sessions 数远小于
+	// SQLite 的 32766 变量上限，bootstrap 拉到 30d 也是），故不做分批；万一超限 Query 报错，
+	// querySessions 会把错误上抛、Snapshot 退空快照，不会崩。
 	idIndex := make(map[string]int, len(sessions))
+	placeholders := make([]string, len(sessions))
+	args := make([]any, len(sessions))
 	for i, ps := range sessions {
 		idIndex[ps.SessionID] = i
+		placeholders[i] = "?"
+		args[i] = ps.SessionID
 	}
-	rows, err := db.Query(`
-		SELECT session_id, role, COUNT(*)
-		FROM messages
-		WHERE session_id IN (SELECT id FROM sessions WHERE COALESCE(
-		      (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id = sessions.id),
-		      sessions.ended_at, sessions.started_at) >= ?)
-		GROUP BY session_id, role
-	`, cutoffEpoch)
+	query := `SELECT session_id, role, COUNT(*) FROM messages WHERE session_id IN (` +
+		strings.Join(placeholders, ",") + `) GROUP BY session_id, role`
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return err
 	}

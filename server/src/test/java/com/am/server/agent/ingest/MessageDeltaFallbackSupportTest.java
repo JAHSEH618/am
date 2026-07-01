@@ -63,14 +63,14 @@ class MessageDeltaFallbackSupportTest {
     @Test
     void prefersPerItemDeltaPath_storedSourceRefEvents() {
         AiSessionEventRepository events = mock(AiSessionEventRepository.class);
-        when(events.countByAiSessionIdWithSourceRef(188L)).thenReturn(5L);
+        when(events.countByAiSessionIdWithAnySourceRef(188L)).thenReturn(5L);
         assertTrue(ingest(events).prefersPerItemDeltaPath(new MonitorSessionDto(), 188L));
     }
 
     @Test
     void prefersPerItemDeltaPath_aggregateOnlyMonitor() {
         AiSessionEventRepository events = mock(AiSessionEventRepository.class);
-        when(events.countByAiSessionIdWithSourceRef(188L)).thenReturn(0L);
+        when(events.countByAiSessionIdWithAnySourceRef(188L)).thenReturn(0L);
         MonitorSessionDto dto = new MonitorSessionDto();
         assertFalse(ingest(events).prefersPerItemDeltaPath(dto, 188L));
         assertFalse(ingest(events).prefersPerItemDeltaPath(dto, null));

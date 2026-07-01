@@ -7,6 +7,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.TableGenerator;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -35,7 +36,10 @@ import java.time.LocalDateTime;
 public class AiSessionAudit {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.TABLE, generator = "aiSessionAuditIdGen")
+    @TableGenerator(name = "aiSessionAuditIdGen", table = "id_sequences",
+            pkColumnName = "seq_name", valueColumnName = "next_val",
+            pkColumnValue = "ai_session_audit", allocationSize = 50)
     private Long id;
 
     @Column(name = "ai_session_id", nullable = false)
