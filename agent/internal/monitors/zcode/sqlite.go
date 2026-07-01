@@ -47,7 +47,10 @@ func (p *Provider) readDataVersionFast(path string) int64 {
 //
 // 与 opencode 不同：session 表没有 token / model 列，故这里只取标识 + 时间，
 // token / model 由 fillRecent 从 message.data 累加 / 提取。
-func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
+//
+// 会话级记忆化：time_updated 未变的 session 复用 p.scanCache 里上次 fillRecent 装配好的结果，
+// 跳过本轮的 message/part 重读；time_updated 前进（或为 NULL/0，无法判定）的 session 照常重读。
+func (p *Provider) querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	cutoffMs := cutoff.UnixMilli()
 	rows, err := db.Query(`
 		SELECT id, IFNULL(project_id,''), IFNULL(directory,''), IFNULL(title,''), IFNULL(version,''),
@@ -63,6 +66,7 @@ func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 	defer func() { _ = rows.Close() }()
 
 	out := make([]*parsedSession, 0, 16)
+	updatedMsOf := make([]int64, 0, 16)
 	for rows.Next() {
 		var (
 			id, projectID, dir, title, version string
@@ -84,20 +88,50 @@ func querySessions(db *sql.DB, cutoff time.Time) ([]*parsedSession, error) {
 			ps.LastActivity = ps.StartedAt
 		}
 		out = append(out, ps)
+		updatedMsOf = append(updatedMsOf, updatedMs)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	for _, ps := range out {
+	seen := make(map[string]struct{}, len(out))
+	for i, ps := range out {
+		id := ps.SessionID
+		seen[id] = struct{}{}
+		updatedMs := updatedMsOf[i]
+
+		if updatedMs > 0 {
+			p.scanMu.Lock()
+			ent, ok := p.scanCache[id]
+			p.scanMu.Unlock()
+			if ok && ent.updatedMs == updatedMs && ent.ps != nil {
+				out[i] = ent.ps
+				continue
+			}
+		}
+
 		fillRecent(db, ps)
+		if updatedMs > 0 {
+			p.scanMu.Lock()
+			p.scanCache[id] = sessionCacheEntry{updatedMs: updatedMs, ps: ps}
+			p.scanMu.Unlock()
+		}
 	}
+
+	p.scanMu.Lock()
+	for id := range p.scanCache {
+		if _, ok := seen[id]; !ok {
+			delete(p.scanCache, id)
+		}
+	}
+	p.scanMu.Unlock()
+
 	return out, nil
 }
 
 // fillRecent 把单 session 的 message/part 装配成 RecentMessages / RecentTools / ActivityDeltas，
 // 统计 user / assistant 消息数，并从 assistant message.data.tokens 累加会话 token 总量
-//（zcode session 表无 token 列，这是会话总量的唯一来源；与 ActivityDelta 的逐 turn 增量同源，
+// （zcode session 表无 token 列，这是会话总量的唯一来源；与 ActivityDelta 的逐 turn 增量同源，
 // 保证 Session 总量 == 各 TOKEN_DELTA 之和这一服务端不变式）。
 func fillRecent(db *sql.DB, ps *parsedSession) {
 	partsByMsg := loadParts(db, ps.SessionID)

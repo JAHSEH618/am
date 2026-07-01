@@ -39,14 +39,27 @@ type Provider struct {
 	// 最近一次扫描看到的 session.version，供 TargetVersion 回报（如 "0.14.9"）。
 	verMu   sync.Mutex
 	version string
+
+	// 会话级记忆化：慢路径里 time_updated 未变的 session 复用上次 fillRecent 结果，跳过 message/part 重读。
+	// 键 = session.id；失效令牌 = session.time_updated（毫秒）。语义同 openharness 的 mtime memoize。
+	scanMu    sync.Mutex
+	scanCache map[string]sessionCacheEntry
+}
+
+// sessionCacheEntry 是单个 session 的记忆化条目：updatedMs 是失效令牌（session.time_updated），
+// ps 是该 updatedMs 下 fillRecent 装配完的结果，可直接复用。
+type sessionCacheEntry struct {
+	updatedMs int64
+	ps        *parsedSession
 }
 
 // New 创建 zcode Provider。watchDir 在 session 没有自带 directory 时作为 git/project 推断兜底。
 func New(watchDir string) *Provider {
 	return &Provider{
-		watchDir: watchDir,
-		gitCache: make(map[string]gitinfo.Info),
-		lookback: monitor.DefaultLookback,
+		watchDir:  watchDir,
+		gitCache:  make(map[string]gitinfo.Info),
+		lookback:  monitor.DefaultLookback,
+		scanCache: make(map[string]sessionCacheEntry),
 	}
 }
 
@@ -109,7 +122,7 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 	defer func() { _ = db.Close() }()
 
 	cutoff := now.Add(-p.lookback)
-	parsed, err := querySessions(db, cutoff)
+	parsed, err := p.querySessions(db, cutoff)
 	if err != nil {
 		return p.empty(), nil
 	}

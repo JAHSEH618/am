@@ -1,11 +1,10 @@
-// zcode Provider 单测：用临时 SQLite 造 zcode 真实布局（cli/db/db.sqlite + session/message/part），
-// 校验 token 从 message.data.tokens 累加、model 取自 assistant modelID、工具抽取与版本回报。
+// OpenCode Provider 单测：用临时 SQLite 造 opencode 真实布局（opencode.db + session/message/part），
+// 校验 session 列 token/model 直取、消息聚合、以及 time_updated 记忆化行为。
 // gz
-package zcode
+package opencode
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -16,13 +15,9 @@ import (
 
 func TestProvider_Snapshot(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AM_ZCODE_DIR", root)
+	t.Setenv("AM_OPENCODE_DIR", root)
 
-	dbDir := filepath.Join(root, "cli", "db")
-	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dbFile := filepath.Join(dbDir, "db.sqlite")
+	dbFile := filepath.Join(root, "opencode.db")
 
 	base := time.Now().Add(-time.Minute).UnixMilli()
 	seedDB(t, dbFile, base)
@@ -42,7 +37,7 @@ func TestProvider_Snapshot(t *testing.T) {
 	}
 	s := snap.Sessions[0]
 
-	if s.SessionID != "sess_unit-test-0000" {
+	if s.SessionID != "ses_unit-test-0000" {
 		t.Errorf("SessionID = %q", s.SessionID)
 	}
 	if s.Cwd != "/Users/x/proj" {
@@ -51,24 +46,24 @@ func TestProvider_Snapshot(t *testing.T) {
 	if s.ProjectName != "proj" {
 		t.Errorf("ProjectName = %q, want proj", s.ProjectName)
 	}
-	if s.Model != "GLM-5.2" {
-		t.Errorf("Model = %q, want GLM-5.2", s.Model)
+	if s.Model != "claude-sonnet-5" {
+		t.Errorf("Model = %q, want claude-sonnet-5", s.Model)
 	}
 	if s.UserMessages != 1 || s.AssistantMessages != 1 {
 		t.Errorf("messages user=%d assistant=%d, want 1/1", s.UserMessages, s.AssistantMessages)
 	}
-	// token 分项累加（单条 assistant 消息）：tokens.input(100) 含缓存，拆出净输入 = 100-8-4 = 88
-	if s.InputTokens != 88 {
-		t.Errorf("InputTokens = %d, want 88 (=100-cacheRead8-cacheWrite4)", s.InputTokens)
+	// opencode token 直取 session 列（非从消息累加）。
+	if s.InputTokens != 200 {
+		t.Errorf("InputTokens = %d, want 200", s.InputTokens)
 	}
-	if s.OutputTokens != 50 {
-		t.Errorf("OutputTokens = %d, want 50", s.OutputTokens)
+	if s.OutputTokens != 80 {
+		t.Errorf("OutputTokens = %d, want 80", s.OutputTokens)
 	}
-	if s.CacheReadTokens != 8 {
-		t.Errorf("CacheReadTokens = %d, want 8", s.CacheReadTokens)
+	if s.CacheReadTokens != 12 {
+		t.Errorf("CacheReadTokens = %d, want 12", s.CacheReadTokens)
 	}
-	if s.CacheCreateTokens != 4 {
-		t.Errorf("CacheCreateTokens = %d, want 4", s.CacheCreateTokens)
+	if s.CacheCreateTokens != 6 {
+		t.Errorf("CacheCreateTokens = %d, want 6", s.CacheCreateTokens)
 	}
 	if len(s.RecentTools) != 1 || s.RecentTools[0].Name != "Read" {
 		t.Errorf("RecentTools = %+v, want one Read", s.RecentTools)
@@ -80,9 +75,6 @@ func TestProvider_Snapshot(t *testing.T) {
 	if len(s.ActivityDeltas) == 0 {
 		t.Errorf("ActivityDeltas empty")
 	}
-	if got := p.TargetVersion(); got != "0.14.9" {
-		t.Errorf("TargetVersion = %q, want 0.14.9", got)
-	}
 }
 
 // TestProvider_MemoizesUnchangedSession 证明慢路径（data_version 已前进）里，time_updated 未变的
@@ -91,21 +83,17 @@ func TestProvider_Snapshot(t *testing.T) {
 // 随后反向验证：推进 time_updated 并写入新消息，第三次 Snapshot 必须反映新数据（证明"变了就重读"）。
 func TestProvider_MemoizesUnchangedSession(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("AM_ZCODE_DIR", root)
+	t.Setenv("AM_OPENCODE_DIR", root)
 
-	dbDir := filepath.Join(root, "cli", "db")
-	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	dbFile := filepath.Join(dbDir, "db.sqlite")
+	dbFile := filepath.Join(root, "opencode.db")
 
 	base := time.Now().Add(-time.Minute).UnixMilli()
 	seedDB(t, dbFile, base)
 
-	const sid = "sess_unit-test-0000"
+	const sid = "ses_unit-test-0000"
 
 	p := New("/tmp/fallback")
-	p.SetLookback(10 * 365 * 24 * time.Hour) // 大窗口，避免 fixture 时间过期
+	p.SetLookback(10 * 365 * 24 * time.Hour)
 
 	snap1, err := p.Snapshot(t.Context())
 	if err != nil {
@@ -174,7 +162,7 @@ func TestProvider_MemoizesUnchangedSession(t *testing.T) {
 
 // TestProvider_Empty 无 db 时应优雅返回空快照而非报错。
 func TestProvider_Empty(t *testing.T) {
-	t.Setenv("AM_ZCODE_DIR", t.TempDir()) // 目录存在但无 cli/db/db.sqlite
+	t.Setenv("AM_OPENCODE_DIR", t.TempDir()) // 目录存在但无 opencode.db
 	p := New("")
 	snap, err := p.Snapshot(t.Context())
 	if err != nil {
@@ -195,7 +183,9 @@ func seedDB(t *testing.T, path string, base int64) {
 
 	stmts := []string{
 		`CREATE TABLE session (
-			id text primary key, project_id text, directory text, title text, version text,
+			id text primary key, directory text, title text, version text, model text,
+			tokens_input integer, tokens_output integer, tokens_reasoning integer,
+			tokens_cache_read integer, tokens_cache_write integer,
 			time_created integer, time_updated integer, time_archived integer
 		)`,
 		`CREATE TABLE message (
@@ -211,17 +201,20 @@ func seedDB(t *testing.T, path string, base int64) {
 		}
 	}
 
-	const sid = "sess_unit-test-0000"
+	const sid = "ses_unit-test-0000"
 	if _, err := db.Exec(
-		`INSERT INTO session(id,project_id,directory,title,version,time_created,time_updated,time_archived)
-		 VALUES(?,?,?,?,?,?,?,NULL)`,
-		sid, "proj-1", "/Users/x/proj", "hi'", "0.14.9", base, base+10000); err != nil {
+		`INSERT INTO session(id,directory,title,version,model,
+			tokens_input,tokens_output,tokens_reasoning,tokens_cache_read,tokens_cache_write,
+			time_created,time_updated,time_archived)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)`,
+		sid, "/Users/x/proj", "hi", "0.1.53", "claude-sonnet-5",
+		200, 80, 5, 12, 6, base, base+10000); err != nil {
 		t.Fatalf("session: %v", err)
 	}
 
-	userData := `{"role":"user","model":{"modelID":"GLM-5.2","providerID":"builtin:bigmodel-start-plan"},"time":{"created":` + itoa(base) + `}}`
-	asstData := `{"role":"assistant","modelID":"GLM-5.2","providerID":"builtin:bigmodel-start-plan","mode":"build",` +
-		`"tokens":{"input":100,"output":50,"reasoning":7,"cache":{"read":8,"write":4}},` +
+	userData := `{"role":"user","time":{"created":` + itoa(base) + `}}`
+	asstData := `{"role":"assistant","modelID":"claude-sonnet-5",` +
+		`"tokens":{"input":50,"output":20,"reasoning":2,"cache":{"read":3,"write":1}},` +
 		`"time":{"created":` + itoa(base+1000) + `,"completed":` + itoa(base+5000) + `}}`
 
 	if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,data) VALUES(?,?,?,?)`,
@@ -233,14 +226,11 @@ func seedDB(t *testing.T, path string, base int64) {
 		t.Fatalf("msg m2: %v", err)
 	}
 
-	// 覆盖已确认的真实 part 形状：text / reasoning(→thinking) / tool(含 state 嵌套) / step-finish / step-start
 	parts := []struct{ id, msg, data string }{
-		{"p1", "m1", `{"type":"text","text":"hi","time":{"start":` + itoa(base) + `,"end":` + itoa(base) + `}}`},
+		{"p1", "m1", `{"type":"text","text":"hi"}`},
 		{"p2", "m2", `{"type":"text","text":"hello there"}`},
 		{"p3", "m2", `{"type":"reasoning","text":"let me think"}`},
-		{"p4", "m2", `{"type":"tool","tool":"Read","callID":"call_x","state":{"status":"completed","title":"Read","input":{"file_path":"/a/b"},"output":"...","time":{"start":1,"end":2}}}`},
-		{"p5", "m2", `{"type":"step-finish","cost":0,"reason":"stop","tokens":{"cache":{"read":8,"write":4},"input":100,"output":50,"reasoning":7,"total":150}}`}, // 应被忽略
-		{"p6", "m2", `{"type":"step-start"}`}, // 应被忽略
+		{"p4", "m2", `{"type":"tool","tool":"Read","state":{"status":"completed"}}`},
 	}
 	for _, pt := range parts {
 		if _, err := db.Exec(`INSERT INTO part(id,message_id,session_id,data) VALUES(?,?,?,?)`,
