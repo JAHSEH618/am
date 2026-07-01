@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -140,5 +141,27 @@ class DailySummaryAggregatorIncrementalTest {
         pr.setAccessible(true);
         ((Map<LocalDate, java.util.concurrent.ScheduledFuture<?>>) pr.get(aggregator))
                 .values().forEach(f -> f.cancel(false));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void incrementalPartitionsUsersIntoChunksOf50() {
+        // 120 用户 → 3 批(50+50+20)→ 3 个独立事务 aggregateChunk → 3 次 saveAll,并集 = 全部 120 人
+        LinkedHashSet<String> users = new LinkedHashSet<>();
+        for (int i = 0; i < 120; i++) {
+            users.add("U" + i);
+        }
+
+        int touched = aggregator.aggregate(LocalDate.of(2026, 7, 1), users);
+
+        assertThat(touched).isEqualTo(120);
+        ArgumentCaptor<List<DailySummary>> captor = ArgumentCaptor.forClass(List.class);
+        verify(summaryRepository, times(3)).saveAll(captor.capture());
+        List<String> saved = new java.util.ArrayList<>();
+        for (List<DailySummary> batch : captor.getAllValues()) {
+            assertThat(batch.size()).isLessThanOrEqualTo(50);
+            batch.forEach(r -> saved.add(r.getUserCode()));
+        }
+        assertThat(saved).hasSize(120).containsAll(users);
     }
 }
