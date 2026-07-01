@@ -40,6 +40,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import jakarta.annotation.PostConstruct;
 
@@ -80,6 +81,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
 
     private static final Logger log = LoggerFactory.getLogger(AbstractAiSessionIngestService.class);
     private static final ObjectMapper EXTRA_JSON_MAPPER = new ObjectMapper();
+
+    /** 同会话并发 ingest 触发 @Version 冲突时的最大尝试次数(含首次)。耗尽本轮跳过,outbox/下轮自愈。 */
+    private static final int MAX_OPTIMISTIC_ATTEMPTS = 3;
 
     protected final AiSessionRepository sessionRepository;
     protected final AiSessionEventRepository eventRepository;
@@ -160,6 +164,10 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             Set<LocalDate> dates,
             Set<String> suppressedChildComposerIds,
             String userCode) {
+        /** 乐观锁重试耗尽时的空切片:不写任何 SSE / 受影响日期,调用方按"本会话本轮跳过"处理。 */
+        static SessionIngestSlice empty() {
+            return new SessionIngestSlice(0, 0, false, List.of(), Map.of(), Set.of(), Set.of(), null);
+        }
     }
 
     protected AbstractAiSessionIngestService(
@@ -252,7 +260,35 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (sessionTxTemplate == null) {
             return ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow);
         }
-        return sessionTxTemplate.execute(status -> ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow));
+        return executeWithOptimisticRetry(
+                () -> sessionTxTemplate.execute(status -> ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow)),
+                SessionIngestSlice::empty,
+                incoming.getSessionId());
+    }
+
+    /**
+     * 乐观锁重试(泛型,便于无 DB 单测):{@code action} 抛 {@link ObjectOptimisticLockingFailureException}
+     * 说明同会话被并发 ingest 抢先提交(先提交者 version+1)。每次重试都在新的 REQUIRES_NEW 事务里重跑
+     * {@code action}(重读会话最新 version + 重算 delta + 重写),最多 {@link #MAX_OPTIMISTIC_ATTEMPTS} 次;
+     * 耗尽则返回 {@code onExhausted}(空切片)本轮跳过,下一 tick / P2 outbox 重放自愈。
+     */
+    <T> T executeWithOptimisticRetry(java.util.function.Supplier<T> action,
+                                     java.util.function.Supplier<T> onExhausted, String sessionId) {
+        int attempts = 0;
+        while (true) {
+            try {
+                return action.get();
+            } catch (ObjectOptimisticLockingFailureException ex) {
+                attempts++;
+                if (attempts >= MAX_OPTIMISTIC_ATTEMPTS) {
+                    log.warn("session ingest optimistic-lock retry exhausted: target={} session={} attempts={} reason={}",
+                            targetType(), sessionId, attempts, ex.toString());
+                    return onExhausted.get();
+                }
+                log.debug("session ingest optimistic-lock conflict, retrying {}/{}: target={} session={}",
+                        attempts, MAX_OPTIMISTIC_ATTEMPTS - 1, targetType(), sessionId);
+            }
+        }
     }
 
     private SessionIngestSlice ingestOneSession(MonitorSessionDto incoming, SignatureContext ctx,
