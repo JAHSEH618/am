@@ -142,6 +142,9 @@ func fillCounts(db *sql.DB, sessions []*parsedSession) error {
 	if len(sessions) == 0 {
 		return nil
 	}
+	// 每个已筛 session 绑一个 host variable 进 IN(...)。hermes 数据集很小（sessions 数远小于
+	// SQLite 的 32766 变量上限，bootstrap 拉到 30d 也是），故不做分批；万一超限 Query 报错，
+	// querySessions 会把错误上抛、Snapshot 退空快照，不会崩。
 	idIndex := make(map[string]int, len(sessions))
 	placeholders := make([]string, len(sessions))
 	args := make([]any, len(sessions))

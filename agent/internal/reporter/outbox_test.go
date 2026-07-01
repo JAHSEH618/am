@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -121,5 +120,4 @@ func TestDrain_StopsOnSendError(t *testing.T) {
 	if got := countJSON(t, o.dir); got != 2 {
 		t.Fatalf("files left = %d, want 2", got)
 	}
-	_ = filepath.Separator // keep filepath imported if unused otherwise
 }
