@@ -779,3 +779,21 @@ INSERT IGNORE INTO sys_config
     (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
 VALUES
     ('console.ip_allowlist', '', 'string', 'console', 0, '管理控制台 IP 白名单（逗号分隔，精确 IP 或前缀如 10.0.；留空=放行所有）。非空时仅这些来源可访问 /console/** 与 admin/dashboard 接口', 'seed', NOW(), NOW());
+
+-- ============================================================================
+-- id 预分配序列表(P3-3b):高写表 IDENTITY→@TableGenerator 解锁 JDBC 批量 INSERT。
+-- 种子 next_val = 各表当前 MAX(id)+1000 缓冲,避免与既有行撞主键(缓冲 >> allocationSize=50,
+-- 任何 pooled 优化器语义下首块 id 都 > MAX(id))。INSERT IGNORE 幂等:行已存在则跳过
+-- (app 已接管 next_val,勿覆盖)。⚠️ 存量 prod 库升级须在 app 启动前先跑本段种子(见计划部署节)。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS id_sequences
+(
+    seq_name VARCHAR(64) NOT NULL,
+    next_val BIGINT      NOT NULL,
+    PRIMARY KEY (seq_name)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'Hibernate 表生成器 id 预分配';
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_event',   COALESCE(MAX(id), 0) + 1000 FROM ai_session_event;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_message', COALESCE(MAX(id), 0) + 1000 FROM ai_session_message;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_audit',   COALESCE(MAX(id), 0) + 1000 FROM ai_session_audit;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit',         COALESCE(MAX(id), 0) + 1000 FROM git_commit;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit_file',    COALESCE(MAX(id), 0) + 1000 FROM git_commit_file;
