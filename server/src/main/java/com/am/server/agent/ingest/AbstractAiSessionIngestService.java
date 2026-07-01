@@ -49,6 +49,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -157,7 +158,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             List<AiSessionEvent> sseEvents,
             Map<Long, AiSession> sseSessions,
             Set<LocalDate> dates,
-            Set<String> suppressedChildComposerIds) {
+            Set<String> suppressedChildComposerIds,
+            String userCode) {
     }
 
     protected AbstractAiSessionIngestService(
@@ -207,7 +209,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
 
         LocalDateTime wallNow = LocalDateTime.now();
         LocalDateTime snapshotCapturedAt = snapshot.getCapturedAt();
-        Set<LocalDate> affectedDates = new LinkedHashSet<>();
+        Map<LocalDate, Set<String>> affectedDateUsers = new LinkedHashMap<>();
         Set<String> suppressedChildComposerIds = new LinkedHashSet<>();
 
         if (hasSessions) {
@@ -221,7 +223,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 eventsWritten += slice.eventsWritten();
                 messagesWritten += slice.messagesWritten();
                 hasActive |= slice.active();
-                affectedDates.addAll(slice.dates());
+                accumulateAffected(affectedDateUsers, slice.dates(), slice.userCode());
                 suppressedChildComposerIds.addAll(slice.suppressedChildComposerIds());
                 publishSse(slice.sseEvents(), slice.sseSessions());
             }
@@ -238,9 +240,10 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         allSuppressed.addAll(suppressedChildComposerIds);
         suppressMergedSubagentSessions(new ArrayList<>(allSuppressed), ctx);
 
-        scheduleDailySummaryRefresh(affectedDates);
+        scheduleDailySummaryRefresh(affectedDateUsers);
         log.debug("{} ingest: sessions={} events={} messages={} active={} dates={}",
-                targetType(), sessionsTouched, eventsWritten, messagesWritten, hasActive, affectedDates);
+                targetType(), sessionsTouched, eventsWritten, messagesWritten, hasActive,
+                affectedDateUsers.keySet());
         return new IngestResult(sessionsTouched, eventsWritten, messagesWritten, hasActive);
     }
 
@@ -281,7 +284,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 sseEvents,
                 sseSessions,
                 dates,
-                suppressedChildComposerIds);
+                suppressedChildComposerIds,
+                outcome.session.getUserCode());
     }
 
     /**
@@ -290,21 +294,34 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
      * today + yesterday，4 月会话上报后 4-29 那天的 daily_summary 永远生不出来——画像列表全 0。
      * 这里在 AFTER_COMMIT 时机异步入队，避免拖慢 ingest，也避免 aggregate 时事务尚未提交读不到本次数据。
      */
-    private void scheduleDailySummaryRefresh(Set<LocalDate> dates) {
-        if (dailySummaryAggregator == null || dates.isEmpty()) {
+    private void scheduleDailySummaryRefresh(Map<LocalDate, Set<String>> dateUsers) {
+        if (dailySummaryAggregator == null || dateUsers.isEmpty()) {
             return;
         }
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    dailySummaryAggregator.enqueueRefresh(dates);
+                    dailySummaryAggregator.enqueueRefresh(dateUsers);
                 }
             });
         } else {
             // 极端兜底：上层调用方没开事务（不应该出现，ingest 自身有 @Transactional），
             // 直接派发，aggregator 内部会做幂等。
-            dailySummaryAggregator.enqueueRefresh(dates);
+            dailySummaryAggregator.enqueueRefresh(dateUsers);
+        }
+    }
+
+    /** 把单会话的 (dates × userCode) 并进受影响集合;供 ingest 汇总各会话后交给 daily_summary 增量追新。 */
+    static void accumulateAffected(Map<LocalDate, Set<String>> acc, Set<LocalDate> dates, String userCode) {
+        if (userCode == null || userCode.isBlank() || dates == null) {
+            return;
+        }
+        for (LocalDate d : dates) {
+            if (d == null) {
+                continue;
+            }
+            acc.computeIfAbsent(d, k -> new LinkedHashSet<>()).add(userCode);
         }
     }
 

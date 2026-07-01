@@ -16,6 +16,7 @@ import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -101,5 +102,43 @@ class DailySummaryAggregatorIncrementalTest {
         verify(summaryRepository).saveAll(captor.capture()); // 3 人 < 一批 50，仍一次 saveAll
         assertThat(captor.getValue()).extracting(DailySummary::getUserCode)
                 .containsExactlyInAnyOrder("A", "B", "C");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void enqueueRefreshMapMergesUsersPerDateWithinDebounce() throws Exception {
+        LocalDate d = LocalDate.of(2026, 7, 1);
+        aggregator.enqueueRefresh(java.util.Map.of(d, Set.of("U1")));
+        aggregator.enqueueRefresh(java.util.Map.of(d, Set.of("U2")));
+
+        Field pu = DailySummaryAggregator.class.getDeclaredField("pendingUsers");
+        pu.setAccessible(true);
+        Map<LocalDate, Set<String>> pending = (Map<LocalDate, Set<String>>) pu.get(aggregator);
+        assertThat(pending.get(d)).containsExactlyInAnyOrder("U1", "U2");
+
+        // 清理：取消 15s 延迟任务，避免测试退出后在 mock 上跑增量
+        Field pr = DailySummaryAggregator.class.getDeclaredField("pendingRefresh");
+        pr.setAccessible(true);
+        ((Map<LocalDate, java.util.concurrent.ScheduledFuture<?>>) pr.get(aggregator))
+                .values().forEach(f -> f.cancel(false));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fullRequestSurvivesLaterIncrementalEnqueue() throws Exception {
+        LocalDate d = LocalDate.of(2026, 7, 1);
+        aggregator.enqueueRefresh(java.util.List.of(d));               // 全量(admin/backfill)
+        aggregator.enqueueRefresh(java.util.Map.of(d, Set.of("U1")));  // 随后 ingest 增量,不得降级全量
+
+        Field pf = DailySummaryAggregator.class.getDeclaredField("pendingFull");
+        pf.setAccessible(true);
+        Set<LocalDate> pendingFull = (Set<LocalDate>) pf.get(aggregator);
+        assertThat(pendingFull).as("全量标记必须在后续增量入队后仍存活 → 触发时跑全量而非增量").contains(d);
+
+        // 清理延迟任务,避免 15s 后在 mock 上跑聚合
+        Field pr = DailySummaryAggregator.class.getDeclaredField("pendingRefresh");
+        pr.setAccessible(true);
+        ((Map<LocalDate, java.util.concurrent.ScheduledFuture<?>>) pr.get(aggregator))
+                .values().forEach(f -> f.cancel(false));
     }
 }

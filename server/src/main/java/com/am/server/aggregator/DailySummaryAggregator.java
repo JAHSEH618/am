@@ -185,6 +185,14 @@ public class DailySummaryAggregator {
      */
     private static final long REFRESH_DEBOUNCE_MS = 15_000L;
     private final ConcurrentHashMap<LocalDate, ScheduledFuture<?>> pendingRefresh = new ConcurrentHashMap<>();
+    /** 与 {@link #pendingRefresh} 同键:该日 debounce 窗口内累积的受影响 user 并集,任务触发时 drain。 */
+    private final ConcurrentHashMap<LocalDate, Set<String>> pendingUsers = new ConcurrentHashMap<>();
+    /**
+     * 该日 debounce 窗口内是否存在"全量重算"请求(admin 切换 active-types / backfill 历史回填)。
+     * 全量优先:一旦某日被标记全量,即便随后 ingest 增量入队也必须跑全量,不能被降级为增量
+     * ——否则并发 ingest 会静默吞掉 admin/backfill 的全员重算。
+     */
+    private final Set<LocalDate> pendingFull = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService refreshExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "daily-summary-refresh");
         t.setDaemon(true);
@@ -197,11 +205,9 @@ public class DailySummaryAggregator {
     }
 
     /**
-     * 把本次 ingest 涉及的工作日入队，{@link #REFRESH_DEBOUNCE_MS} 后由后台线程跑一次
-     * {@link #aggregate}。同一天在 debounce 窗口内多次入队只会执行 1 次（取消前一次延迟任务）。
-     *
-     * <p>调用方：{@link com.am.server.agent.ingest.AbstractAiSessionIngestService}
-     * 在 AFTER_COMMIT 时机派发，保证后台线程能读到本次 ingest 写入的 event / message。
+     * 全量追新入队:把涉及的工作日标记为"需全量重算"并 debounce。
+     * <p>调用方:历史 backfill、admin 切换 active-types 等——它们需要重算该日**全体**用户,
+     * 不能被 ingest 增量降级。
      */
     public void enqueueRefresh(Collection<LocalDate> dates) {
         if (dates == null || dates.isEmpty()) {
@@ -209,25 +215,67 @@ public class DailySummaryAggregator {
         }
         for (LocalDate d : dates) {
             if (d == null) continue;
-            pendingRefresh.compute(d, (date, prev) -> {
-                if (prev != null) {
-                    prev.cancel(false);
-                }
-                return refreshExecutor.schedule(() -> {
-                    try {
-                        int users = self.aggregate(date);
-                        lastAggregatedAt.put(date, LocalDateTime.now());
-                        if (users > 0) {
-                            log.debug("daily summary refreshed (debounced): date={} users={}", date, users);
-                        }
-                    } catch (Exception ex) {
-                        log.warn("daily summary refresh failed: date={} reason={}", date, ex.toString());
-                    } finally {
-                        pendingRefresh.remove(date);
-                    }
-                }, REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-            });
+            pendingFull.add(d);
+            scheduleDebounced(d);
         }
+    }
+
+    /**
+     * ingest 追新:按 (date -> 受影响 user 集) 入队。debounce 窗口内同日多次入队合并用户并集,
+     * {@link #REFRESH_DEBOUNCE_MS} 后跑一次 {@link #aggregate(LocalDate, Set)} 增量核
+     * (除非该日已被 {@link #enqueueRefresh(Collection)} 标记全量——那时跑全量)。
+     */
+    public void enqueueRefresh(Map<LocalDate, Set<String>> dateUsers) {
+        if (dateUsers == null || dateUsers.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<LocalDate, Set<String>> en : dateUsers.entrySet()) {
+            LocalDate d = en.getKey();
+            Set<String> users = en.getValue();
+            if (d == null || users == null || users.isEmpty()) {
+                continue;
+            }
+            pendingUsers.compute(d, (date, acc) -> {
+                Set<String> merged = (acc != null) ? acc : ConcurrentHashMap.newKeySet();
+                merged.addAll(users);
+                return merged;
+            });
+            scheduleDebounced(d);
+        }
+    }
+
+    /**
+     * 共享 debounce 调度:同日 {@link #REFRESH_DEBOUNCE_MS} 内多次入队合并成 1 次(取消前一次延迟任务)。
+     * 触发时"全量优先"——该日若被标记全量则跑 {@link #aggregate(LocalDate)},否则按累积 user 集跑
+     * {@link #aggregate(LocalDate, Set)} 增量核。
+     */
+    private void scheduleDebounced(LocalDate d) {
+        pendingRefresh.compute(d, (date, prev) -> {
+            if (prev != null) {
+                prev.cancel(false);
+            }
+            return refreshExecutor.schedule(() -> {
+                boolean full = pendingFull.remove(date);
+                Set<String> users = pendingUsers.remove(date);
+                try {
+                    int n;
+                    if (full) {
+                        n = self.aggregate(date);
+                    } else {
+                        n = (users == null || users.isEmpty()) ? 0 : self.aggregate(date, users);
+                    }
+                    lastAggregatedAt.put(date, LocalDateTime.now());
+                    if (n > 0) {
+                        log.debug("daily summary refreshed (debounced, {}): date={} users={}",
+                                full ? "full" : "incremental", date, n);
+                    }
+                } catch (Exception ex) {
+                    log.warn("daily summary refresh failed: date={} reason={}", date, ex.toString());
+                } finally {
+                    pendingRefresh.remove(date);
+                }
+            }, REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        });
     }
 
     /**
