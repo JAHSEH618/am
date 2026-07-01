@@ -61,6 +61,12 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, Long> {
     @Query("SELECT g.userCode, COUNT(g) FROM GitCommit g WHERE g.commitTime >= :t0 AND g.commitTime < :t1 GROUP BY g.userCode")
     List<Object[]> countGroupedByUserCodeInCommitWindow(@Param("t0") LocalDateTime t0, @Param("t1") LocalDateTime t1);
 
+    /** 员工列表批量（受影响用户过滤版）：窗口 [t0,t1) 内、user_code ∈ userCodes 的按 user 聚合提交条数 */
+    @Query("SELECT g.userCode, COUNT(g) FROM GitCommit g WHERE g.commitTime >= :t0 AND g.commitTime < :t1 AND g.userCode IN :userCodes GROUP BY g.userCode")
+    List<Object[]> countGroupedByUserCodeInCommitWindowAndUserCodeIn(
+            @Param("t0") LocalDateTime t0, @Param("t1") LocalDateTime t1,
+            @Param("userCodes") Collection<String> userCodes);
+
     /**
      * 员工数据弹框：某员工在窗口 <code>[t0, t1)</code> 内的提交（可跨多仓库），按时间倒序。
      */

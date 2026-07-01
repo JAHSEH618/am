@@ -297,16 +297,10 @@ public class DailySummaryAggregator {
     }
 
     /**
-     * 聚合指定日期。手动触发与 cron 都走这里。
-     *
-     * @param workDate 要聚合的工作日（按 server 本地时区解释）
-     * @return 当日产生 / 更新的 user 数
+     * 全量聚合指定日期：发现当日需刷新的全部用户（事件流 distinct user + 仍有非零快照的 user），
+     * 再委托给增量核。手动触发（AdminController）、cron（daily/hourly）、ensureFresh 走这里。
      */
-    @Transactional
     public int aggregate(LocalDate workDate) {
-        LocalDateTime dayStart = workDate.atStartOfDay();
-        LocalDateTime dayEnd = workDate.plusDays(1).atStartOfDay();
-
         // v2.10 起：只聚合 activeTargetTypes 内的 agent 数据。客户端继续采集全部 6 种 agent，
         // 但 monitor_target.enabled=0 的 agent 不参与日聚合 → 下游 daily_summary 自动干净。
         // 切换开关后历史 daily_summary 需要管理员触发"历史重算"才会按新口径回填。
@@ -315,35 +309,52 @@ public class DailySummaryAggregator {
             log.info("aggregate: date={} no active target types (all disabled), skip", workDate);
             return 0;
         }
-
+        LocalDateTime dayStart = workDate.atStartOfDay();
+        LocalDateTime dayEnd = workDate.plusDays(1).atStartOfDay();
         // 拉当日活跃用户：从 ai_session_event 流取 distinct user_code（全 provider 兼容），
         // 且仅统计 ai_session.invalid_reason IS NULL 的有效会话（见 Repository JPQL）。
         // ai_session_message 只在 provider 上报 recentMessages 时才写，event 流是无条件写的，
         // 所以以 event 为活跃判定真相源更准。
-        List<String> fromEvents = eventRepository
-                .findActiveUsersInWindowAndTargetTypeIn(dayStart, dayEnd, activeTypes);
+        LinkedHashSet<String> userCodes = new LinkedHashSet<>(
+                eventRepository.findActiveUsersInWindowAndTargetTypeIn(dayStart, dayEnd, activeTypes));
         // v2.11：并入「该日 daily_summary 仍有非零 AI 快照」的用户——避免收窄口径后无人命中 event、
         // 旧汇总行永远不刷新（典型：窗口内全是 invalid / 禁用 agent 会话，员工数据仍显示虚高协作时长）。
-        java.util.LinkedHashSet<String> userCodes = new java.util.LinkedHashSet<>(fromEvents);
-        for (String u : summaryRepository.findUserCodesWithNonZeroAiStatsOnDate(workDate)) {
-            userCodes.add(u);
-        }
+        userCodes.addAll(summaryRepository.findUserCodesWithNonZeroAiStatsOnDate(workDate));
         if (userCodes.isEmpty()) {
             log.info("aggregate: date={} no users to aggregate, skip", workDate);
             return 0;
         }
+        return self.aggregate(workDate, userCodes);
+    }
+
+    /**
+     * 增量核：只重算 {@code onlyUsers} 的当日 daily_summary。ingest 追新直接走这条；
+     * 全量版发现用户后也委托到这里。commit 计数按 onlyUsers 过滤，避免全表扫 git_commit。
+     */
+    @Transactional
+    public int aggregate(LocalDate workDate, Set<String> onlyUsers) {
+        if (onlyUsers == null || onlyUsers.isEmpty()) {
+            return 0;
+        }
+        java.util.Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
+        if (activeTypes.isEmpty()) {
+            return 0;
+        }
+        LocalDateTime dayStart = workDate.atStartOfDay();
+        LocalDateTime dayEnd = workDate.plusDays(1).atStartOfDay();
 
         Map<String, Long> commitCountByUser = new HashMap<>();
-        for (Object[] row : gitCommitRepository.countGroupedByUserCodeInCommitWindow(dayStart, dayEnd)) {
+        for (Object[] row : gitCommitRepository
+                .countGroupedByUserCodeInCommitWindowAndUserCodeIn(dayStart, dayEnd, onlyUsers)) {
             if (row == null || row.length < 2 || row[0] == null) {
                 continue;
             }
             commitCountByUser.put(row[0].toString(), toLong(row[1]));
         }
 
-        List<DailySummary> rowsToSave = new ArrayList<>(userCodes.size());
+        List<DailySummary> rowsToSave = new ArrayList<>(onlyUsers.size());
         int touched = 0;
-        for (String userCode : userCodes) {
+        for (String userCode : onlyUsers) {
             UserDailyStats stats = computeForUser(userCode, dayStart, dayEnd, activeTypes);
             stats.aiCommitCount = commitCountByUser.getOrDefault(userCode, 0L).intValue();
             rowsToSave.add(buildSummaryRow(userCode, workDate, stats));
