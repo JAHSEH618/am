@@ -70,6 +70,10 @@ public class AiSessionEvent {
     @Column(name = "extra_json", columnDefinition = "JSON")
     private String extraJson;
 
+    /** 去重锚点(P3-3a 物化自 extra_json)。activity_delta.source_ref / message id / tool+ts。 */
+    @Column(name = "source_ref", length = 191)
+    private String sourceRef;
+
     @CreatedDate
     @Column(name = "created_time", nullable = false, updatable = false)
     private LocalDateTime createdTime;

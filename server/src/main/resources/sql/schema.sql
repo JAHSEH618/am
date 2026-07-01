@@ -350,6 +350,7 @@ CREATE TABLE IF NOT EXISTS ai_session_event
     output_tokens_delta   BIGINT        DEFAULT 0 COMMENT 'TOKEN_DELTA 时 output 增量',
     messages_delta        INT           DEFAULT 0,
     extra_json     JSON          DEFAULT NULL,
+    source_ref     VARCHAR(191)  DEFAULT NULL COMMENT '去重锚点(P3-3a 物化)',
     created_time   DATETIME      NOT NULL,
     PRIMARY KEY (id),
     KEY idx_session_time (ai_session_id, event_time),
@@ -357,7 +358,8 @@ CREATE TABLE IF NOT EXISTS ai_session_event
     KEY idx_event_type (event_type),
     KEY idx_tool_name (tool_name),
     KEY idx_event_time (event_time),
-    KEY idx_target_event_time (target_type, event_time)
+    KEY idx_target_event_time (target_type, event_time),
+    KEY idx_session_sourceref (ai_session_id, source_ref)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'AI 会话活动事件流水';
 
 -- ai_session_message：external_message_id 是去重锚点。
