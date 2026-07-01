@@ -29,8 +29,6 @@ import com.am.server.web.dto.AiSessionAuditSummaryDto;
 import com.am.server.web.dto.AiSessionDto;
 import com.am.server.web.dto.AiSessionEventDto;
 import com.am.server.web.sse.SseHub;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -80,7 +78,6 @@ import java.util.Set;
 public abstract class AbstractAiSessionIngestService implements MonitorIngestor {
 
     private static final Logger log = LoggerFactory.getLogger(AbstractAiSessionIngestService.class);
-    private static final ObjectMapper EXTRA_JSON_MAPPER = new ObjectMapper();
 
     /** 同会话并发 ingest 触发 @Version 冲突时的最大尝试次数(含首次)。耗尽本轮跳过,outbox/下轮自愈。 */
     private static final int MAX_OPTIMISTIC_ATTEMPTS = 3;
@@ -462,7 +459,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         evaluateInvalidReason(session);
         sessionRepository.save(session);
 
-        Set<String> sourceRefsInTxn = isNew ? new HashSet<>() : null;
+        Set<String> sourceRefsInTxn = isNew
+                ? new HashSet<>()
+                : new HashSet<>(eventRepository.findSourceRefsByAiSessionId(session.getId()));
         int deltaEvents = writeActivityDeltasFromClient(session, incoming, sseEvents, sourceRefsInTxn);
         if (deltaEvents == 0 && !isNew) {
             deltaEvents = writeDeltasFromRecentMessages(session, incoming, sseEvents, sourceRefsInTxn);
@@ -596,7 +595,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             }
             String ref = d.getSourceRef();
             if (ref != null && !ref.isBlank()
-                    && hasSourceRefEvent(session.getId(), ref, sourceRefsInTxn)) {
+                    && hasSourceRefEvent(ref, sourceRefsInTxn)) {
                 continue;
             }
             long inD = nz(d.getInputTokensDelta());
@@ -614,7 +613,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             }
             if (msgD > 0) {
                 String msgRef = ref == null || ref.isBlank() ? null : ref + ":msg";
-                if (msgRef == null || !hasSourceRefEvent(session.getId(), msgRef, sourceRefsInTxn)) {
+                if (msgRef == null || !hasSourceRefEvent(msgRef, sourceRefsInTxn)) {
                     sseEvents.add(writeEvent(session, AiSessionEventType.MESSAGE_DELTA, session.getStatus(), null,
                             0L, 0L, msgD, d.getEventTime(), msgRef, sourceRefsInTxn));
                     written++;
@@ -639,7 +638,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             if (ref == null || ref.isBlank()) {
                 continue;
             }
-            if (hasSourceRefEvent(session.getId(), ref, sourceRefsInTxn)) {
+            if (hasSourceRefEvent(ref, sourceRefsInTxn)) {
                 continue;
             }
             long inD = nz(m.getInputTokens() == null ? null : m.getInputTokens().longValue());
@@ -652,7 +651,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             String role = m.getRole();
             if ("user".equalsIgnoreCase(role) || "assistant".equalsIgnoreCase(role)) {
                 String msgRef = ref + ":msg";
-                if (!hasSourceRefEvent(session.getId(), msgRef, sourceRefsInTxn)) {
+                if (!hasSourceRefEvent(msgRef, sourceRefsInTxn)) {
                     sseEvents.add(writeEvent(session, AiSessionEventType.MESSAGE_DELTA, session.getStatus(), null,
                             0L, 0L, 1, m.getTimestamp(), msgRef, sourceRefsInTxn));
                     written++;
@@ -662,7 +661,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         return written;
     }
 
-    private AiSessionEvent writeEvent(AiSession session, AiSessionEventType type, String status, String tool,
+    AiSessionEvent writeEvent(AiSession session, AiSessionEventType type, String status, String tool,
                                        long inputTokensDelta, long outputTokensDelta,
                                        int messagesDelta, LocalDateTime time, String sourceRef,
                                        Set<String> sourceRefsInTxn) {
@@ -679,30 +678,19 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         event.setTokensDelta(inputTokensDelta + outputTokensDelta);
         event.setMessagesDelta(messagesDelta);
         if (sourceRef != null && !sourceRef.isBlank()) {
-            event.setExtraJson(buildSourceRefExtraJson(sourceRef));
+            event.setSourceRef(sourceRef);
             markSourceRef(sourceRefsInTxn, sourceRef);
         }
         return eventRepository.save(event);
     }
 
-    private boolean hasSourceRefEvent(Long sessionId, String sourceRef, Set<String> sourceRefsInTxn) {
-        if (sourceRefsInTxn != null) {
-            return sourceRefsInTxn.contains(sourceRef);
-        }
-        return eventRepository.countByAiSessionIdAndSourceRef(sessionId, sourceRef) > 0;
+    private boolean hasSourceRefEvent(String sourceRef, Set<String> sourceRefsInTxn) {
+        return sourceRefsInTxn.contains(sourceRef);
     }
 
     private static void markSourceRef(Set<String> sourceRefsInTxn, String sourceRef) {
         if (sourceRefsInTxn != null && sourceRef != null && !sourceRef.isBlank()) {
             sourceRefsInTxn.add(sourceRef);
-        }
-    }
-
-    static String buildSourceRefExtraJson(String sourceRef) {
-        try {
-            return EXTRA_JSON_MAPPER.writeValueAsString(Map.of("source_ref", sourceRef));
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("source_ref json encode failed", e);
         }
     }
 
@@ -717,7 +705,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (incoming.getRecentMessages() != null && !incoming.getRecentMessages().isEmpty()) {
             return true;
         }
-        return sessionId != null && eventRepository.countByAiSessionIdWithSourceRef(sessionId) > 0;
+        return sessionId != null && eventRepository.countByAiSessionIdWithAnySourceRef(sessionId) > 0;
     }
 
     /** 快照累计 fallback 只允许正向消息增量；计数回退是解析 artifact，不应进 event 流。 */
