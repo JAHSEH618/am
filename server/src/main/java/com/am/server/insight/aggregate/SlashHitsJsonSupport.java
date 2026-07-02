@@ -77,6 +77,49 @@ public final class SlashHitsJsonSupport {
         return true;
     }
 
+    /** {@link #recomputeExtracted} 的结果：重算后的三列值；{@code changed=false} 表示与现值等价、无需 UPDATE。 */
+    public record ExtractedRecompute(String hitsJson, int commandCount, int skillCount, boolean changed) {}
+
+    /**
+     * 用新鲜提取结果替换 {@code command/skill/noise} 行、保留既有 {@code nl_skill} 行
+     * （同 token 时新行优先，与 {@link #replaceNlSkills} 的去重方向一致），并按现行语义重记数。
+     * 存量回填（{@code SlashAnnotationBackfillPatch}）在 JDBC 行上调用，故收发都是普通值而非实体。
+     */
+    public static ExtractedRecompute recomputeExtracted(
+            String oldHitsJson, int oldCommandCount, int oldSkillCount,
+            UserSlashInvocationExtractor.Annotation fresh) {
+        List<Map<String, String>> freshRows =
+                parseHits(fresh == null ? null : fresh.slashHitsJson());
+        Map<String, Map<String, String>> byToken = new LinkedHashMap<>();
+        for (Map<String, String> row : freshRows) {
+            String token = row.get("token");
+            if (token != null && !token.isBlank()) {
+                byToken.put(token.toLowerCase(Locale.ROOT), row);
+            }
+        }
+        for (Map<String, String> row : parseHits(oldHitsJson)) {
+            if (!"nl_skill".equals(row.getOrDefault("kind", ""))) {
+                continue;
+            }
+            String token = row.get("token");
+            if (token == null || token.isBlank()) {
+                continue;
+            }
+            byToken.putIfAbsent(token.toLowerCase(Locale.ROOT), row);
+        }
+        List<Map<String, String>> merged = new ArrayList<>(byToken.values());
+        int[] counts = countKinds(merged);
+        String json;
+        try {
+            json = merged.isEmpty() ? null : MAPPER.writeValueAsString(merged);
+        } catch (JsonProcessingException e) {
+            return new ExtractedRecompute(oldHitsJson, oldCommandCount, oldSkillCount, false);
+        }
+        boolean changed = counts[0] != oldCommandCount || counts[1] != oldSkillCount
+                || !parseHits(oldHitsJson).equals(merged);
+        return new ExtractedRecompute(json, counts[0], counts[1], changed);
+    }
+
     private static boolean jsonEquivalent(String a, String b) {
         if (a == null || a.isBlank() || "null".equalsIgnoreCase(a.trim())) {
             return b == null || b.isBlank() || "null".equalsIgnoreCase(String.valueOf(b).trim());
@@ -159,22 +202,24 @@ public final class SlashHitsJsonSupport {
         return rows;
     }
 
-    private static void recount(AiSessionMessage userMsg, List<Map<String, String>> merged) {
+    private static int[] countKinds(List<Map<String, String>> rows) {
         int cmd = 0;
         int sk = 0;
-        for (Map<String, String> row : merged) {
+        for (Map<String, String> row : rows) {
             String kind = row.getOrDefault("kind", "");
-            if ("noise".equals(kind)) {
-                continue;
-            }
             if ("command".equals(kind)) {
                 cmd++;
             } else if ("skill".equals(kind) || "nl_skill".equals(kind)) {
                 sk++;
             }
         }
-        userMsg.setSlashCommandCount(cmd);
-        userMsg.setSlashSkillCount(sk);
+        return new int[]{cmd, sk};
+    }
+
+    private static void recount(AiSessionMessage userMsg, List<Map<String, String>> merged) {
+        int[] counts = countKinds(merged);
+        userMsg.setSlashCommandCount(counts[0]);
+        userMsg.setSlashSkillCount(counts[1]);
     }
 
     /** 测试 / 回算用：从 hits 列表写回实体字段 */

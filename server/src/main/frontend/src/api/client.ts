@@ -31,6 +31,7 @@ import type {
   GitCommitPatchResponse,
   ProjectSummary,
   R,
+  TokenTrend,
   ToolStat,
   TopItem,
 } from './types';
@@ -96,6 +97,8 @@ export const fetchTopProjects = (limit = 10) =>
   unwrap<TopItem[]>(http.get('/dashboard/top-projects', { params: { limit } }));
 export const fetchTopEmployees = (limit = 10) =>
   unwrap<TopItem[]>(http.get('/dashboard/top-employees', { params: { limit } }));
+export const fetchTokenTrend = (days = 30) =>
+  unwrap<TokenTrend>(http.get('/dashboard/token-trend', { params: { days } }));
 
 // monitor targets dictionary —— 给前端 Segmented / Tag 颜色映射用
 let monitorTargetsCache: MonitorTarget[] | null = null;

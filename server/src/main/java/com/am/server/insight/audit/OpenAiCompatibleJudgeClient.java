@@ -6,15 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestTemplate;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +32,10 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private static final java.net.http.HttpClient HTTP = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10))
+            .build();
+
     @Override
     public String provider() {
         return "openai-compatible";
@@ -50,8 +47,6 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
             throw new JudgeException("openai-compatible judge: endpoint is empty");
         }
 
-        RestTemplate rest = buildRestTemplate(config);
-
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", config.getModel());
         body.put("messages", List.of(Map.of(
@@ -59,52 +54,59 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
                 "content", prompt
         )));
         body.put("temperature", 0.0);
-        // 不带 response_format：部分网关 / vLLM / Anthropic 兼容层不支持 object 形态参数会 400。
-        // 我们改为在 parseResult 里做 <think> 清洗 + JSON 提取，更通用。
-        // 给足 max_tokens 避免 reasoning model 的 chain-of-thought 把后面真正的 JSON 顶掉。
+        // 不带 response_format:部分网关 / vLLM / Anthropic 兼容层不支持 object 形态参数会 400。
+        // 改为在 parseResult 里做 <think> 清洗 + JSON 提取,更通用。
         body.put("max_tokens", 4096);
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        if (config.getApiKey() != null && !config.getApiKey().isBlank()) {
-            headers.setBearerAuth(config.getApiKey());
-        }
-
         String url = config.getEndpoint().replaceAll("/+$", "") + "/chat/completions";
-
-        try {
-            ResponseEntity<Map> resp = rest.exchange(url,
-                    org.springframework.http.HttpMethod.POST,
-                    new HttpEntity<>(body, headers),
-                    Map.class);
-
-            Map<?, ?> respBody = resp.getBody();
-            if (respBody == null) {
-                throw new JudgeException("openai-compatible judge: empty body");
-            }
-            List<?> choices = (List<?>) respBody.get("choices");
-            if (choices == null || choices.isEmpty()) {
-                throw new JudgeException("openai-compatible judge: no choices");
-            }
-            Map<?, ?> first = (Map<?, ?>) choices.get(0);
-            Map<?, ?> message = (Map<?, ?>) first.get("message");
-            String content = message == null ? null : (String) message.get("content");
-            if (content == null || content.isBlank()) {
-                throw new JudgeException("openai-compatible judge: empty content");
-            }
-            return parseResult(config.getModel(), content);
-        } catch (RestClientException e) {
-            throw new JudgeException("openai-compatible judge call failed: " + e.getMessage(), e);
-        }
-    }
-
-    private RestTemplate buildRestTemplate(JudgeConfig config) {
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
         int timeoutMs = config.getTimeoutMs() <= 0 ? 60_000 : config.getTimeoutMs();
-        factory.setConnectTimeout((int) Duration.ofMillis(timeoutMs).toMillis());
-        factory.setReadTimeout((int) Duration.ofMillis(timeoutMs).toMillis());
-        return new RestTemplate(factory);
+
+        java.net.http.HttpRequest.Builder reqBuilder;
+        try {
+            reqBuilder = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(url))
+                    .timeout(java.time.Duration.ofMillis(timeoutMs))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            MAPPER.writeValueAsString(body), java.nio.charset.StandardCharsets.UTF_8));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new JudgeException("openai-compatible judge: cannot serialize request body", e);
+        }
+        if (config.getApiKey() != null && !config.getApiKey().isBlank()) {
+            reqBuilder.header("Authorization", "Bearer " + config.getApiKey());
+        }
+
+        java.net.http.HttpResponse<String> resp;
+        try {
+            resp = HTTP.send(reqBuilder.build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            // 含 HttpTimeoutException;交由上层 DualJudgeService 重试
+            throw new JudgeException("openai-compatible judge call failed: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new JudgeException("openai-compatible judge call interrupted", e);
+        }
+
+        if (resp.statusCode() / 100 != 2) {
+            throw new JudgeException("openai-compatible judge: HTTP " + resp.statusCode());
+        }
+
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(resp.body());
+        } catch (JsonProcessingException e) {
+            throw new JudgeException("openai-compatible judge: response not JSON", e);
+        }
+        JsonNode choices = root.path("choices");
+        if (!choices.isArray() || choices.isEmpty()) {
+            throw new JudgeException("openai-compatible judge: no choices");
+        }
+        String content = choices.get(0).path("message").path("content").asText(null);
+        if (content == null || content.isBlank()) {
+            throw new JudgeException("openai-compatible judge: empty content");
+        }
+        return parseResult(config.getModel(), content);
     }
 
     /** 解析 LLM JSON 输出；任何字段缺失 / 越界都会抛 JudgeException 让 orchestrator 走重试链路。 */

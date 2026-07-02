@@ -14,7 +14,7 @@ class SlashCommandStatSupportTest {
     @Test
     void resolveSlashHitsJson_fallsBackToContentText() {
         String json = SlashCommandStatSupport.resolveSlashHitsJson(
-                "please run /explore on this", "cursor", null);
+                "/explore this", "cursor", null);
         assertNotNull(json);
         assertTrue(json.contains("/explore"));
     }

@@ -43,8 +43,19 @@ public class InsightProperties {
     /** 同一 session 审计后再增长 N 条消息触发重审。 */
     private int reauditMessageThreshold = 20;
 
-    /** 审计并发 worker 数；每个 worker 串行调双 judge。 */
+    /**
+     * 审计并发 worker 数;每个 worker 串行调双 judge。
+     * 注意有效下游 LLM 网关并发:{@code parallelJudges=true}(默认)时 = 2 × 本值(判官 A/B 并发),
+     * 另叠加后台扫描 2 × {@code auditBackgroundConcurrency}。调高前评估网关承载。
+     */
     private int auditConcurrency = 8;
+
+    /**
+     * 是否让每会话双判官 A/B 并发调用(默认开)。关闭则回退串行(A 完再 B)——
+     * 作为下游 LLM 网关限流的保护开关。并发时有效网关并发 = 2 × {@link #auditConcurrency}
+     * (另叠加后台 2 × {@link #auditBackgroundConcurrency})。
+     */
+    private boolean parallelJudges = true;
 
     /** LLM 外发脱敏：拼 Judge prompt 前对密钥/令牌打码。默认开。 */
     private boolean redactEnabled = true;

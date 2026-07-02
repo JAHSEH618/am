@@ -1,5 +1,6 @@
 package com.am.server.web;
 
+import com.am.server.aggregator.DailySummaryAggregator;
 import com.am.server.common.R;
 import com.am.server.domain.agent.AgentDevice;
 import com.am.server.domain.agent.AgentDeviceRepository;
@@ -10,6 +11,7 @@ import com.am.server.domain.ai.AiSessionStatus;
 import com.am.server.domain.git.GitCommitRepository;
 import com.am.server.domain.session.WorkSession;
 import com.am.server.domain.session.WorkSessionRepository;
+import com.am.server.domain.summary.DailySummaryRepository;
 import com.am.server.config.AgentProperties;
 import com.am.server.insight.config.InsightProperties;
 import com.am.server.service.AiPenetrationService;
@@ -22,8 +24,10 @@ import com.am.server.web.dto.DashboardInsightAuditFastDto;
 import com.am.server.web.dto.DashboardInsightAuditSlowDto;
 import com.am.server.web.dto.DashboardOverviewDto;
 import com.am.server.web.dto.OnlineAgentDto;
+import com.am.server.web.dto.TokenTrendDto;
 import com.am.server.web.dto.TopItemDto;
 import com.am.server.web.sse.SseHub;
+import com.am.server.web.support.TokenTrendSupport;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,6 +87,11 @@ public class DashboardController {
     private final InsightProperties insightProperties;
     private final AgentProperties agentProperties;
     private final AiPenetrationService aiPenetrationService;
+    private final DailySummaryRepository dailySummaryRepository;
+    private final DailySummaryAggregator dailySummaryAggregator;
+
+    /** token-trend 进入前对今日的兜底刷新节流，与 PeopleController.ENSURE_FRESH_TTL 同值。 */
+    private static final Duration ENSURE_FRESH_TTL = Duration.ofSeconds(60);
 
     @GetMapping("/overview")
     public R<DashboardOverviewDto> overview() {
@@ -161,6 +170,23 @@ public class DashboardController {
     public R<AiPenetrationDto> aiPenetration(@RequestParam(defaultValue = "30d") String window) {
         PenetrationWindow w = PenetrationWindow.parse(window);
         return R.ok(new AiPenetrationDto(aiPenetrationService.compute(w), window));
+    }
+
+    /**
+     * 全公司 Token 走势：近 N 天（默认 30，钳 [1,90]）input/output 按日汇总。
+     *
+     * <p>口径 = daily_summary（与员工数据页同源可对账），只含 input+output；
+     * 逐日补零，date 升序。历史日由 00:05/每小时聚合任务定型，仅今日一点在动 ——
+     * 进入前对今日 ensureFresh（60s TTL 节流，稳态零成本），与员工数据页同语义。
+     */
+    @GetMapping("/token-trend")
+    public R<TokenTrendDto> tokenTrend(@RequestParam(defaultValue = "30") int days) {
+        int d = TokenTrendSupport.clampDays(days);
+        LocalDate today = LocalDate.now();
+        LocalDate from = today.minusDays(d - 1L);
+        dailySummaryAggregator.ensureFresh(today, ENSURE_FRESH_TTL);
+        List<Object[]> rows = dailySummaryRepository.sumTokensGroupedByWorkDate(from, today);
+        return R.ok(new TokenTrendDto(TokenTrendSupport.fillDaily(from, today, rows)));
     }
 
     /**

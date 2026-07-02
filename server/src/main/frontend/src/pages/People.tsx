@@ -373,6 +373,12 @@ export default function People() {
             onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
             allowClear={false}
             disabledDate={(d) => d.isAfter(dayjs(), 'day')}
+            presets={[
+              { label: '近7天', value: [dayjs().subtract(6, 'day').startOf('day'), dayjs().startOf('day')] },
+              { label: '近30天', value: [dayjs().subtract(29, 'day').startOf('day'), dayjs().startOf('day')] },
+              { label: '本周', value: defaultRange() },
+              { label: '本月', value: [dayjs().startOf('month'), dayjs().startOf('day')] },
+            ]}
           />
         </div>
       </Card>
@@ -568,6 +574,31 @@ const PersonDetailPanel = memo(function PersonDetailPanel({
     };
   }, [detail]);
 
+  // Token 用量子图:与上方时间线共用 daily_timeline,但 token 量纲(百万级)独立成图,输入/输出堆叠
+  const tokenTrendOption = useMemo(() => {
+    const tl = detail?.daily_timeline ?? [];
+    return {
+      title: { text: 'Token 用量', left: 0, top: 0, textStyle: { fontSize: 13, fontWeight: 600 } },
+      tooltip: {
+        trigger: 'axis',
+        formatter: (ps: { axisValue?: string; seriesName?: string; value?: number }[]) => {
+          const head = ps[0]?.axisValue ?? '';
+          const lines = ps.map((p) => `${p.seriesName}: ${formatTokens(Number(p.value ?? 0))}`);
+          const total = ps.reduce((acc, p) => acc + Number(p.value ?? 0), 0);
+          return [head, ...lines, `合计: ${formatTokens(total)}`].join('<br/>');
+        },
+      },
+      legend: { data: ['输入 Token', '输出 Token'], bottom: 0 },
+      grid: { left: 64, right: 40, top: 30, bottom: 40 },
+      xAxis: { type: 'category', data: tl.map((p) => p.date) },
+      yAxis: { type: 'value', axisLabel: { formatter: (v: number) => formatTokensM(v) } },
+      series: [
+        { name: '输入 Token', type: 'bar', stack: 'tokens', data: tl.map((p) => p.input_tokens), color: indigo[600], barWidth: 14 },
+        { name: '输出 Token', type: 'bar', stack: 'tokens', data: tl.map((p) => p.output_tokens), color: semantic.success.base, barWidth: 14 },
+      ],
+    };
+  }, [detail]);
+
   const topModelsOption = useMemo(
     () => topBarOption('Top 模型（按 token）', detail?.top_models ?? [], { valueInM: true }),
     [detail],
@@ -612,6 +643,10 @@ const PersonDetailPanel = memo(function PersonDetailPanel({
 
       <div style={{ marginTop: 24, height: 280 }}>
         <ReactECharts option={timelineOption} style={{ height: '100%' }} notMerge lazyUpdate />
+      </div>
+
+      <div style={{ marginTop: 16, height: 260 }}>
+        <ReactECharts option={tokenTrendOption} style={{ height: '100%' }} notMerge lazyUpdate />
       </div>
 
       <Row gutter={16} style={{ marginTop: 24 }}>

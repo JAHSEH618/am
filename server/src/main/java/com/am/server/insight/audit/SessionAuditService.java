@@ -51,7 +51,7 @@ public class SessionAuditService {
     private final AiSessionAuditRepository auditRepository;
     private final DualJudgeService dualJudgeService;
     private final RubricLoader rubricLoader;
-    private final ExecutorService insightAuditExecutor;
+    private final ExecutorService reportAuditExecutor;
 
     /**
      * 给定一批 session，自动判定需不需要审计并执行。返回最新的 audit 缓存（包括本批不需要重审、
@@ -94,7 +94,7 @@ public class SessionAuditService {
 
         List<Future<?>> futures = new java.util.ArrayList<>(toAudit.size());
         for (AiSession s : toAudit) {
-            futures.add(insightAuditExecutor.submit(() -> {
+            futures.add(reportAuditExecutor.submit(() -> {
                 try {
                     AiSessionAudit row = auditOne(s, byId.get(s.getId()));
                     if (row.getJudgeDisagreement() != null && row.getJudgeDisagreement() == 1) {

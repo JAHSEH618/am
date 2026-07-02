@@ -50,7 +50,8 @@ import java.util.Comparator;
  *       {@code daily_summary.ai_active_seconds_union}（{@link com.am.server.aggregator.DailySummaryAggregator} 信号流口径）</li>
  *   <li>难度、能力、模式、完成率走 ai_session_audit（双 judge 合成结果）</li>
  *   <li>commit / lines / revert / 高难度 commit ratio 走 git_commit；提交条数与新增行数按窗口内已入库记录全量统计，不筛 {@code ai_assisted}</li>
- *   <li>用户<strong>主动斜杠</strong>：{@code ai_session_message.slash_* } 在 ingest 入库时按全文写入；
+ *   <li>用户<strong>主动斜杠</strong>：{@code ai_session_message.slash_* } 在 ingest 入库时写入
+ *       （cursor/默认只计消息首 token 的 {@code /命令}，codex 计行内小写 kebab {@code $技能}、排除变量）；
  *       报告阶段只汇总落库字段</li>
  *   <li>团队 P10/P25/P50/P75/P90 由本批活跃用户的指标分布算出</li>
  * </ul>
@@ -260,7 +261,8 @@ public class ReportAggregator {
 
     /**
      * 汇总用户斜杠使用情况：读 {@code ai_session_message} 入库时写入的 {@code slash_*_count} 与
-     * {@code slash_hits_json}（全文多行扫描结果，见 ingest）。
+     * {@code slash_hits_json}（cursor/默认只计消息首 token 的 {@code /命令}，
+     * codex 计行内小写 kebab {@code $技能}、排除变量，见 ingest）。
      */
     private void attachTopUsage(LocalDateTime t0,
                                 LocalDateTime t1,
