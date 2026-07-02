@@ -376,8 +376,8 @@ export default function Dashboard() {
       xAxis: { type: 'category', data: points.map((p) => p.date) },
       yAxis: { type: 'value', axisLabel: { formatter: (v: number) => formatTokensM(v) } },
       series: [
-        { name: '输入 Token', type: 'bar', stack: 'tokens', data: points.map((p) => p.input_tokens), color: indigo[600], barWidth: 10 },
-        { name: '输出 Token', type: 'bar', stack: 'tokens', data: points.map((p) => p.output_tokens), color: semantic.success.base, barWidth: 10 },
+        { name: '输入 Token', type: 'line', data: points.map((p) => p.input_tokens), color: indigo[600], showSymbol: false, smooth: 0.2, lineStyle: { width: 2 } },
+        { name: '输出 Token', type: 'line', data: points.map((p) => p.output_tokens), color: semantic.success.base, showSymbol: false, smooth: 0.2, lineStyle: { width: 2 } },
       ],
     };
   }, [tokenTrend]);
