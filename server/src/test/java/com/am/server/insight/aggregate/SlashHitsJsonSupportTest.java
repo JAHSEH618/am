@@ -80,6 +80,17 @@ class SlashHitsJsonSupportTest {
     }
 
     @Test
+    void recomputeExtracted_noChangeWhenOldJsonIsMysqlNormalized() {
+        // MySQL JSON 列回读:键序重排(kind 在前)+ ": " 间隔;语义与 Jackson 序列化一致
+        String mysqlNormalized = "[{\"kind\": \"command\", \"token\": \"/fix\"}]";
+        UserSlashInvocationExtractor.Annotation fresh =
+                UserSlashInvocationExtractor.annotateUserContent("/fix bug", "cursor");
+        SlashHitsJsonSupport.ExtractedRecompute r =
+                SlashHitsJsonSupport.recomputeExtracted(mysqlNormalized, 1, 0, fresh);
+        assertFalse(r.changed());
+    }
+
+    @Test
     void recomputeExtracted_nullOldJsonWithStaleCounts() {
         SlashHitsJsonSupport.ExtractedRecompute r = SlashHitsJsonSupport.recomputeExtracted(
                 null, 3, 2, UserSlashInvocationExtractor.Annotation.empty());

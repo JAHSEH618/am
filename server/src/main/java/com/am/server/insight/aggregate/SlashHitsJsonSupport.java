@@ -116,7 +116,7 @@ public final class SlashHitsJsonSupport {
             return new ExtractedRecompute(oldHitsJson, oldCommandCount, oldSkillCount, false);
         }
         boolean changed = counts[0] != oldCommandCount || counts[1] != oldSkillCount
-                || !jsonEquivalent(oldHitsJson, json);
+                || !parseHits(oldHitsJson).equals(merged);
         return new ExtractedRecompute(json, counts[0], counts[1], changed);
     }
 
