@@ -110,6 +110,9 @@ public class ReportAggregator {
         Map<String, Long> unionSecondsByUser =
                 loadUnionSecondsByUser(report.getWindowFrom(), report.getWindowTo(), sessionByUser.keySet());
 
+        Map<String, long[]> retryToolByUser = loadRetryToolByUser(
+                report.getWindowFrom(), report.getWindowTo(), sessionByUser.keySet());
+
         // 2. 拉窗口内所有 git_commit（仅与本批 user 相关）
         LocalDateTime t0 = report.getWindowFrom().atStartOfDay();
         LocalDateTime t1 = report.getWindowTo().plusDays(1).atStartOfDay();
@@ -145,6 +148,12 @@ public class ReportAggregator {
                     unionSecondsByUser.getOrDefault(user, 0L),
                     commitByUser.getOrDefault(user, List.of()),
                     revertSubjectsByUser.getOrDefault(user, List.of()));
+            long[] rt = retryToolByUser.getOrDefault(user, new long[]{0L, 0L});
+            m.setRetryCount((int) Math.min(rt[0], Integer.MAX_VALUE));
+            m.setToolCallCount((int) Math.min(rt[1], Integer.MAX_VALUE));
+            if (m.getAiActiveHours() > 0) {
+                m.setRetryPerActiveHour(round4(rt[0] / m.getAiActiveHours()));
+            }
             metricsByUser.put(user, m);
         }
 
@@ -159,7 +168,6 @@ public class ReportAggregator {
         List<Double> sessionCnt = new ArrayList<>();
         List<Double> activeHours = new ArrayList<>();
         List<Double> commitsPerHour = new ArrayList<>();
-        List<Double> compositeScores = new ArrayList<>();
         List<Double> capProblem = new ArrayList<>();
         List<Double> capContext = new ArrayList<>();
         List<Double> capDebug = new ArrayList<>();
@@ -189,7 +197,9 @@ public class ReportAggregator {
                 "tool_orchestration", PercentileCalculator.five(capTool),
                 "self_correction", PercentileCalculator.five(capSelf));
 
-        // 5. 算 composite_score + composite_percentile
+        // 5. composite v2：raw → 团队均值 → 收缩 → 等级（docs/design/insight-grades-narrative-pdf-v1.0.md §3）
+        Map<String, CompositeScoringV2.Inputs> inputsByUser = new LinkedHashMap<>();
+        List<Double> rawScores = new ArrayList<>();
         for (UserMetrics m : metricsByUser.values()) {
             if (m.isInsufficientData()) {
                 m.setCompositeScore(null);
@@ -203,18 +213,32 @@ public class ReportAggregator {
             double prodPercentile = PercentileCalculator.rankPercentile(
                     commitsPerHour, safe(m.getAiCommitsPerActiveHour()));
             double prodIndex = Double.isNaN(prodPercentile) ? 0.0 : prodPercentile / 100.0;
-
-            double qualityIndex = 0.5;
-            if (m.getAiCommitCount() >= 3 && m.getCommitRevertRate() != null) {
-                qualityIndex = Math.max(0.0, 1.0 - safe(m.getCommitRevertRate()));
-            }
-
-            double score = (0.35 * (capAvg / 5.0)
-                    + 0.35 * prodIndex
-                    + 0.20 * safe(m.getHighDifficultyRatio())
-                    + 0.10 * qualityIndex) * 100.0;
-            m.setCompositeScore(score);
-            compositeScores.add(score);
+            Map<String, Double> modeDist = m.getModeDist() == null ? Map.of() : m.getModeDist();
+            CompositeScoringV2.Inputs in = new CompositeScoringV2.Inputs(
+                    capAvg, prodIndex, m.getCompletionRate(), m.getCommitRevertRate(),
+                    m.getAiCommitCount(), safe(m.getHighDifficultyCompletedRatio()),
+                    modeDist.get("leverage"), modeDist.get("dependent"));
+            inputsByUser.put(m.getUserCode(), in);
+            rawScores.add(CompositeScoringV2.rawScore(in));
+        }
+        double teamMeanRaw = rawScores.isEmpty() ? Double.NaN
+                : rawScores.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
+        List<Double> compositeScores = new ArrayList<>();
+        Map<String, Integer> gradeDist = new LinkedHashMap<>();
+        for (String g : List.of("S", "A", "B", "C", "D")) gradeDist.put(g, 0);
+        for (UserMetrics m : metricsByUser.values()) {
+            CompositeScoringV2.Inputs in = inputsByUser.get(m.getUserCode());
+            if (in == null) continue;
+            int audited = countAudited(sessionByUser.get(m.getUserCode()), auditsBySession);
+            double raw = CompositeScoringV2.rawScore(in);
+            double fin = CompositeScoringV2.shrink(raw, teamMeanRaw, audited);
+            double shrinkW = Double.isNaN(teamMeanRaw) ? 1.0 : audited / (double) (audited + 10);
+            m.setCompositeScore(fin);
+            m.setCompositeGrade(CompositeScoringV2.gradeOf(fin));
+            m.setCompositeConfidence(CompositeScoringV2.confidenceOf(audited));
+            m.setCompositeBreakdownJson(CompositeScoringV2.breakdownJson(in, raw, shrinkW, teamMeanRaw, fin));
+            gradeDist.merge(m.getCompositeGrade(), 1, Integer::sum);
+            compositeScores.add(fin);
         }
         // 算 composite_percentile（每个有效 user 在 compositeScores 内的排名）
         for (UserMetrics m : metricsByUser.values()) {
@@ -254,7 +278,7 @@ public class ReportAggregator {
         // 7. 团队级 payload 一并算出（团队 difficulty / mode / completion 分布）
         TeamPayload teamPayload = buildTeamPayload(sessions, auditsBySession,
                 baselines, watchlistSummary, commitByUser, unionSecondsByUser, teamSlashJson,
-                teamCapabilityPercentiles);
+                teamCapabilityPercentiles, writeJson(gradeDist));
 
         return new AggregateOutcome(metricsByUser, teamPayload);
     }
@@ -570,6 +594,25 @@ public class ReportAggregator {
         return out;
     }
 
+    /** 窗口内按 user 汇总 daily_summary 的重试/工具调用次数：user → [retrySum, toolSum]。 */
+    private Map<String, long[]> loadRetryToolByUser(LocalDate from, LocalDate to, Set<String> userCodes) {
+        Map<String, long[]> out = new HashMap<>();
+        for (String u : userCodes) {
+            out.put(u, new long[]{0L, 0L});
+        }
+        if (userCodes.isEmpty() || from == null || to == null || from.isAfter(to)) {
+            return out;
+        }
+        for (Object[] row : dailySummaryRepository.sumRetryAndToolCallsGroupedByUserInWorkDateRange(
+                from, to, userCodes)) {
+            if (row == null || row.length < 3 || row[0] == null) {
+                continue;
+            }
+            out.put(row[0].toString(), new long[]{toLong(row[1]), toLong(row[2])});
+        }
+        return out;
+    }
+
     private UserMetrics computeUserMetrics(String userCode,
                                            List<AiSession> sessions,
                                            Map<Long, AiSessionAudit> auditsBySession,
@@ -601,6 +644,7 @@ public class ReportAggregator {
         double outcomeWeighted = 0.0;
         double outcomeWeightSum = 0.0;
         int abandonedCount = 0;
+        int highCompletedCount = 0;
 
         for (AiSession s : sessions) {
             AiSessionAudit a = auditsBySession.get(s.getId());
@@ -610,6 +654,7 @@ public class ReportAggregator {
             diffDist.merge(d, 1, Integer::sum);
             modeCount.merge(a.getMode(), 1, Integer::sum);
             diffSum += d;
+            if (d >= 4 && "completed".equals(a.getOutcome())) highCompletedCount++;
 
             double disagreeFactor = (a.getJudgeDisagreement() != null && a.getJudgeDisagreement() == 1)
                     ? DISAGREE_WEIGHT : 1.0;
@@ -641,6 +686,7 @@ public class ReportAggregator {
             m.setAvgDifficulty(round2(diffSum / auditedCount));
             int highCount = diffDist.getOrDefault(4, 0) + diffDist.getOrDefault(5, 0);
             m.setHighDifficultyRatio(round4(highCount * 1.0 / auditedCount));
+            m.setHighDifficultyCompletedRatio(round4(highCompletedCount * 1.0 / auditedCount));
             m.setCompletionRate(round4(outcomeWeightSum == 0 ? 0 : outcomeWeighted / outcomeWeightSum));
             m.setAbandonedRate(round4(abandonedCount * 1.0 / auditedCount));
             m.setCapProblemDecomposition(round2(capWeighted[0] / weightSum));
@@ -747,7 +793,8 @@ public class ReportAggregator {
                                          Map<String, List<GitCommit>> commitByUser,
                                          Map<String, Long> unionSecondsByUser,
                                          String teamToolBreakdownJson,
-                                         Map<String, FivePercentiles> teamCapabilityPercentiles) {
+                                         Map<String, FivePercentiles> teamCapabilityPercentiles,
+                                         String teamGradeDistJson) {
 
         Set<String> activeUsers = new HashSet<>();
         Map<Integer, Integer> teamDiff = new LinkedHashMap<>();
@@ -786,6 +833,7 @@ public class ReportAggregator {
         p.teamCapabilityPercentilesJson = writeJson(capabilityPercentilesMap(teamCapabilityPercentiles));
         p.watchlistSummaryJson = writeJson(watchlistSummary);
         p.teamToolBreakdownJson = teamToolBreakdownJson;
+        p.teamGradeDistJson = teamGradeDistJson;
         return p;
     }
 
@@ -851,6 +899,12 @@ public class ReportAggregator {
                 BigDecimal.valueOf(m.getCompositeScore()).setScale(2, RoundingMode.HALF_UP));
         row.setCompositePercentile(m.getCompositePercentile() == null ? null :
                 BigDecimal.valueOf(m.getCompositePercentile()).setScale(2, RoundingMode.HALF_UP));
+        row.setCompositeGrade(m.getCompositeGrade());
+        row.setCompositeConfidence(m.getCompositeConfidence());
+        row.setCompositeBreakdownJson(m.getCompositeBreakdownJson());
+        row.setRetryCount(m.getRetryCount());
+        row.setRetryPerActiveHour(scale4(m.getRetryPerActiveHour()));
+        row.setToolCallCount(m.getToolCallCount());
         row.setWatchlistFlagsJson(writeJson(flags));
         row.setHighlightSessionIdsJson(writeJson(highlightIds));
         row.setHighlightSessionsJson(highlightSessionsJson != null ? highlightSessionsJson : "[]");
@@ -865,6 +919,15 @@ public class ReportAggregator {
     }
 
     // ------------------------------------------------------------------ utils
+
+    private static int countAudited(List<AiSession> sessions, Map<Long, AiSessionAudit> auditsBySession) {
+        if (sessions == null) return 0;
+        int n = 0;
+        for (AiSession s : sessions) {
+            if (auditsBySession.get(s.getId()) != null) n++;
+        }
+        return n;
+    }
 
     private static double avgNonNull(Double... vs) {
         double sum = 0;
@@ -918,6 +981,7 @@ public class ReportAggregator {
         public String teamCapabilityPercentilesJson;
         public String watchlistSummaryJson;
         public String teamToolBreakdownJson;
+        public String teamGradeDistJson;
     }
 
     public record AggregateOutcome(Map<String, UserMetrics> userMetrics,

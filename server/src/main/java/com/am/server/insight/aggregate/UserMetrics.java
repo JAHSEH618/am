@@ -55,6 +55,14 @@ public class UserMetrics {
     private Double compositeScore;
     /** 综合分百分位（0-100） */
     private Double compositePercentile;
+    /** v2 等级 S/A/B/C/D；insufficient 时 null */
+    private String compositeGrade;
+    /** normal / low */
+    private String compositeConfidence;
+    /** v2 得分构成 JSON */
+    private String compositeBreakdownJson;
+    /** 难度≥4 且 completed 的会话占比（challenge 维度输入） */
+    private Double highDifficultyCompletedRatio;
 
     /** 数据量太小不出详细评判 */
     private boolean insufficientData;
@@ -67,6 +75,12 @@ public class UserMetrics {
      * JSON 数组：[{name, count, kind}]，name 为首词如 /fix；kind ∈ command|skill。
      */
     private String toolBreakdownJson;
+
+    /** 窗口内重试/卡壳次数（daily_summary.ai_retry_count 求和） */
+    private Integer retryCount;
+    private Double retryPerActiveHour;
+    /** 窗口内工具调用次数（daily_summary.tool_call_count 求和） */
+    private Integer toolCallCount;
 
     /** Top 模型 / 项目 / Agent 分布（JSON 数组 [{name,value}]） */
     private String topModelsJson;

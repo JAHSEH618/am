@@ -39,6 +39,19 @@ public interface DailySummaryRepository extends JpaRepository<DailySummary, Long
             @Param("to") LocalDate to,
             @Param("userCodes") Collection<String> userCodes);
 
+    /** 报告聚合：窗口内按 user_code 汇总重试与工具调用次数。返回 [userCode, retrySum, toolSum]。 */
+    @Query("""
+        SELECT s.userCode, COALESCE(SUM(s.aiRetryCount), 0), COALESCE(SUM(s.toolCallCount), 0)
+        FROM DailySummary s
+        WHERE s.workDate BETWEEN :from AND :to
+          AND s.userCode IN :userCodes
+        GROUP BY s.userCode
+        """)
+    List<Object[]> sumRetryAndToolCallsGroupedByUserInWorkDateRange(
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to,
+            @Param("userCodes") Collection<String> userCodes);
+
     /**
      * v2.11：某日曾有过「非零 AI 指标」的员工工号。
      * <p>{@link com.am.server.aggregator.DailySummaryAggregator#aggregate} 在收窄
