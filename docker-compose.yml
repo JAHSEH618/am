@@ -37,7 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: aiwatch-server:1.2.2
+    image: aiwatch-server:1.2.5
     container_name: aiwatch-server
     restart: unless-stopped
     depends_on:
