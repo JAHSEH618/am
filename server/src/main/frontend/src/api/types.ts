@@ -104,6 +104,18 @@ export interface AiPenetration {
   window: string;
 }
 
+export interface TokenTrendPoint {
+  /** ISO yyyy-MM-dd */
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+/** 全公司 Token 走势:逐日一点,升序,缺失日已补零(近 N 天) */
+export interface TokenTrend {
+  points: TokenTrendPoint[];
+}
+
 /** 大屏洞察审计进度 · 与队列剩余同频（默认 10s） */
 export interface DashboardInsightAuditFast {
   stable_audited_session_count: number;

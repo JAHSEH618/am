@@ -10,12 +10,14 @@ import {
   FundProjectionScreenOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import ReactECharts from 'echarts-for-react';
 import {
   fetchAiPenetration,
   fetchInsightAuditFast,
   fetchInsightAuditSlow,
   fetchOnline,
   fetchOverview,
+  fetchTokenTrend,
   fetchTopEmployees,
   fetchTopProjects,
 } from '../api/client';
@@ -25,6 +27,7 @@ import type {
   DashboardInsightAuditSlow,
   DashboardOverview,
   OnlineAgent,
+  TokenTrend,
   TopItem,
 } from '../api/types';
 import { useSse } from '../hooks/useSse';
@@ -35,6 +38,7 @@ import {
   formatTimeFromNow,
   statusLabel,
   formatTokens,
+  formatTokensM,
   isToolStatus,
   membershipLabel,
   membershipColor,
@@ -46,6 +50,7 @@ import {
 import StatusDot from '../components/StatusDot';
 import { HeroCard, MetricRow } from '../components/HeroCard';
 import { clickableRowProps, NUM_STYLE } from '../utils/table';
+import { indigo, semantic } from '../styles/tokens';
 
 // v2.7.1：HTTP 兜底 polling 间隔。SSE 实时 patch 已经覆盖大部分高频更新（status/tool/model/project），
 // polling 主要负责拉今日累计指标（today_messages / today_tokens / top 列表）和"上次没开页时漏掉的"
@@ -80,6 +85,8 @@ export default function Dashboard() {
   /** 注册员工表筛选 */
   const [agentFilterStatus, setAgentFilterStatus] = useState<'all' | 'online' | 'offline'>('all');
   const [agentFilterKeyword, setAgentFilterKeyword] = useState('');
+  // 全公司 Token 走势(近30天):日粒度,页面挂载拉一次即可,不进 10s polling
+  const [tokenTrend, setTokenTrend] = useState<TokenTrend | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -107,6 +114,14 @@ export default function Dashboard() {
       alive = false;
       window.clearInterval(id);
     };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetchTokenTrend(30)
+      .then((data) => { if (alive) setTokenTrend(data); })
+      .catch(() => { if (alive) setTokenTrend(null); });
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -344,6 +359,29 @@ export default function Dashboard() {
     [],
   );
 
+  const tokenTrendOption = useMemo(() => {
+    const points = tokenTrend?.points ?? [];
+    return {
+      tooltip: {
+        trigger: 'axis',
+        formatter: (ps: { axisValue?: string; seriesName?: string; value?: number }[]) => {
+          const head = ps[0]?.axisValue ?? '';
+          const lines = ps.map((p) => `${p.seriesName}: ${formatTokens(Number(p.value ?? 0))}`);
+          const total = ps.reduce((acc, p) => acc + Number(p.value ?? 0), 0);
+          return [head, ...lines, `合计: ${formatTokens(total)}`].join('<br/>');
+        },
+      },
+      legend: { data: ['输入 Token', '输出 Token'], bottom: 0 },
+      grid: { left: 64, right: 24, top: 16, bottom: 40 },
+      xAxis: { type: 'category', data: points.map((p) => p.date) },
+      yAxis: { type: 'value', axisLabel: { formatter: (v: number) => formatTokensM(v) } },
+      series: [
+        { name: '输入 Token', type: 'bar', stack: 'tokens', data: points.map((p) => p.input_tokens), color: indigo[600], barWidth: 10 },
+        { name: '输出 Token', type: 'bar', stack: 'tokens', data: points.map((p) => p.output_tokens), color: semantic.success.base, barWidth: 10 },
+      ],
+    };
+  }, [tokenTrend]);
+
   return (
     <Spin spinning={loading && overview === null} tip="加载中...">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -447,6 +485,19 @@ export default function Dashboard() {
               <MetricRow label="今日工具调用" value={overview?.today_tool_calls ?? 0} />
             </Col>
           </Row>
+        </Card>
+
+        {/* 全公司 Token 走势:daily_summary 口径,与员工数据页同源可对账 */}
+        <Card size="small" title="Token 走势（近30天）">
+          {tokenTrend === null ? (
+            <div style={{ height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--am-ink-3)' }}>
+              加载中…
+            </div>
+          ) : (
+            <div style={{ height: 260 }}>
+              <ReactECharts option={tokenTrendOption} style={{ height: '100%' }} notMerge lazyUpdate />
+            </div>
+          )}
         </Card>
 
         {/* 注册员工表：在线 + 离线设备合并 */}
