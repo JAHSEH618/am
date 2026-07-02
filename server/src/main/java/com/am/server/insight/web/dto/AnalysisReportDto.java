@@ -46,6 +46,12 @@ public class AnalysisReportDto {
     @JsonRawValue
     private String teamToolBreakdown;
 
+    @JsonRawValue
+    private String teamGradeDist;
+    /** LLM 团队总评 {overview,highlights,risks,recommendations}；未生成为 null */
+    @JsonRawValue
+    private String teamNarrative;
+
     /** 员工列表（已按 composite_percentile 倒序） */
     private List<AnalysisReportUserDto> users;
 }

@@ -95,6 +95,7 @@ public class AnalysisJobRunner {
             report.setTeamCapabilityPercentilesJson(payload.teamCapabilityPercentilesJson);
             report.setWatchlistSummaryJson(payload.watchlistSummaryJson);
             report.setTeamToolBreakdownJson(payload.teamToolBreakdownJson);
+            report.setTeamGradeDistJson(payload.teamGradeDistJson);
             report.setJudgeDisagreementRatio(BigDecimal.valueOf(auditOutcome.disagreementRatio())
                     .setScale(4, RoundingMode.HALF_UP));
             report.setStatus(ReportStatus.COMPLETED);

@@ -121,6 +121,8 @@ public class AnalysisReportController {
         dto.setTeamCapabilityPercentiles(nullOrJson(r.getTeamCapabilityPercentilesJson()));
         dto.setWatchlistSummary(nullOrJson(r.getWatchlistSummaryJson()));
         dto.setTeamToolBreakdown(nullOrJson(r.getTeamToolBreakdownJson()));
+        dto.setTeamGradeDist(nullOrJson(r.getTeamGradeDistJson()));
+        dto.setTeamNarrative(nullOrJson(r.getTeamNarrativeJson()));
 
         List<AnalysisReportUserDto> users = new ArrayList<>();
         for (AnalysisReportUser u : userRepository.findByReportIdOrderByCompositePercentileDesc(reportId)) {
@@ -213,6 +215,9 @@ public class AnalysisReportController {
         d.setCompositeScore(u.getCompositeScore());
         d.setCompositePercentile(u.getCompositePercentile());
         d.setCompositeBucket(bucketOf(u.getCompositePercentile()));
+        d.setCompositeGrade(u.getCompositeGrade());
+        d.setCompositeConfidence(u.getCompositeConfidence());
+        d.setCompositeBreakdown(nullOrJson(u.getCompositeBreakdownJson()));
         d.setWatchlistFlags(nullOrJson(u.getWatchlistFlagsJson()));
         d.setHighlightSessionIds(nullOrJson(u.getHighlightSessionIdsJson()));
         d.setHighlightSessions(nullOrJson(u.getHighlightSessionsJson()));
@@ -224,6 +229,10 @@ public class AnalysisReportController {
         d.setTopModels(nullOrJson(u.getTopModelsJson()));
         d.setTopProjects(nullOrJson(u.getTopProjectsJson()));
         d.setAgentDist(nullOrJson(u.getAgentDistJson()));
+        d.setNarrative(nullOrJson(u.getNarrativeJson()));
+        d.setRetryCount(u.getRetryCount());
+        d.setRetryPerActiveHour(u.getRetryPerActiveHour());
+        d.setToolCallCount(u.getToolCallCount());
         return d;
     }
 

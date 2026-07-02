@@ -51,6 +51,13 @@ public class AnalysisReportUserDto {
     /** "top25" / "mid50" / "bottom25" —— 由 percentile 推导 */
     private String compositeBucket;
 
+    /** S/A/B/C/D（v2）；旧报告为 null，前端回退 bucket */
+    private String compositeGrade;
+    /** normal / low */
+    private String compositeConfidence;
+    @JsonRawValue
+    private String compositeBreakdown;
+
     @JsonRawValue
     private String watchlistFlags;       // JSON 数组
     @JsonRawValue
@@ -72,4 +79,12 @@ public class AnalysisReportUserDto {
     /** JSON 数组：[{name,count,kind}] */
     @JsonRawValue
     private String toolBreakdown;
+
+    /** LLM 个人评语；未生成为 null */
+    @JsonRawValue
+    private String narrative;
+
+    private Integer retryCount;
+    private BigDecimal retryPerActiveHour;
+    private Integer toolCallCount;
 }
