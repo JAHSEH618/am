@@ -231,6 +231,28 @@ docker compose down -v            # 连同 MySQL 数据卷一起删除（谨慎�
 docker compose up -d --build      # 改了代码后重建并启动
 ```
 
+### 10.1 一键更新（拉新代码 → 重建 → 重启 → 健康检查）
+
+日常更新用仓库自带的 `scripts/deploy.sh`，一条命令完成「`git pull` 拉最新代码 → 重建 server 镜像 → `up -d` 重启 → 轮询 `/actuator/health` 直到 `UP`」，失败会打印近 50 行日志并给出回滚提示：
+
+```bash
+./scripts/deploy.sh                 # 拉当前分支最新代码，重建 server 并重启
+BRANCH=am ./scripts/deploy.sh       # 指定拉取分支
+NO_BUILD=1 ./scripts/deploy.sh      # 仅重启不重建（只在改了 .env / compose 时用；改了代码必须重建）
+```
+
+> 用 `--ff-only` 拉取，避免在部署机上产生合并提交；server 启动时会自动跑 `*SchemaPatches` 补列/建索引与各回填补丁，更新代码无需手工改库。
+
+### 10.2 部署后数据自检（可选）
+
+`scripts/p1p3-verify/` 是可在 CentOS docker 里直接跑的数据处理/校验脚本：线上库只读自检（schema/索引/`@Version`/`source_ref`/种子安全）、`id_sequences` 种子校验与安全补种（只升不降）、以及对独立 CI 库跑完整测试套件。连接参数走环境变量，用法见该目录 `README.md`。
+
+```bash
+cd scripts/p1p3-verify
+# 已部署重启后：最小安全自检（纯只读，不写库）
+DB_HOST=127.0.0.1 DB_USER=am DB_PASS=*** ./run-all.sh
+```
+
 ---
 
 ## 11. 排错 FAQ
