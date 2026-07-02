@@ -73,4 +73,18 @@ public interface DailySummaryRepository extends JpaRepository<DailySummary, Long
         GROUP BY s.workDate
         """)
     List<Object[]> findMaxUpdatedTimePerDay(LocalDate from, LocalDate to);
+
+    /**
+     * Token 走势：窗口内全员按 work_date 汇总 input/output token。
+     * 返回 {@code [work_date, sum_input, sum_output]}，date 升序；走 idx_work_date。
+     */
+    @Query("""
+        SELECT s.workDate, COALESCE(SUM(s.totalInputTokens), 0), COALESCE(SUM(s.totalOutputTokens), 0)
+        FROM DailySummary s
+        WHERE s.workDate BETWEEN :from AND :to
+        GROUP BY s.workDate
+        ORDER BY s.workDate
+        """)
+    List<Object[]> sumTokensGroupedByWorkDate(
+            @Param("from") LocalDate from, @Param("to") LocalDate to);
 }
