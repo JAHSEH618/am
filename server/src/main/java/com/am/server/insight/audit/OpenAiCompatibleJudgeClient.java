@@ -43,6 +43,11 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
 
     @Override
     public JudgeResult judge(JudgeConfig config, String prompt) {
+        return parseResult(config.getModel(), completeRaw(config, prompt));
+    }
+
+    /** 发一次 /chat/completions，返回原始 content 文本（叙事等非 rubric 场景复用）。 */
+    public String completeRaw(JudgeConfig config, String prompt) {
         if (config.getEndpoint() == null || config.getEndpoint().isBlank()) {
             throw new JudgeException("openai-compatible judge: endpoint is empty");
         }
@@ -106,7 +111,7 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
         if (content == null || content.isBlank()) {
             throw new JudgeException("openai-compatible judge: empty content");
         }
-        return parseResult(config.getModel(), content);
+        return content;
     }
 
     /** 解析 LLM JSON 输出；任何字段缺失 / 越界都会抛 JudgeException 让 orchestrator 走重试链路。 */
@@ -197,7 +202,7 @@ public class OpenAiCompatibleJudgeClient implements JudgeClient {
      * <p>定位策略：先剥 think + fence，再用"第一个 '{' 到最后一个 '}'"取出 JSON 主体。
      * 不做完整括号配对（实测下来配对所需的状态机对解析没增益，反而把这函数复杂化）。
      */
-    static String extractJson(String raw) {
+    public static String extractJson(String raw) {
         if (raw == null) return "";
         String s = raw;
 

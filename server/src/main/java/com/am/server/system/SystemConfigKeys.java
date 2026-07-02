@@ -51,6 +51,10 @@ public final class SystemConfigKeys {
      * 变更后建议同步 bump {@link #INSIGHT_RUBRIC_VERSION} 做版本标记；<b>不会</b>自动触发历史会话重审。
      */
     public static final String INSIGHT_RUBRIC_YAML               = "insight.rubric_yaml";
+    /** 个人评语 prompt 模板（叙事阶段；改完立即生效） */
+    public static final String INSIGHT_NARRATIVE_USER_PROMPT   = "insight.narrative_user_prompt";
+    /** 团队总评 prompt 模板 */
+    public static final String INSIGHT_NARRATIVE_TEAM_PROMPT   = "insight.narrative_team_prompt";
 
     // ========== category: capture ==========
     public static final String CAPTURE_MAX_TEXT_BYTES_PER_PART  = "capture.max_text_bytes_per_part";
