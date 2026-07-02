@@ -108,6 +108,18 @@ public class AnalysisReportUser {
     @Column(name = "composite_percentile", precision = 5, scale = 2)
     private BigDecimal compositePercentile;
 
+    /** S/A/B/C/D（v2 公式 + 收缩后映射）；insufficient_data 时为 null */
+    @Column(name = "composite_grade", length = 2)
+    private String compositeGrade;
+
+    /** normal（≥20 会话）/ low（10-19 会话） */
+    @Column(name = "composite_confidence", length = 8)
+    private String compositeConfidence;
+
+    /** v2 五维子分 + 权重 + 收缩参数（见 CompositeScoringV2#breakdownJson） */
+    @Column(name = "composite_breakdown_json", columnDefinition = "JSON")
+    private String compositeBreakdownJson;
+
     @Column(name = "watchlist_flags_json", columnDefinition = "JSON")
     private String watchlistFlagsJson;
 
@@ -140,6 +152,19 @@ public class AnalysisReportUser {
 
     @Column(name = "tool_breakdown_json", columnDefinition = "JSON")
     private String toolBreakdownJson;
+
+    /** LLM 个人评语 {level_summary,evidence,strengths,weaknesses,suggestions}；失败为 null */
+    @Column(name = "narrative_json", columnDefinition = "JSON")
+    private String narrativeJson;
+
+    @Column(name = "retry_count")
+    private Integer retryCount;
+
+    @Column(name = "retry_per_active_hour", precision = 8, scale = 4)
+    private BigDecimal retryPerActiveHour;
+
+    @Column(name = "tool_call_count")
+    private Integer toolCallCount;
 
     @CreatedDate
     @Column(name = "created_time", nullable = false, updatable = false)

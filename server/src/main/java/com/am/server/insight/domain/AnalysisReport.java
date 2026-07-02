@@ -98,6 +98,14 @@ public class AnalysisReport {
     @Column(name = "team_tool_breakdown_json", columnDefinition = "JSON")
     private String teamToolBreakdownJson;
 
+    /** 等级分布 {"S":1,"A":3,...}（v2） */
+    @Column(name = "team_grade_dist_json", columnDefinition = "JSON")
+    private String teamGradeDistJson;
+
+    /** LLM 团队总评 {overview,highlights,risks,recommendations}；生成失败为 null */
+    @Column(name = "team_narrative_json", columnDefinition = "JSON")
+    private String teamNarrativeJson;
+
     @Column(name = "judge_disagreement_ratio", precision = 5, scale = 4)
     private BigDecimal judgeDisagreementRatio;
 
