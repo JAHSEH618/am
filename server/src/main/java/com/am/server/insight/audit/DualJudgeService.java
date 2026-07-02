@@ -37,15 +37,21 @@ public class DualJudgeService {
         JudgeClient a = registry.require(aCfg.getProvider());
         JudgeClient b = registry.require(bCfg.getProvider());
 
-        java.util.concurrent.CompletableFuture<JudgeResult> fa =
-                java.util.concurrent.CompletableFuture.supplyAsync(
-                        () -> callWithRetry(a, aCfg, prompt, "A"), judgeCallExecutor);
-        java.util.concurrent.CompletableFuture<JudgeResult> fb =
-                java.util.concurrent.CompletableFuture.supplyAsync(
-                        () -> callWithRetry(b, bCfg, prompt, "B"), judgeCallExecutor);
-
-        JudgeResult ra = join(fa, "A");
-        JudgeResult rb = join(fb, "B");
+        JudgeResult ra;
+        JudgeResult rb;
+        if (properties.isParallelJudges()) {
+            java.util.concurrent.CompletableFuture<JudgeResult> fa =
+                    java.util.concurrent.CompletableFuture.supplyAsync(
+                            () -> callWithRetry(a, aCfg, prompt, "A"), judgeCallExecutor);
+            java.util.concurrent.CompletableFuture<JudgeResult> fb =
+                    java.util.concurrent.CompletableFuture.supplyAsync(
+                            () -> callWithRetry(b, bCfg, prompt, "B"), judgeCallExecutor);
+            ra = join(fa, "A");
+            rb = join(fb, "B");
+        } else {
+            ra = callWithRetry(a, aCfg, prompt, "A");
+            rb = callWithRetry(b, bCfg, prompt, "B");
+        }
         AuditConsistencyChecker.Combined combined = AuditConsistencyChecker.combine(ra, rb);
 
         return new Outcome(ra, rb, combined);

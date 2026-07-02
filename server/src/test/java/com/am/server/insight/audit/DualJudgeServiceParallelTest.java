@@ -45,6 +45,33 @@ class DualJudgeServiceParallelTest {
             assertThat(outcome.combined()).isNotNull();
             assertThat(outcome.judgeA()).isNotNull();
             assertThat(outcome.judgeB()).isNotNull();
+            assertThat(outcome.judgeA().getJudgeModel()).isEqualTo("prov-a");
+            assertThat(outcome.judgeB().getJudgeModel()).isEqualTo("prov-b");
+        });
+    }
+
+    /** parallelJudges=false 时应回退串行:CyclicBarrier(1) 单方即触发,不会卡住串行执行。 */
+    @Test
+    void serialModeStillProducesCorrectOutcomeWhenParallelDisabled() {
+        java.util.concurrent.CyclicBarrier noBlock = new java.util.concurrent.CyclicBarrier(1);
+        JudgeClient judgeA = new BarrierJudge("prov-a", noBlock);
+        JudgeClient judgeB = new BarrierJudge("prov-b", noBlock);
+
+        JudgeClientRegistry registry = new JudgeClientRegistry(List.of(judgeA, judgeB));
+        registry.init();
+
+        InsightProperties props = new InsightProperties();
+        props.setParallelJudges(false);
+        props.getJudgeA().setProvider("prov-a");
+        props.getJudgeB().setProvider("prov-b");
+
+        DualJudgeService svc = new DualJudgeService(props, registry, judgeCallExecutor);
+
+        assertTimeoutPreemptively(java.time.Duration.ofSeconds(3), () -> {
+            DualJudgeService.Outcome outcome = svc.judge("prompt");
+            assertThat(outcome.combined()).isNotNull();
+            assertThat(outcome.judgeA().getJudgeModel()).isEqualTo("prov-a");
+            assertThat(outcome.judgeB().getJudgeModel()).isEqualTo("prov-b");
         });
     }
 
