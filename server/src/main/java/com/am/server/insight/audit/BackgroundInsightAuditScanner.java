@@ -35,7 +35,7 @@ public class BackgroundInsightAuditScanner {
     private final InsightSessionAuditStateService auditStateService;
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
     private final AuditScanCursorStore cursorStore;
-    private final ExecutorService insightAuditExecutor;
+    private final ExecutorService backgroundAuditExecutor;
 
     @Scheduled(fixedDelayString = "${aiwatch.insight.audit-scan-fixed-delay-ms:30000}")
     public void tick() {
@@ -74,7 +74,7 @@ public class BackgroundInsightAuditScanner {
             if (session == null) {
                 continue;
             }
-            futures.add(insightAuditExecutor.submit(() -> processOne(session.getId(), leaseUntil)));
+            futures.add(backgroundAuditExecutor.submit(() -> processOne(session.getId(), leaseUntil)));
         }
         for (Future<?> f : futures) {
             try {
