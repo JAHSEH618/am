@@ -25,6 +25,18 @@ public class InsightAuditExecutorConfig {
         return fixedDaemonPool(Math.max(1, props.getAuditBackgroundConcurrency()), "insight-bg-audit-");
     }
 
+    @Bean(name = "judgeCallExecutor", destroyMethod = "shutdown")
+    public ExecutorService judgeCallExecutor() {
+        AtomicInteger seq = new AtomicInteger();
+        ThreadFactory factory = r -> {
+            Thread t = new Thread(r, "insight-judge-" + seq.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
+        // cached:并发上限自然被 (report+background 会话并发)×2 约束;空闲线程 60s 回收。
+        return Executors.newCachedThreadPool(factory);
+    }
+
     private static ExecutorService fixedDaemonPool(int n, String namePrefix) {
         AtomicInteger seq = new AtomicInteger();
         ThreadFactory factory = r -> {

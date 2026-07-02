@@ -23,6 +23,7 @@ public class DualJudgeService {
 
     private final InsightProperties properties;
     private final JudgeClientRegistry registry;
+    private final java.util.concurrent.ExecutorService judgeCallExecutor;
 
     /**
      * 跑一次双 judge 并合成最终评判。
@@ -36,8 +37,15 @@ public class DualJudgeService {
         JudgeClient a = registry.require(aCfg.getProvider());
         JudgeClient b = registry.require(bCfg.getProvider());
 
-        JudgeResult ra = callWithRetry(a, aCfg, prompt, "A");
-        JudgeResult rb = callWithRetry(b, bCfg, prompt, "B");
+        java.util.concurrent.CompletableFuture<JudgeResult> fa =
+                java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> callWithRetry(a, aCfg, prompt, "A"), judgeCallExecutor);
+        java.util.concurrent.CompletableFuture<JudgeResult> fb =
+                java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> callWithRetry(b, bCfg, prompt, "B"), judgeCallExecutor);
+
+        JudgeResult ra = join(fa, "A");
+        JudgeResult rb = join(fb, "B");
         AuditConsistencyChecker.Combined combined = AuditConsistencyChecker.combine(ra, rb);
 
         return new Outcome(ra, rb, combined);
@@ -62,6 +70,22 @@ public class DualJudgeService {
             }
         }
         throw last != null ? last : new JudgeException("judge " + tag + " failed without exception");
+    }
+
+    private JudgeResult join(java.util.concurrent.CompletableFuture<JudgeResult> f, String tag) {
+        try {
+            return f.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new JudgeException("interrupted while joining judge " + tag, e);
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof JudgeException je) {
+                throw je;
+            }
+            throw new JudgeException("judge " + tag + " failed: "
+                    + (cause == null ? e.getMessage() : cause.getMessage()), cause);
+        }
     }
 
     public record Outcome(JudgeResult judgeA, JudgeResult judgeB,
