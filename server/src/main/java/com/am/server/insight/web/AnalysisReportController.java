@@ -202,6 +202,8 @@ public class AnalysisReportController {
         d.setDifficultyDist(nullOrJson(u.getDifficultyDistJson()));
         d.setAvgDifficulty(u.getAvgDifficulty());
         d.setHighDifficultyRatio(u.getHighDifficultyRatio());
+        d.setCompletionRate(u.getCompletionRate());
+        d.setAbandonedRate(u.getAbandonedRate());
         d.setCapProblemDecomposition(u.getCapProblemDecomposition());
         d.setCapContextManagement(u.getCapContextManagement());
         d.setCapDebuggingSkill(u.getCapDebuggingSkill());

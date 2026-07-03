@@ -69,7 +69,7 @@ function narrativeSection(detail: AnalysisReportDetail): Content[] {
 }
 
 function usersTable(detail: AnalysisReportDetail): Content {
-  const header = ['员工', '等级', '综合分', '会话', '协作(h)', '完成率', '高难完成', '回滚率', 'commit/h', 'Watchlist'];
+  const header = ['员工', '等级', '综合分', '会话', '协作(h)', '完成率', '高难占比', '回滚率', 'commit/h', 'Watchlist'];
   const body = detail.users.map((u) => [
     employeeName(u.user_display, u.user_code),
     gradeLabel(u),
