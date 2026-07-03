@@ -100,6 +100,21 @@ export const CAPABILITY_DIMENSIONS: Array<{
   { key: 'cap_self_correction', label: '自我纠错' },
 ];
 
+export const CAP_TEAM_KEY: Record<
+  (typeof CAPABILITY_DIMENSIONS)[number]['key'],
+  | 'problem_decomposition'
+  | 'context_management'
+  | 'debugging_skill'
+  | 'tool_orchestration'
+  | 'self_correction'
+> = {
+  cap_problem_decomposition: 'problem_decomposition',
+  cap_context_management: 'context_management',
+  cap_debugging_skill: 'debugging_skill',
+  cap_tool_orchestration: 'tool_orchestration',
+  cap_self_correction: 'self_correction',
+};
+
 export const BUCKET_META: Record<
   'top25' | 'mid50' | 'bottom25',
   { label: string; color: string }

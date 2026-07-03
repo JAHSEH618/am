@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Empty, List, Progress, Row, Skeleton, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Col, Empty, List, Progress, Row, Skeleton, Statistic, Tabs, Tag, Tooltip, Typography, message } from 'antd';
+import { FilePdfOutlined } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts-for-react';
 import { Link } from 'react-router-dom';
@@ -13,25 +14,10 @@ import type {
 } from '../../api/types';
 import { formatTokens } from '../../utils/format';
 import { ink, indigo } from '../../styles/tokens';
-import { BUCKET_META, CAPABILITY_DIMENSIONS, GRADE_META, MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
+import { BUCKET_META, CAPABILITY_DIMENSIONS, CAP_TEAM_KEY, GRADE_META, MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
 import MetricLabel from './MetricLabel';
 
 const { Text, Paragraph } = Typography;
-
-const CAP_TEAM_KEY: Record<
-  (typeof CAPABILITY_DIMENSIONS)[number]['key'],
-  | 'problem_decomposition'
-  | 'context_management'
-  | 'debugging_skill'
-  | 'tool_orchestration'
-  | 'self_correction'
-> = {
-  cap_problem_decomposition: 'problem_decomposition',
-  cap_context_management: 'context_management',
-  cap_debugging_skill: 'debugging_skill',
-  cap_tool_orchestration: 'tool_orchestration',
-  cap_self_correction: 'self_correction',
-};
 
 function EChartsAutoBox({ option, height }: { option: EChartsOption; height: number }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -191,6 +177,21 @@ export default function UserDetail({ report, user }: Props) {
 
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <Button
+          size="small"
+          icon={<FilePdfOutlined />}
+          onClick={() => {
+            message.loading({ content: '正在生成 PDF…', key: 'updf' });
+            import('./exportUserPdf')
+              .then(({ exportUserReportPdf }) => exportUserReportPdf(report, user))
+              .then(() => message.success({ content: '已开始下载 PDF', key: 'updf' }))
+              .catch(() => message.error({ content: 'PDF 导出失败', key: 'updf' }));
+          }}
+        >
+          导出个人报告
+        </Button>
+      </div>
       <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
         <Link to={peopleLink}>
           <Button type="link" size="small">
