@@ -40,7 +40,7 @@ import type {
 import TeamOverview from './Analysis/TeamOverview';
 import UserDetail from './Analysis/UserDetail';
 import MetricLabel from './Analysis/MetricLabel';
-import { BUCKET_META, WATCHLIST_META, watchlistTagColor } from './Analysis/constants';
+import { BUCKET_META, GRADE_META, WATCHLIST_META, watchlistTagColor } from './Analysis/constants';
 import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
 import { employeeName } from '../utils/format';
 
@@ -522,14 +522,21 @@ export default function Analysis() {
             drawerUser ? (
               <span>
                 {employeeName(drawerUser.user_display, drawerUser.user_code)}
-                {drawerUser.composite_bucket && (
+                {drawerUser.composite_grade ? (
+                  <Tag
+                    color={GRADE_META[drawerUser.composite_grade].color}
+                    style={{ marginLeft: 8 }}
+                  >
+                    {GRADE_META[drawerUser.composite_grade].label}
+                  </Tag>
+                ) : drawerUser.composite_bucket ? (
                   <Tag
                     color={BUCKET_META[drawerUser.composite_bucket].color}
                     style={{ marginLeft: 8 }}
                   >
                     {BUCKET_META[drawerUser.composite_bucket].label}
                   </Tag>
-                )}
+                ) : null}
               </span>
             ) : (
               ''
@@ -658,10 +665,16 @@ function UserListTable({
     {
       title: <MetricLabel name="composite_bucket" />,
       key: 'composite_bucket',
-      width: 96,
+      width: 110,
       align: 'center',
       render: (_: unknown, u) =>
-        u.composite_bucket ? (
+        u.composite_grade ? (
+          <Tooltip title={`${GRADE_META[u.composite_grade].desc}${u.composite_confidence === 'low' ? ' · 低置信度' : ''}`}>
+            <Tag color={GRADE_META[u.composite_grade].color} style={{ marginInlineEnd: 0 }}>
+              {GRADE_META[u.composite_grade].label}
+            </Tag>
+          </Tooltip>
+        ) : u.composite_bucket ? (
           <Tag color={BUCKET_META[u.composite_bucket].color} style={{ marginInlineEnd: 0 }}>
             {BUCKET_META[u.composite_bucket].label}
           </Tag>

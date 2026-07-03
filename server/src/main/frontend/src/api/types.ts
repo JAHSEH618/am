@@ -489,6 +489,43 @@ export interface HighlightSessionCard {
   nearby_commit: boolean;
 }
 
+export type CompositeGrade = 'S' | 'A' | 'B' | 'C' | 'D';
+
+export interface CompositeBreakdownDimension {
+  key: 'cap' | 'output' | 'quality' | 'challenge' | 'independence';
+  label: string;
+  weight: number;
+  /** 0-1 归一化子分 */
+  score: number;
+}
+
+/** v2 得分构成（composite_breakdown_json 透传） */
+export interface CompositeBreakdown {
+  formula_version: string;
+  dimensions: CompositeBreakdownDimension[];
+  raw: number;
+  shrink_weight: number;
+  team_mean: number | null;
+  final: number;
+}
+
+/** LLM 个人评语 */
+export interface UserNarrative {
+  level_summary: string;
+  evidence: string;
+  strengths: string;
+  weaknesses: string;
+  suggestions: string;
+}
+
+/** LLM 团队总评 */
+export interface TeamNarrative {
+  overview: string;
+  highlights: string;
+  risks: string;
+  recommendations: string;
+}
+
 export interface AnalysisReportUser {
   user_code: string;
   user_display: string;
@@ -502,6 +539,8 @@ export interface AnalysisReportUser {
   difficulty_dist: DifficultyDist | null;
   avg_difficulty: number | null;
   high_difficulty_ratio: number | null;
+  completion_rate?: number | null;
+  abandoned_rate?: number | null;
 
   cap_problem_decomposition: number | null;
   cap_context_management: number | null;
@@ -519,6 +558,10 @@ export interface AnalysisReportUser {
   composite_score: number | null;
   composite_percentile: number | null;
   composite_bucket: 'top25' | 'mid50' | 'bottom25' | null;
+  /** v2 等级；旧报告为 null（回退 bucket 展示） */
+  composite_grade?: CompositeGrade | null;
+  composite_confidence?: 'normal' | 'low' | null;
+  composite_breakdown?: CompositeBreakdown | null;
 
   watchlist_flags: string[] | null;
   highlight_session_ids: number[] | null;
@@ -531,6 +574,10 @@ export interface AnalysisReportUser {
   top_models?: NameValuePair[] | null;
   top_projects?: NameValuePair[] | null;
   agent_dist?: NameValuePair[] | null;
+  narrative?: UserNarrative | null;
+  retry_count?: number | null;
+  retry_per_active_hour?: number | null;
+  tool_call_count?: number | null;
 }
 
 export interface AnalysisReportDetail {
@@ -558,6 +605,9 @@ export interface AnalysisReportDetail {
   watchlist_summary: WatchlistSummary | null;
 
   team_tool_breakdown?: TeamToolBreakdown | null;
+
+  team_grade_dist?: Partial<Record<CompositeGrade, number>> | null;
+  team_narrative?: TeamNarrative | null;
 
   users: AnalysisReportUser[];
 }
@@ -594,6 +644,11 @@ export interface PeopleSummary {
   git_commit_window_count: number;
   first_response_avg_ms: number;
   top_model: string | null;
+  /** 最近一份 completed 报告的 v2 等级；未评估为 null */
+  composite_grade?: CompositeGrade | null;
+  composite_score?: number | null;
+  composite_confidence?: 'normal' | 'low' | null;
+  grade_window?: string | null;
 }
 
 export interface PeopleDailyPoint {

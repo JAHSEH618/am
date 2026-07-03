@@ -2,6 +2,7 @@
 // 与 docs/design/employee-insight-from-ai-sessions-v1.0.md §3 / §2.2 对齐。
 
 import { semantic, violet, statusHue } from '../../styles/tokens';
+import type { CompositeGrade } from '../../api/types';
 
 export const WATCHLIST_META: Record<
   string,
@@ -106,6 +107,14 @@ export const BUCKET_META: Record<
   top25: { label: '前 25%', color: 'green' },
   mid50: { label: '中 50%', color: 'blue' },
   bottom25: { label: '后 25%', color: 'orange' },
+};
+
+export const GRADE_META: Record<CompositeGrade, { label: string; color: string; desc: string }> = {
+  S: { label: 'S · 专家级', color: 'purple', desc: '综合分 ≥85' },
+  A: { label: 'A · 高级', color: 'green', desc: '70–84' },
+  B: { label: 'B · 中级', color: 'blue', desc: '55–69' },
+  C: { label: 'C · 初级', color: 'orange', desc: '40–54' },
+  D: { label: 'D · 待提升', color: 'red', desc: '<40' },
 };
 
 /**

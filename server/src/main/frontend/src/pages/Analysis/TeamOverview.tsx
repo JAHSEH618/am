@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Input, Select, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { AnalysisReportDetail } from '../../api/types';
-import { ink, accent, indigo } from '../../styles/tokens';
+import { ink, accent, indigo, semantic } from '../../styles/tokens';
 import { NUM_STYLE } from '../../utils/table';
 import { employeeName } from '../../utils/format';
 import { categoryAxisGridLeft } from '../../utils/chartAxis';
@@ -69,6 +69,26 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
             color: (p: { dataIndex: number }) =>
               [indigo[200], indigo[300], indigo[400], indigo[500], indigo[600]][p.dataIndex],
           },
+          label: { show: true, position: 'top' as const },
+        },
+      ],
+    };
+  }, [report]);
+
+  const gradeOption = useMemo(() => {
+    const dist = report.team_grade_dist || {};
+    const grades = ['S', 'A', 'B', 'C', 'D'] as const;
+    const colors = [accent.purple.base, semantic.success.base, accent.blue.base, semantic.warning.base, semantic.error.base];
+    return {
+      tooltip: { trigger: 'axis' as const },
+      grid: { left: 36, right: 16, bottom: 28, top: 28 },
+      xAxis: { type: 'category' as const, data: [...grades], name: '等级', axisLabel: { color: ink[3] } },
+      yAxis: { type: 'value' as const, name: '人数', axisLabel: { color: ink[3] } },
+      series: [
+        {
+          type: 'bar' as const,
+          data: grades.map((g) => dist[g] ?? 0),
+          itemStyle: { color: (p: { dataIndex: number }) => colors[p.dataIndex] },
           label: { show: true, position: 'top' as const },
         },
       ],
@@ -332,6 +352,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
   ];
 
   const chartTitles = [
+    { key: 'grade', title: <span>等级分布</span>, option: gradeOption },
     { key: 'diff', title: <MetricLabel name="team_difficulty_dist" />, option: diffOption },
     { key: 'mode', title: <MetricLabel name="team_mode_dist" />, option: modeOption },
   ];
@@ -360,6 +381,24 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
         <Paragraph type="secondary" style={{ marginTop: -4, marginBottom: 12, fontSize: 12 }}>
           {compareLine}
         </Paragraph>
+      )}
+      {report.team_narrative && (
+        <div style={panelStyle}>
+          <div style={sectionHeadStyle}>团队总评（AI 生成）</div>
+          <div style={{ padding: '12px 16px 8px' }}>
+            {([
+              ['总体', 'overview'],
+              ['亮点', 'highlights'],
+              ['风险', 'risks'],
+              ['建议', 'recommendations'],
+            ] as const).map(([t, k]) => (
+              <Paragraph key={k} style={{ marginBottom: 8, fontSize: 13 }}>
+                <Text strong>{t}：</Text>
+                {report.team_narrative![k]}
+              </Paragraph>
+            ))}
+          </div>
+        </div>
       )}
       <div style={panelStyle}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
@@ -400,7 +439,7 @@ export default function TeamOverview({ report, onPickUser, compareReport }: Prop
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
           {chartTitles.map((chart, i) => (
             <div
               key={chart.key}

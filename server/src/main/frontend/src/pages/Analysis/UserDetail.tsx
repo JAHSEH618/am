@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Empty, List, Row, Skeleton, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Card, Col, Empty, List, Progress, Row, Skeleton, Statistic, Tabs, Tag, Tooltip, Typography } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts-for-react';
 import { Link } from 'react-router-dom';
@@ -13,7 +13,7 @@ import type {
 } from '../../api/types';
 import { formatTokens } from '../../utils/format';
 import { ink, indigo } from '../../styles/tokens';
-import { BUCKET_META, CAPABILITY_DIMENSIONS, MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
+import { BUCKET_META, CAPABILITY_DIMENSIONS, GRADE_META, MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
 import MetricLabel from './MetricLabel';
 
 const { Text, Paragraph } = Typography;
@@ -212,10 +212,16 @@ export default function UserDetail({ report, user }: Props) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' }}>
           <KpiCell
             title={<MetricLabel name="composite_bucket" />}
-            value={user.composite_bucket ? BUCKET_META[user.composite_bucket].label : '—'}
-            footer={
-              user.composite_percentile != null ? `百分位 ${user.composite_percentile.toFixed(1)}` : undefined
+            value={
+              user.composite_grade
+                ? GRADE_META[user.composite_grade].label
+                : user.composite_bucket ? BUCKET_META[user.composite_bucket].label : '—'
             }
+            footer={[
+              user.composite_score != null ? `综合分 ${Number(user.composite_score).toFixed(1)}` : null,
+              user.composite_percentile != null ? `百分位 ${user.composite_percentile.toFixed(1)}` : null,
+              user.composite_confidence === 'low' ? '低置信度' : null,
+            ].filter(Boolean).join(' · ') || undefined}
             showDivider
           />
           <KpiCell
@@ -276,6 +282,50 @@ export default function UserDetail({ report, user }: Props) {
           style={{ marginBottom: 16 }}
           message="样本不足，仅展示基本量。能力评判需要窗口内 ≥ 10 个已审计会话。"
         />
+      )}
+
+      {user.narrative && (
+        <Card size="small" title="AI 评语" style={{ marginBottom: 16 }}>
+          {([
+            ['水平定位', 'level_summary'],
+            ['典型表现', 'evidence'],
+            ['优势', 'strengths'],
+            ['短板', 'weaknesses'],
+            ['发展建议', 'suggestions'],
+          ] as const).map(([t, k]) => (
+            <Paragraph key={k} style={{ marginBottom: 6 }}>
+              <Text strong>{t}：</Text>
+              {user.narrative![k]}
+            </Paragraph>
+          ))}
+        </Card>
+      )}
+      {user.composite_breakdown && (
+        <Card size="small" title="得分构成" style={{ marginBottom: 16 }}>
+          {user.composite_breakdown.dimensions.map((d) => (
+            <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <span style={{ width: 88, fontSize: 12, color: 'var(--am-ink-2)' }}>{d.label}</span>
+              <Progress
+                percent={Math.round(d.score * 100)}
+                size="small"
+                style={{ flex: 1 }}
+                strokeColor={indigo[600]}
+              />
+              <span style={{ width: 72, fontSize: 12, color: 'var(--am-ink-3)', textAlign: 'right' }}>
+                权重 {(d.weight * 100).toFixed(0)}%
+              </span>
+            </div>
+          ))}
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+            原始分 {user.composite_breakdown.raw} → 收缩后 {user.composite_breakdown.final}
+            （团队均值 {user.composite_breakdown.team_mean ?? '—'}，样本权重 {user.composite_breakdown.shrink_weight}）
+          </Text>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+            展示指标（不入分）：重试 {user.retry_count ?? '—'} 次
+            {user.retry_per_active_hour != null ? `（${Number(user.retry_per_active_hour).toFixed(2)}/h）` : ''}
+            · 工具调用 {user.tool_call_count ?? '—'} 次
+          </Text>
+        </Card>
       )}
 
       <Tabs
