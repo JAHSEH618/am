@@ -26,6 +26,9 @@ export default defineConfig({
                     if (id.includes('node_modules/xlsx')) {
                         return 'xlsx';
                     }
+                    if (id.includes('node_modules/pdfmake')) {
+                        return 'pdfmake';
+                    }
                     if (id.includes('node_modules/antd') || id.includes('node_modules/@ant-design')) {
                         return 'antd';
                     }
