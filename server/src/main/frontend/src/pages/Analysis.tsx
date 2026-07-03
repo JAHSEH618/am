@@ -20,7 +20,7 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DeleteOutlined, DownloadOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, FilePdfOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
 import {
@@ -408,6 +408,13 @@ export default function Analysis() {
             .catch(() => {
               message.error('导出失败，请稍后重试');
             });
+        }, () => {
+          if (!currentDetail) return;
+          message.loading({ content: '正在生成 PDF…', key: 'pdf' });
+          import('./Analysis/exportAnalysisPdf')
+            .then(({ exportAnalysisReportPdf }) => exportAnalysisReportPdf(currentDetail))
+            .then(() => message.success({ content: '已开始下载 PDF', key: 'pdf' }))
+            .catch(() => message.error({ content: 'PDF 导出失败，请稍后重试', key: 'pdf' }));
         })}
         {detailLoading && (
           <Card>
@@ -556,6 +563,7 @@ function renderHeader(
   progress: AnalysisReportProgress | null,
   detail: AnalysisReportDetail | null,
   onExportExcel?: () => void,
+  onExportPdf?: () => void,
 ) {
   if (!detail || progress?.status !== 'completed') return null;
 
@@ -616,9 +624,14 @@ function renderHeader(
             : `${(detail.judge_disagreement_ratio * 100).toFixed(1)}%`}
         </Text>
       </div>
-      <Button icon={<DownloadOutlined />} onClick={onExportExcel}>
-        导出 Excel
-      </Button>
+      <Space>
+        <Button icon={<DownloadOutlined />} onClick={onExportExcel}>
+          导出 Excel
+        </Button>
+        <Button icon={<FilePdfOutlined />} onClick={onExportPdf}>
+          导出 PDF
+        </Button>
+      </Space>
     </div>
     </div>
   );
