@@ -15,7 +15,8 @@ import dayjs, { type Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
 import ReactECharts from 'echarts-for-react';
 import { fetchPeople, fetchPersonDetail, fetchPersonGitCommits, fetchPersonSlashCommands } from '../api/client';
-import type { NameValuePair, PeopleDetail, PeopleSummary, ProjectGitCommit, WowMetric } from '../api/types';
+import type { CompositeGrade, NameValuePair, PeopleDetail, PeopleSummary, ProjectGitCommit, WowMetric } from '../api/types';
+import { GRADE_META } from './Analysis/constants';
 import {
   buildGitCommitTableColumns,
   GIT_COMMIT_MODAL_TABLE_SCROLL_Y,
@@ -178,6 +179,27 @@ export default function People() {
           </Text>
         </Space>
       ),
+    },
+    {
+      title: (
+        <Tooltip title="来自最近一份完成的分析报告（综合分 v2 映射）；未生成报告或样本不足时为 —。">
+          <span>等级</span>
+        </Tooltip>
+      ),
+      dataIndex: 'composite_grade',
+      key: 'composite_grade',
+      width: 104,
+      align: 'center' as const,
+      render: (v: CompositeGrade | null | undefined, row) =>
+        v ? (
+          <Tooltip
+            title={`综合分 ${row.composite_score == null ? '—' : Number(row.composite_score).toFixed(1)} · ${row.grade_window ?? ''}${row.composite_confidence === 'low' ? ' · 低置信度' : ''}`}
+          >
+            <Tag color={GRADE_META[v].color} style={{ margin: 0 }}>{GRADE_META[v].label}</Tag>
+          </Tooltip>
+        ) : (
+          EMPTY_DASH
+        ),
     },
     {
       title: (
@@ -632,6 +654,14 @@ const PersonDetailPanel = memo(function PersonDetailPanel({
       <Space>
         <UserOutlined />
         <span>员工详情 — {display}</span>
+        {s.composite_grade && (
+          <Tooltip title={`综合分 ${s.composite_score == null ? '—' : Number(s.composite_score).toFixed(1)} · 评估窗口 ${s.grade_window ?? '—'}`}>
+            <Tag color={GRADE_META[s.composite_grade].color} style={{ marginLeft: 4 }}>
+              {GRADE_META[s.composite_grade].label}
+              {s.composite_confidence === 'low' ? '（低置信度）' : ''}
+            </Tag>
+          </Tooltip>
+        )}
       </Space>
     }>
       <PersonDetailMetrics
