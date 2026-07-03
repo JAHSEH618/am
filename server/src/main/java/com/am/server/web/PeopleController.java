@@ -84,6 +84,8 @@ public class PeopleController {
     private final GitCommitRepository gitCommitRepository;
     private final ObjectMapper objectMapper;
     private final SlashCommandStatSupport slashCommandStatSupport;
+    private final com.am.server.insight.domain.AnalysisReportRepository analysisReportRepository;
+    private final com.am.server.insight.domain.AnalysisReportUserRepository analysisReportUserRepository;
 
     /** 员工数据访问触发的 today 聚合 TTL：60s 内不重复算同一天 */
     private static final Duration ENSURE_FRESH_TTL = Duration.ofSeconds(60);
@@ -170,6 +172,8 @@ public class PeopleController {
             out.add(dto);
         }
 
+        attachGrades(out);
+
         // 一级排序：窗口内 token 总量降序，与「Token 总量」列口径一致；
         // 二级排序：user_code 升序，保证同 token 区段顺序稳定不抖动。
         out.sort(Comparator
@@ -255,6 +259,7 @@ public class PeopleController {
                     slashCommandStatSupport.sumCommandCountForUser(userCode, t0, t1, activeTypes)));
         }
         summary.setGitCommitWindowCount(gitCommitRepository.countByUserCodeAndCommitWindow(userCode, t0, t1));
+        attachGrades(List.of(summary));
 
         Map<LocalDate, Long> slashByDay = applyAiDailySummary
                 ? slashCommandStatSupport.sumCommandCountByDayForUser(userCode, t0, t1, activeTypes)
@@ -490,6 +495,35 @@ public class PeopleController {
         }
 
         return d;
+    }
+
+    /** 批量回填最近 completed 报告的等级徽章；无报告时全部保持 null。 */
+    private void attachGrades(List<PeopleSummaryDto> dtos) {
+        if (dtos.isEmpty()) {
+            return;
+        }
+        var reportOpt = analysisReportRepository
+                .findFirstByStatusOrderByWindowToDescIdDesc("completed");
+        if (reportOpt.isEmpty()) {
+            return;
+        }
+        var report = reportOpt.get();
+        String window = report.getWindowFrom() + " ~ " + report.getWindowTo();
+        var codes = dtos.stream().map(PeopleSummaryDto::getUserCode).toList();
+        Map<String, com.am.server.insight.domain.AnalysisReportUser> byCode = new HashMap<>();
+        for (var u : analysisReportUserRepository.findByReportIdAndUserCodeIn(report.getId(), codes)) {
+            byCode.put(u.getUserCode(), u);
+        }
+        for (PeopleSummaryDto d : dtos) {
+            var u = byCode.get(d.getUserCode());
+            if (u == null || u.getCompositeGrade() == null) {
+                continue;
+            }
+            d.setCompositeGrade(u.getCompositeGrade());
+            d.setCompositeScore(u.getCompositeScore());
+            d.setCompositeConfidence(u.getCompositeConfidence());
+            d.setGradeWindow(window);
+        }
     }
 
     private static int toInt(long v) {

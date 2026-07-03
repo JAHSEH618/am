@@ -3,6 +3,7 @@ package com.am.server.insight.domain;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -16,6 +17,8 @@ public interface AnalysisReportUserRepository extends JpaRepository<AnalysisRepo
     List<AnalysisReportUser> findByReportIdOrderByCompositePercentileDesc(Long reportId);
 
     Optional<AnalysisReportUser> findByReportIdAndUserCode(Long reportId, String userCode);
+
+    List<AnalysisReportUser> findByReportIdAndUserCodeIn(Long reportId, Collection<String> userCodes);
 
     /** 重新生成报告时先清空旧用户画像。 */
     @Transactional

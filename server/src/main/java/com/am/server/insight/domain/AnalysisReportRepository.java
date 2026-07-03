@@ -20,4 +20,7 @@ public interface AnalysisReportRepository extends JpaRepository<AnalysisReport, 
 
     /** 启动时收口：进程重启后仍为 pending/running 的报告无法继续执行，需标记失败 */
     List<AnalysisReport> findByStatusIn(Collection<String> statuses);
+
+    /** People 页等级徽章：取最近一份 completed 报告（窗口截止日最新）。 */
+    Optional<AnalysisReport> findFirstByStatusOrderByWindowToDescIdDesc(String status);
 }

@@ -6,6 +6,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
+
 /**
  * 员工数据列表项（v2.1 Phase 2）
  * 一行 = 一位员工在窗口期内的聚合视图
@@ -67,4 +69,12 @@ public class PeopleSummaryDto {
 
     /** Top 模型（按 token 加权） */
     private String topModel;
+
+    /** 最近一份 completed 分析报告的等级 S/A/B/C/D；无报告或数据不足为 null */
+    private String compositeGrade;
+    private BigDecimal compositeScore;
+    /** normal / low */
+    private String compositeConfidence;
+    /** 等级来源窗口，如 "2026-06-01 ~ 2026-06-30" */
+    private String gradeWindow;
 }
