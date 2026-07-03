@@ -67,3 +67,7 @@ the proxy at whichever port your backend is actually on, or run the backend on 8
   call it when a modal-heavy page can leave masks behind.
 - TS is strict with `noUnusedLocals`/`noUnusedParameters`; the `@/*` path alias maps to `src/*`.
 - ECharts / xlsx / antd are split into separate Vite chunks (see `vite.config.ts`) — keep those imports lazy.
+- **PDF 导出**：与 xlsx 同模式——点击时才 `import('./Analysis/exportAnalysisPdf')`（团队报告）/
+  `import('./exportUserPdf')`（UserDetail 单人）懒加载；pdfmake 是独立 Vite chunk，中文字体
+  （Noto Sans SC，OFL）放 `public/fonts/` 仅导出时 fetch。公共件在 `src/lib/pdf/`
+  （`pdfCore.ts` 字体加载/文档骨架/页脚页码，`chartImage.ts` ECharts 离屏 2x 截图）。

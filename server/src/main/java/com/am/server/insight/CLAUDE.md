@@ -23,6 +23,17 @@ ephemeral, per-window statistical aggregation**:
    `judge_disagreement` flag. Reused by every report that touches the session, so the LLM runs once.
 2. **Aggregate (recomputed each report)** → `analysis_report` + `analysis_report_user`. Pure statistics
    over the cached audits + `daily_summary` + `git_commit` for a `[from, to]` window.
+3. **Narrative（随报告生成，失败容忍）** → `narrative/ReportNarrativeService`：聚合完成后用 judgeA
+   配置（仅 openai-compatible，其他 provider 直接跳过）为每个有等级的员工生成 `narrative_json`
+   （`level_summary`/`evidence`/`strengths`/`weaknesses`/`suggestions`，引用按难度+消息数选出的 Top5
+   典型会话）、为团队生成 `team_narrative_json`（`overview`/`highlights`/`risks`/`recommendations`）。
+   prompt 存 sys_config（`insight.narrative_user_prompt` / `insight.narrative_team_prompt`），UI 可改
+   热生效；服务内部 3 次退避重试，任何失败只记日志、字段留 null，报告照常 COMPLETED。
+
+综合分为 **v2**（`aggregate/CompositeScoringV2`，纯函数）：0.35 能力 + 0.25 产出分位 + 0.20 完成质量 +
+0.15 高难完成占比 + 0.05 独立成熟度，经验贝叶斯收缩（w=n/(n+10)，向团队均值收）后映射 S/A/B/C/D
+（85/70/55/40 分档）；<10 会话 insufficient（不评级不写评语）、10–19 低置信度、≥20 normal；
+构成明细在 `composite_breakdown_json`。
 
 `aggregate/` here is **not** the top-level `com.am.server.aggregator` package. The latter is the always-on,
 no-LLM ETL that builds `daily_summary`; insight `aggregate/` **consumes** `daily_summary.ai_active_seconds_union`
