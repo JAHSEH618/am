@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker.m.daocloud.io/docker/dockerfile:1
 #
 # AIWatch 服务端镜像（多阶段构建）
 #   Stage 1  server-build : 用 JDK17 + 自动下载的 Node/pnpm 编出含前端的 fat jar
@@ -12,7 +12,7 @@
 ##############################################
 # Stage 1: 编译后端 fat jar（含 React 前端）
 ##############################################
-FROM eclipse-temurin:17-jdk-jammy AS server-build
+FROM docker.m.daocloud.io/library/eclipse-temurin:17-jdk-jammy AS server-build
 WORKDIR /build
 COPY server/ ./server/
 WORKDIR /build/server
@@ -54,7 +54,7 @@ RUN chmod +x gradlew && ./gradlew --no-daemon clean bootJar
 ##############################################
 # Stage 2: 编译 agent 四平台分发包（供"安装客户端"下载，可选）
 ##############################################
-FROM golang:1.25-bookworm AS agent-build
+FROM docker.m.daocloud.io/library/golang:1.25-bookworm AS agent-build
 WORKDIR /build/agent
 COPY agent/ ./
 ENV CGO_ENABLED=0
@@ -65,7 +65,7 @@ RUN VERSION=1.2.7 bash build-dist.sh    # 产物在 dist/install/
 ##############################################
 # Stage 3: 运行时镜像
 ##############################################
-FROM eclipse-temurin:17-jre-jammy AS runtime
+FROM docker.m.daocloud.io/library/eclipse-temurin:17-jre-jammy AS runtime
 ENV TZ=Asia/Shanghai \
     SPRING_PROFILES_ACTIVE=prod \
     AIWATCH_INSTALL_DIR=/srv/aiwatch/install \

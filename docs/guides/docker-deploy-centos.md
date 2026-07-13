@@ -12,7 +12,7 @@
 | ---- | ---- | ---- | -------- |
 | **aiwatch-server** | `server/` | Spring Boot 3.2.5 / Java 17 单体，内置 React 前端（Vite 构建后打进同一个 jar） | **本文用 Docker 部署的主体** |
 | **aiwatchd** | `agent/` | Go 1.25 采集端，装在**员工电脑**上 | 非服务端常驻容器；只需把它的四平台分发包交给 server 提供下载 |
-| **MySQL** | — | 8.x，库 `am`，`utf8mb4` | 用官方 `mysql:8.0` 容器 |
+| **MySQL** | — | 8.x，库 `am`，`utf8mb4` | 经 DaoCloud 代理拉取官方 `mysql:8.0` 容器 |
 
 镜像采用多阶段构建：
 
@@ -62,7 +62,7 @@ docker version && docker compose version    # 验证
 
 ### 4.1 配置镜像加速器（国内构建必看）
 
-方案 A 构建期要拉 Docker Hub 基础镜像（`golang` / `eclipse-temurin` / `mysql`），国内直连常失败，需给 Docker 配 `registry-mirrors`。
+方案 A 构建期要拉 Docker Hub 基础镜像（`golang` / `eclipse-temurin` / `mysql`）。当前仓库已在 `Dockerfile` 和 `docker-compose.yml` 中显式使用 DaoCloud 官方公共镜像代理 `docker.m.daocloud.io`，不会再经过部署机里可能失效的 Docker Hub `registry-mirrors`。普通的 `docker pull nginx` 等仓库外操作如需加速，仍可按下方方式配置全局镜像源。
 
 > ⚠️ **别用失效地址**：百度 `mirror.baidubce.com`、中科大 `docker.mirrors.ustc.edu.cn` 等多个老牌公共加速器已停服或限内网。配了死地址会报 `lookup <域名> … no such host`，构建在拉基础镜像那步直接中断（见 11. 排错 FAQ）。最稳的是**阿里云个人加速器**：登录[容器镜像服务控制台](https://cr.console.aliyun.com/) → 镜像加速器，复制专属地址（形如 `https://<你的ID>.mirror.aliyuncs.com`）。
 
@@ -145,8 +145,8 @@ cd ../agent && VERSION=1.2.7 bash build-dist.sh   # 产物 agent/dist/install/
 在仓库根目录新建 `Dockerfile.offline`：
 
 ```dockerfile
-# syntax=docker/dockerfile:1
-FROM eclipse-temurin:17-jre-jammy
+# syntax=docker.m.daocloud.io/docker/dockerfile:1
+FROM docker.m.daocloud.io/library/eclipse-temurin:17-jre-jammy
 ENV TZ=Asia/Shanghai \
     SPRING_PROFILES_ACTIVE=prod \
     AIWATCH_INSTALL_DIR=/srv/aiwatch/install \
@@ -188,7 +188,7 @@ ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
 ```bash
 # 1) 重新编分发包（用 Go 容器，避免本机装 Go）
 docker run --rm -e VERSION=1.2.7 -e GOPROXY=https://goproxy.cn,direct \
-  -v "$PWD/agent:/agent" -w /agent golang:1.25-bookworm bash build-dist.sh
+  -v "$PWD/agent:/agent" -w /agent docker.m.daocloud.io/library/golang:1.25-bookworm bash build-dist.sh
 
 # 2) 解开 docker-compose.yml 中 server 的 volumes 挂载：
 #      - ./agent/dist/install:/srv/aiwatch/install:ro
@@ -259,7 +259,7 @@ DB_HOST=127.0.0.1 DB_USER=am DB_PASS=*** ./run-all.sh
 
 | 现象 | 排查 |
 | ---- | ---- |
-| 构建报 `lookup mirror.baidubce.com … no such host` / 拉 `golang`·`eclipse-temurin` 基础镜像失败 | Docker 的 `registry-mirrors` 指向了失效的加速器（百度镜像已停服）。改 `/etc/docker/daemon.json` 换成可用地址（见 4.1），`sudo systemctl daemon-reload && sudo systemctl restart docker` 后重建 |
+| 构建报 `lookup mirror.baidubce.com … no such host` / 拉 `golang`·`eclipse-temurin` 基础镜像失败 | 先确认已拉到显式使用 `docker.m.daocloud.io` 的新版 `Dockerfile`；新版构建不经过百度镜像。旧版则需从 `/etc/docker/daemon.json` 删除已失效的百度镜像，换成可用地址（见 4.1），重启 Docker 后重建 |
 | 构建卡在下载 Node/Gradle | 网络问题。方案 A 需外网；国内可在 Dockerfile 解开 `GOPROXY`，或改用方案 B |
 | server 起不来、报连不上库 | 确认 `.env` 的 `DB_URL` host 是 `mysql`（compose 服务名）、账号密码与 MySQL 一致；`docker compose logs mysql` 看库是否就绪 |
 | 中文乱码 | 确认 `DB_URL` 的 `characterEncoding=UTF-8`（不是 utf8mb4），MySQL 启动参数为 `utf8mb4` |
