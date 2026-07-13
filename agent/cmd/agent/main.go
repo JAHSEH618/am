@@ -32,7 +32,9 @@ import (
 	"github.com/am/aiwatch-agent/internal/config"
 	"github.com/am/aiwatch-agent/internal/logger"
 	"github.com/am/aiwatch-agent/internal/monitor"
+	"github.com/am/aiwatch-agent/internal/monitors/antigravity"
 	"github.com/am/aiwatch-agent/internal/monitors/claude"
+	"github.com/am/aiwatch-agent/internal/monitors/codebuddy"
 	"github.com/am/aiwatch-agent/internal/monitors/codex"
 	"github.com/am/aiwatch-agent/internal/monitors/cursor"
 	"github.com/am/aiwatch-agent/internal/monitors/hermes"
@@ -40,6 +42,8 @@ import (
 	"github.com/am/aiwatch-agent/internal/monitors/openclaw"
 	"github.com/am/aiwatch-agent/internal/monitors/opencode"
 	"github.com/am/aiwatch-agent/internal/monitors/openharness"
+	"github.com/am/aiwatch-agent/internal/monitors/qoder"
+	"github.com/am/aiwatch-agent/internal/monitors/trae"
 	"github.com/am/aiwatch-agent/internal/monitors/zcode"
 	"github.com/am/aiwatch-agent/internal/registrar"
 	"github.com/am/aiwatch-agent/internal/reporter"
@@ -180,6 +184,10 @@ func cmdRegister() error {
 	if err != nil && !errors.Is(err, config.ErrNotInstalled) {
 		return err
 	}
+	if cfg == nil {
+		// config.Load 在 ErrNotInstalled 时返回 nil；转为空配置后由下方给出可读错误。
+		cfg = &config.Config{}
+	}
 	if cfg.UserCode == "" || cfg.ServerURL == "" {
 		return errors.New("config not initialized; run `aiwatchd init` first")
 	}
@@ -313,6 +321,10 @@ func buildProviders(watchDir string) []monitor.Provider {
 		opencode.New(watchDir),
 		kimicode.New(watchDir),
 		zcode.New(watchDir),
+		antigravity.New(watchDir),
+		qoder.New(watchDir),
+		trae.New(watchDir),
+		codebuddy.New(watchDir),
 	}
 }
 
@@ -321,6 +333,10 @@ func cmdStatus() error {
 	cfg, err := config.Load()
 	if err != nil && !errors.Is(err, config.ErrNotInstalled) {
 		return err
+	}
+	if cfg == nil {
+		// 尚未 init 的机器也应能用 status 查看支持/已安装的 Agent。
+		cfg = &config.Config{}
 	}
 
 	type providerStatus struct {
@@ -411,7 +427,8 @@ Environment:
   AM_AUTO_UPDATE    是否每小时自动比对 manifest 并拉起在线升级（默认开启；0/false/off/no 关闭）
 
 Supported AI Agents（进程内静态注册；实际是否采集会话由服务端 monitor_policy 与本地是否安装共同决定）:
-  cursor / claude / codex / hermes / openclaw / openharness
+  cursor / claude / codex / hermes / openclaw / openharness / opencode
+  kimicode / zcode / antigravity / qoder / trae / codebuddy
   - 未在策略白名单内的类型本机不会调用 Snapshot（省 IO；策略随每次 /report 刷新落盘到 config.json）
   - 是否真的"装了"由各 Provider 自检本地文件系统决定
   - 员工后续安装新工具不需要重启 aiwatchd，下个 tick 自动可见（若该类型仍被服务端启用）`)

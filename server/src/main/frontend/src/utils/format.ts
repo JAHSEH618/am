@@ -263,6 +263,10 @@ export function targetTypeLabel(
     case 'opencode': return 'OpenCode';
     case 'kimicode': return 'Kimi Code';
     case 'zcode': return 'Z Code';
+    case 'antigravity': return 'Antigravity';
+    case 'qoder': return 'Qoder';
+    case 'trae': return 'TRAE';
+    case 'codebuddy': return 'CodeBuddy';
     default: return t || '-';
   }
 }
@@ -283,6 +287,10 @@ export function targetTypeColor(
     case 'opencode': return 'blue';
     case 'kimicode': return 'gold';
     case 'zcode': return 'volcano';
+    case 'antigravity': return 'purple';
+    case 'qoder': return 'cyan';
+    case 'trae': return 'blue';
+    case 'codebuddy': return 'geekblue';
     default: return 'default';
   }
 }

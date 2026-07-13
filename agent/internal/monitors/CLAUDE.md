@@ -25,7 +25,7 @@ Snapshot(ctx) (monitor.Snapshot, error)          // best-effort; return empty Sn
 
 Optional interfaces a provider may also implement:
 - `LookbackSetter.SetLookback(d)` — switch scan window between `DefaultLookback` (48h) and
-  `BootstrapLookback` (30d). All eight session monitors implement it; `gitlog` does not.
+  `BootstrapLookback` (30d). All registered session monitors implement it; `gitlog` does not.
 - `AccountProvider.Account()` — report the tool's logged-in account (email/tier). Only `cursor` does.
 
 `Snapshot` returns `[]monitor.Session`. The wire model lives in `../monitor/provider.go`:
@@ -49,6 +49,10 @@ from these (those event names are a server-side concept, not emitted here).
 | `opencode/` | SQLite `~/.local/share/opencode/opencode.db` (WAL, XDG path on all OS) | persistent RO conn + `PRAGMA data_version` fast-path like hermes; `session`/`message`/`part` tri-table; tokens are **real** columns. Legacy `storage/*.json` generations not yet parsed |
 | `kimicode/` | JSONL `~/.kimi-code/sessions/<workDirKey>/<sessionId>/agents/*/wire.jsonl` (+ legacy `~/.kimi`) | FileCache/ScanJSONL like codex; merges main+subagent `wire.jsonl` per `sessionId`; tokens from `StatusUpdate.token_usage` (**real**); message text is heuristic **pending a real sample** |
 | `zcode/` | SQLite `~/.zcode/cli/db/db.sqlite` (WAL, home-dir `~/.zcode` on macOS+Windows, confirmed) | Z Code (z.ai GLM agent) — OpenCode-derived `session`/`message`/`part` tri-table; persistent RO conn + `PRAGMA data_version` fast-path like opencode. **No token/model columns**: tokens from `message.data.tokens` (**real**), model from assistant `modelID`. zcode `tokens.input` *includes* cache (`total==input+output`), so input is split into disjoint fresh+cache to match opencode's convention. `tool` part = `{type:"tool", tool:"<Name>", state:{…}}` (confirmed); `reasoning`→thinking, `step-finish`/`step-start` ignored. Richer `model_usage`/`turn_usage`/`tool_usage` tables exist for future metrics |
+| `antigravity/` | `~/.gemini/antigravity/conversations/*.pb` + VS Code `state.vscdb` sidebar index | Session-level observation from one protobuf file per conversation. Reads the stable JSON/protobuf sidebar metadata when available; deliberately does not guess the private conversation-body protobuf schema. |
+| `qoder/` | `~/.qoder/projects/**/transcript/*.jsonl`, `~/.qoderwork/projects/**`, legacy session logs | Official Qoder hook transcript schema (`session_meta/user/assistant/progress`); parses message content, tool calls, timestamps, cwd/model and token usage when present. |
+| `trae/` | TRAE / TRAE SOLO workspace `state.vscdb` | Parses `ChatStore`, `inputHistory`, and `memento/icube-ai-ng-chat-storage*` JSON with tolerant field projection across international/CN/SOLO builds. |
+| `codebuddy/` | `codebuddy-sessions.vscdb` + optional `genie-history/**/messages.json[l]` | Session metadata is always local; message bodies are parsed when that build flushes local history, otherwise sessions are reported without fabricated content. |
 | `gitlog/` | on-disk git repos | **not a `Provider`** — driven by `reporter.GitLogReporter`; streams `git log` per repo filtered by author email, persists its own per-repo commit cursor |
 
 ## Shared semantics — `common/`

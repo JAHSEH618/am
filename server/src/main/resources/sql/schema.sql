@@ -271,7 +271,11 @@ INSERT INTO monitor_target(type_code, type_name, enabled, display_color, sort_no
 ('openharness', 'OpenHarness',    1, 'cyan',     60, '读取 ~/.openharness/data/sessions/<userhash>/session-*.json 解析 OpenHarness 会话（macOS / Windows / Linux）',                          NOW(), NOW()),
 ('opencode',    'OpenCode',       1, 'blue',     70, '读取 ~/.local/share/opencode/opencode.db（SQLite/WAL）解析 sst/opencode 会话（macOS / Windows / Linux 均走 XDG ~/.local/share）',          NOW(), NOW()),
 ('kimicode',    'Kimi Code',      1, 'gold',     80, '读取 ~/.kimi-code/sessions/<...>/agents/*/wire.jsonl（兼容 legacy ~/.kimi）解析 Moonshot Kimi Code CLI 会话（macOS / Windows / Linux）', NOW(), NOW()),
-('zcode',       'Z Code',         1, 'volcano',  90, '读取 ~/.zcode/cli/db/db.sqlite（SQLite/WAL，OpenCode 派生的 session/message/part 三表）解析 Z Code（z.ai GLM 编码 Agent）会话（macOS / Windows / Linux 均在 ~/.zcode）', NOW(), NOW())
+('zcode',       'Z Code',         1, 'volcano',  90, '读取 ~/.zcode/cli/db/db.sqlite（SQLite/WAL，OpenCode 派生的 session/message/part 三表）解析 Z Code（z.ai GLM 编码 Agent）会话（macOS / Windows / Linux 均在 ~/.zcode）', NOW(), NOW()),
+('antigravity', 'Antigravity',    1, 'purple',  100, '读取 ~/.gemini/antigravity/conversations/*.pb 与 Antigravity state.vscdb 索引；私有 protobuf 正文无稳定 schema 时降级为会话级观测', NOW(), NOW()),
+('qoder',       'Qoder',          1, 'cyan',    110, '读取 ~/.qoder/projects 与 ~/.qoderwork/projects 下官方 JSONL transcript，采集会话、消息、工具与 Token（如源记录提供）', NOW(), NOW()),
+('trae',        'TRAE',           1, 'blue',    120, '读取 TRAE / TRAE SOLO 各 workspaceStorage/state.vscdb 的 ChatStore 与 icube chat storage 会话', NOW(), NOW()),
+('codebuddy',   'CodeBuddy',      1, 'geekblue',130, '读取 CodeBuddy codebuddy-sessions.vscdb 会话索引；本地 genie-history 存在时同时采集消息，否则降级为会话级观测', NOW(), NOW())
 ON DUPLICATE KEY UPDATE
     type_name     = VALUES(type_name),
     display_color = VALUES(display_color),

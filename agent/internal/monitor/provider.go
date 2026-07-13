@@ -104,8 +104,8 @@ const (
 // 用 DefaultLookback 还是 BootstrapLookback；bootstrap 阶段所有积压消息发完后，
 // 再调一次 SetLookback(DefaultLookback) 切回稳态，避免每个 tick 都跑全量扫描。
 //
-// <p>当前由 cursor / claude / codex / openclaw / openharness / hermes 6 个 Provider 实现；
-// gitlog 这类不是按"会话窗口"采集的 provider 不实现，reporter 通过类型断言安全跳过。
+// <p>所有注册的会话 Provider 都应实现此接口；gitlog 这类不是按"会话窗口"采集的
+// 独立 reporter 不实现，调用方通过类型断言安全跳过。
 type LookbackSetter interface {
 	SetLookback(d time.Duration)
 }
@@ -120,8 +120,8 @@ type LookbackSetter interface {
 //   - best-effort：路径不存在不要紧，watcher 会 stat 失败时跳过；返回 nil 表示该 provider 不参与监听。
 //   - 要轻量、可频繁调用（watcher 只在构造时取一次 hints）。
 //
-// <p>当前由 cursor / claude / codex 三个主力 Provider 实现；其余 provider 不实现时，
-// reporter 通过类型断言安全跳过——它们仍按定时 tick 上报，只是不享受文件级加速。
+// <p>支持暴露稳定落盘目录的 Provider 应实现；其余 provider 不实现时，reporter 通过
+// 类型断言安全跳过——它们仍按定时 tick 上报，只是不享受文件级加速。
 type WatchHints interface {
 	WatchHints() []string
 }
@@ -148,12 +148,12 @@ func (a Account) IsZero() bool {
 
 // Snapshot 单次采集得到的会话集合。
 type Snapshot struct {
-	Type                   string    `json:"type"`
-	TargetVersion          string    `json:"target_version,omitempty"`
-	CapturedAt             LocalTime `json:"captured_at"`
-	Sessions               []Session `json:"sessions"`
+	Type          string    `json:"type"`
+	TargetVersion string    `json:"target_version,omitempty"`
+	CapturedAt    LocalTime `json:"captured_at"`
+	Sessions      []Session `json:"sessions"`
 	// SuppressedSessionIDs 被归并到父 chat、不应再单独展示的 external_session_id（如 Cursor Task 子 composer）。
-	SuppressedSessionIDs   []string  `json:"suppressed_session_ids,omitempty"`
+	SuppressedSessionIDs []string `json:"suppressed_session_ids,omitempty"`
 }
 
 // Session 一个 AI 会话的当前状态视图。
@@ -174,13 +174,13 @@ type Session struct {
 	UserMessages      int       `json:"user_messages"`
 	AssistantMessages int       `json:"assistant_messages"`
 	// SnapshotMessageCount 当前 tick 快照中的 recent_messages 条数（含 tool/thinking），供服务端判断回填进度。
-	SnapshotMessageCount int    `json:"snapshot_message_count,omitempty"`
-	InputTokens       int64     `json:"input_tokens"`
-	OutputTokens      int64     `json:"output_tokens"`
-	CacheCreateTokens int64     `json:"cache_create_tokens"`
-	CacheReadTokens   int64     `json:"cache_read_tokens"`
-	RecentTools       []Tool    `json:"recent_tools,omitempty"`
-	RecentMessages    []Message `json:"recent_messages,omitempty"`
+	SnapshotMessageCount int       `json:"snapshot_message_count,omitempty"`
+	InputTokens          int64     `json:"input_tokens"`
+	OutputTokens         int64     `json:"output_tokens"`
+	CacheCreateTokens    int64     `json:"cache_create_tokens"`
+	CacheReadTokens      int64     `json:"cache_read_tokens"`
+	RecentTools          []Tool    `json:"recent_tools,omitempty"`
+	RecentMessages       []Message `json:"recent_messages,omitempty"`
 	// ActivityDeltas 带原始 event_time 的 token/消息增量（按源日志 turn 或 token_count 快照）。
 	// reporter 按游标切片后上报；server 逐条写 ai_session_event，不再用 last_activity 代理所有增量。
 	ActivityDeltas []ActivityDelta `json:"activity_deltas,omitempty"`
@@ -212,9 +212,9 @@ type Message struct {
 	Timestamp         LocalTime     `json:"timestamp"`
 	// ConversationOrder Cursor 等 provider 在会话内的对话顺序（header 序号，1 起）。
 	// 与入库 sequence_no 不同；用于展示排序，解决续聊批量改写 createdAt 导致的乱序。
-	ConversationOrder int           `json:"conversation_order,omitempty"`
-	InputTokens       int           `json:"input_tokens"`
-	OutputTokens      int           `json:"output_tokens"`
+	ConversationOrder int `json:"conversation_order,omitempty"`
+	InputTokens       int `json:"input_tokens"`
+	OutputTokens      int `json:"output_tokens"`
 }
 
 // FinalizeMessage 根据 ContentParts 填充 Text（legacy 扁平字段）。

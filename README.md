@@ -8,7 +8,7 @@
 
 读取每位开发者机器上的本地 AI 工具会话，量化「AI 用得有多深、有多好、产出了什么」。
 
-![version](https://img.shields.io/badge/version-1.2.6-blue)
+![version](https://img.shields.io/badge/version-1.2.7-blue)
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
@@ -48,6 +48,10 @@ AIWatch 在每台开发机上运行一个 Go 单二进制客户端（**aiwatchd*
 | OpenCode | `opencode` | `~/.local/share/opencode/opencode.db`（SQLite） | mac · Win · Linux |
 | Kimi Code | `kimicode` | `~/.kimi-code/sessions/**/wire.jsonl` | mac · Win · Linux |
 | Z Code（z.ai GLM） | `zcode` | `~/.zcode/cli/db/db.sqlite`（SQLite） | mac · Win · Linux |
+| Antigravity | `antigravity` | `~/.gemini/antigravity/conversations/*.pb` + `state.vscdb` 索引 | mac · Win · Linux |
+| Qoder / QoderWork | `qoder` | `~/.qoder/projects/**/transcript/*.jsonl` / `~/.qoderwork/projects/**` | mac · Win · Linux |
+| TRAE / TRAE SOLO | `trae` | workspace `state.vscdb`（`ChatStore` / icube chat storage） | mac · Win · Linux |
+| CodeBuddy | `codebuddy` | `codebuddy-sessions.vscdb` + 可选 `genie-history/messages.json[l]` | mac · Win · Linux |
 | Git 提交 | `gitlog` | 本地 git 仓库 `git log`（按作者邮箱归因） | 全平台 |
 
 > [!TIP]
@@ -60,7 +64,7 @@ AIWatch 在每台开发机上运行一个 Go 单二进制客户端（**aiwatchd*
 ```mermaid
 flowchart TB
     subgraph dev["开发者机器（员工侧）"]
-        tools["本地 AI 工具<br/>Cursor · Claude Code · Codex · Hermes<br/>OpenClaw · OpenHarness · OpenCode · Kimi Code · Z Code"]
+        tools["本地 AI 工具<br/>Cursor · Claude Code · Codex · Hermes · OpenClaw<br/>OpenHarness · OpenCode · Kimi Code · Z Code<br/>Antigravity · Qoder · TRAE · CodeBuddy"]
         agent["aiwatchd（Go 单二进制）<br/>采集 · 增量游标 · 离线补传 · 开机自启"]
         tools -->|读取本地会话库| agent
     end
@@ -181,7 +185,7 @@ cd server/src/main/frontend && pnpm install && pnpm dev
 
 # 客户端
 cd agent && go test ./...
-VERSION=1.2.6 bash build-dist.sh   # 交叉编译四平台 → dist/install/
+VERSION=1.2.7 bash build-dist.sh   # 交叉编译四平台 → dist/install/
 ```
 
 > [!WARNING]
@@ -226,7 +230,7 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 │       └── monitors/     每个 AI 工具一个子包（cursor/claude/codex/.../zcode/gitlog）
 │
 ├── server/               Spring Boot 单体（前后端不分离，一个 jar）
-│   ├── build.gradle      artifact = aiwatch-server，version 1.2.6
+│   ├── build.gradle      artifact = aiwatch-server，version 1.2.7
 │   └── src/main/
 │       ├── java/com/am/server/   web · agent · aggregator · insight · system · domain
 │       ├── frontend/             React + Vite + TS + AntD（npm name = aiwatch-web）
@@ -258,4 +262,4 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 
 ## 版本
 
-当前发布版本 **1.2.6**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+当前发布版本 **1.2.7**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
