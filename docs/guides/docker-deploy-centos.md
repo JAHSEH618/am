@@ -239,9 +239,13 @@ docker compose up -d --build      # 改了代码后重建并启动
 ./scripts/deploy.sh                 # 拉当前分支最新代码，重建 server 并重启
 BRANCH=am ./scripts/deploy.sh       # 指定拉取分支
 NO_BUILD=1 ./scripts/deploy.sh      # 仅重启不重建（只在改了 .env / compose 时用；改了代码必须重建）
+MIN_FREE_GB=8 ./scripts/deploy.sh   # 构建前要求 Docker 存储盘最小可用空间（默认 5 GiB）
+PRUNE=0 ./scripts/deploy.sh         # 跳过部署成功后的自动清理（默认开启）
 ```
 
 > 用 `--ff-only` 拉取，避免在部署机上产生合并提交；server 启动时会自动跑 `*SchemaPatches` 补列/建索引与各回填补丁，更新代码无需手工改库。
+
+> 磁盘管理：构建前脚本会检查 `/var/lib/docker`、`/var/lib/containerd` 所在分区的可用空间，不足 `MIN_FREE_GB` 时自动清理旧版本 `aiwatch-server` 镜像、dangling 镜像与全部构建缓存后重试；部署成功后默认再做一次常规清理（保留 2GB 构建缓存加速下次重建）。清理只涉及镜像与构建缓存，**不动容器、不动 MySQL 数据卷**。
 
 ### 10.2 部署后数据自检（可选）
 
@@ -260,6 +264,7 @@ DB_HOST=127.0.0.1 DB_USER=am DB_PASS=*** ./run-all.sh
 | 现象 | 排查 |
 | ---- | ---- |
 | 构建报 `lookup mirror.baidubce.com … no such host` / 拉 `golang`·`eclipse-temurin` 基础镜像失败 | 先确认已拉到显式使用 `docker.m.daocloud.io` 的新版 `Dockerfile`；新版构建不经过百度镜像。旧版则需从 `/etc/docker/daemon.json` 删除已失效的百度镜像，换成可用地址（见 4.1），重启 Docker 后重建 |
+| 构建报 `failed to create prepare snapshot dir … no space left on device` | Docker 存储盘（`/var/lib/docker` 或 `/var/lib/containerd` 所在分区）满了：历次版本升级留下的旧 `aiwatch-server` 镜像 + BuildKit 构建缓存累积所致。新版 `deploy.sh` 构建前会自动预检并清理；老版本或需手工处理时依次跑 `docker system df` 定位、`docker system prune -af` 清理（不动数据卷）、`df -h` 确认分区，必要时扩容 |
 | 构建卡在下载 Node/Gradle | 网络问题。方案 A 需外网；国内可在 Dockerfile 解开 `GOPROXY`，或改用方案 B |
 | server 起不来、报连不上库 | 确认 `.env` 的 `DB_URL` host 是 `mysql`（compose 服务名）、账号密码与 MySQL 一致；`docker compose logs mysql` 看库是否就绪 |
 | 中文乱码 | 确认 `DB_URL` 的 `characterEncoding=UTF-8`（不是 utf8mb4），MySQL 启动参数为 `utf8mb4` |
