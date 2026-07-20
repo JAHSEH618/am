@@ -5,11 +5,20 @@
 #   docker compose up -d
 #   docker compose logs -f server
 
+# 容器日志轮转：json-file 默认无上限，长期运行会把 /var/lib/docker 撑满。
+# 每容器最多保留 5×20MB=100MB 历史日志（需完整日志用 docker compose logs 前先调大）。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   mysql:
     image: docker.m.daocloud.io/library/mysql:8.0
     container_name: aiwatch-mysql
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -40,6 +49,7 @@ services:
     image: aiwatch-server:1.2.7
     container_name: aiwatch-server
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       mysql:
         condition: service_healthy

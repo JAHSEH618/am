@@ -84,6 +84,51 @@ docker info | grep -A4 "Registry Mirrors"     # 确认已生效
 
 > 配之前可先 `getent hosts docker.m.daocloud.io` 确认域名能解析，避免又配上一个失效地址。公共加速器时有时无，失败时优先换阿里云个人加速器，或退回 6. 方案 B（外网机出镜像 `docker save` → 生产机 `docker load`）。
 
+### 4.2 磁盘规划：让 Docker 落在大分区（强烈建议先做）
+
+Docker 默认把镜像、构建缓存、容器日志、数据卷全塞进 `/var/lib/docker`，也就是**根分区**。本项目是多阶段构建（JDK+Node+Go），一次构建就吃数 GB 缓存，历次发版的旧 `aiwatch-server` 镜像又不会自动消失——根分区很快 100% 满，报 `no space left on device`，构建/启动全挂。
+
+CentOS 默认 LVM 分区常见"根小、home 大"的失衡（例如 `cs-root` 70G 已满，`cs-home` 72G 几乎全空）。**先看清楚再决定**：
+
+```bash
+df -h /                       # 根分区（/var/lib/docker 所在）
+lsblk -f                      # 各 LV 容量与文件系统类型
+docker info | grep "Docker Root Dir"   # 确认数据目录（默认 /var/lib/docker）
+```
+
+> ⚠️ CentOS 默认根文件系统是 **XFS，只能扩不能缩**。所以"把 home 缩小、把空间还给 root"在 XFS 上做不了（要重建 home 文件系统，风险大）。更稳的是**把 Docker 数据目录整体搬到空闲的大分区**（如 `/home`），下面一次到位：
+
+```bash
+# 1) 停 Docker（会停掉所有容器；先 docker compose down 更干净）
+sudo systemctl stop docker docker.socket
+
+# 2) 把现有数据整体迁到大分区（-a 保留权限/属主，务必用尾斜杠）
+sudo mkdir -p /home/docker-data
+sudo rsync -aP /var/lib/docker/ /home/docker-data/
+
+# 3) 指定新的 data-root（与 4.1 的 registry-mirrors 合并进同一个 daemon.json）
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{
+  "data-root": "/home/docker-data",
+  "registry-mirrors": ["https://<你的ID>.mirror.aliyuncs.com", "https://docker.m.daocloud.io"],
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "20m", "max-file": "5" }
+}
+EOF
+
+# 4) 起 Docker，确认数据目录已切换，容器/镜像都在
+sudo systemctl start docker
+docker info | grep "Docker Root Dir"     # 应显示 /home/docker-data
+docker images && docker ps -a
+
+# 5) 确认无误后，回收旧目录（省出根分区空间）
+sudo rm -rf /var/lib/docker.old 2>/dev/null; sudo mv /var/lib/docker /var/lib/docker.old
+# 观察几天稳定后：sudo rm -rf /var/lib/docker.old
+```
+
+> `daemon.json` 里的 `log-opts` 是**兜底全局日志轮转**；本仓库 `docker-compose.yml` 已对 server/mysql 显式配了 `max-size=20m / max-file=5`，两者取其一即可，都配也不冲突。
+> 若用 containerd snapshotter（报错路径出现 `/var/lib/containerd/...` 而非 `/var/lib/docker/...`），同理把 containerd 的 `root`（`/etc/containerd/config.toml` 的 `root = "/var/lib/containerd"`）也指到大分区并 `rsync` 迁移。
+
 ---
 
 ## 5. 方案 A：一体化 Docker 构建（推荐，需外网）
