@@ -8,11 +8,17 @@
 # 构建期需要外网（Maven Central / nodejs.org / gradle 分发 / Go module）。
 # 离线/内网环境请改用"先在有外网机器出 jar、镜像只 COPY jar"的精简方案，
 # 详见 docs/guides/docker-deploy-centos.md 的「方案 B」。
+#
+# 版本：compose 从 .env 的 AIWATCH_VERSION 注入 build-arg VERSION（默认 1.2.7）。
+
+# 镜像 tag / agent 分发版本 / jar 版本的单一注入点
+ARG VERSION=1.2.7
 
 ##############################################
 # Stage 1: 编译后端 fat jar（含 React 前端）
 ##############################################
 FROM docker.m.daocloud.io/library/eclipse-temurin:17-jdk-jammy AS server-build
+ARG VERSION=1.2.7
 WORKDIR /build
 COPY server/ ./server/
 WORKDIR /build/server
@@ -49,18 +55,20 @@ EOF
 COPY <<'EOF' /root/.npmrc
 registry=https://registry.npmmirror.com
 EOF
-RUN chmod +x gradlew && ./gradlew --no-daemon clean bootJar
+# -PaiwatchVersion 覆盖 build.gradle 的 project.version，使 jar 名与镜像 tag 一致
+RUN chmod +x gradlew && ./gradlew --no-daemon clean bootJar -PaiwatchVersion=${VERSION}
 
 ##############################################
 # Stage 2: 编译 agent 四平台分发包（供"安装客户端"下载，可选）
 ##############################################
 FROM docker.m.daocloud.io/library/golang:1.25-bookworm AS agent-build
+ARG VERSION=1.2.7
 WORKDIR /build/agent
 COPY agent/ ./
 ENV CGO_ENABLED=0
 # 国内构建慢可解开下一行使用国内代理：
 ENV GOPROXY=https://goproxy.cn,direct
-RUN VERSION=1.2.7 bash build-dist.sh    # 产物在 dist/install/
+RUN VERSION=${VERSION} bash build-dist.sh    # 产物在 dist/install/
 
 ##############################################
 # Stage 3: 运行时镜像

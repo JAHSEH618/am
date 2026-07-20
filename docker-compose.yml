@@ -4,6 +4,9 @@
 #   docker compose build      # 首次较久：拉依赖 + 编前端 + 编 agent
 #   docker compose up -d
 #   docker compose logs -f server
+#
+# 版本号：改 .env 里的 AIWATCH_VERSION 即可同步镜像 tag、jar、agent 分发版本。
+# 升级后建议：./scripts/deploy.sh（内置清理）或 bash scripts/docker-prune-safe.sh
 
 # 容器日志轮转：json-file 默认无上限，长期运行会把 /var/lib/docker 撑满。
 # 每容器最多保留 5×20MB=100MB 历史日志（需完整日志用 docker compose logs 前先调大）。
@@ -46,7 +49,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: aiwatch-server:1.2.7
+      args:
+        # 与 image tag、agent 分发版本对齐；默认与 server/build.gradle 当前 version 一致
+        VERSION: ${AIWATCH_VERSION:-1.2.7}
+    image: aiwatch-server:${AIWATCH_VERSION:-1.2.7}
     container_name: aiwatch-server
     restart: unless-stopped
     logging: *default-logging

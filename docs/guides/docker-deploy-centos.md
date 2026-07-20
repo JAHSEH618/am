@@ -39,12 +39,13 @@
 | # | 类别 | 内容 |
 | - | ---- | ---- |
 | 1 | 宿主机 | 安装 Docker + compose 插件；防火墙放行 `9527/tcp`；（方案 A）构建期外网 |
-| 2 | 镜像构建 | 多阶段：JDK17（编 jar）、Node/pnpm（自动下载，编前端）、Go 1.25（编 agent 分发包） |
+| 2 | 镜像构建 | 多阶段：JDK17（编 jar）、Node/pnpm（自动下载，编前端）、Go 1.25（编 agent 分发包）；版本见 `.env` 的 `AIWATCH_VERSION` |
 | 3 | MySQL | 库 `am`、`utf8mb4`、应用账号密码、首次启动导入 `schema.sql`、`max_connections` ≥ 连接池 |
 | 4 | server 环境变量 | `SPRING_PROFILES_ACTIVE=prod`、`DB_URL`、`DB_USERNAME`、`DB_PASSWORD`、`AIWATCH_INSTALL_DIR`、`TZ` |
 | 5 | 客户端分发目录 | agent 四平台二进制 + 安装脚本 + `manifest.json`（决定后台"安装客户端"功能是否可用） |
 | 6 | 安全收尾 | 首次登录后改默认 `admin/admin` 与 `X-Admin-Token` |
-| 7 | 可选 | Nginx 反代 + HTTPS（注意 agent 记的是完整 URL+端口） |
+| 7 | 磁盘 | 日常用 `./scripts/deploy.sh`（内置预检/清理）；手工回收用 `bash scripts/docker-prune-safe.sh`；勿 `prune --volumes` |
+| 8 | 可选 | Nginx 反代 + HTTPS（注意 agent 记的是完整 URL+端口） |
 
 ---
 
@@ -138,10 +139,13 @@ sudo rm -rf /var/lib/docker.old 2>/dev/null; sudo mv /var/lib/docker /var/lib/do
 ```bash
 cd /path/to/am
 cp .env.example .env
-vi .env        # 填入 MYSQL_ROOT_PASSWORD / DB_USERNAME / DB_PASSWORD（DB_URL 已指向 mysql 服务，通常不用改）
+vi .env        # 填入 MYSQL_ROOT_PASSWORD / DB_USERNAME / DB_PASSWORD
+               # 发版时改 AIWATCH_VERSION（镜像 tag / jar / agent 分发版本同源）
+               # DB_URL 已指向 mysql 服务，通常不用改
 ```
 
-> `.env` 已被 `.gitignore` 忽略，不会进版本库。
+> `.env` 已被 `.gitignore` 忽略，不会进版本库。  
+> **版本只改一处**：`.env` 的 `AIWATCH_VERSION` 会注入 `docker-compose.yml` 的 `image` tag 与 Dockerfile 的 `VERSION` 构建参数（jar + agent 分发包）。
 
 ### 5.2 构建并启动
 
@@ -149,6 +153,19 @@ vi .env        # 填入 MYSQL_ROOT_PASSWORD / DB_USERNAME / DB_PASSWORD（DB_URL
 docker compose build         # 首次较久：拉依赖 + 编前端 + 编 4 平台 agent
 docker compose up -d
 docker compose logs -f server   # 看到 "Started Application" 即就绪
+```
+
+日常升级推荐一键脚本（内置磁盘预检与旧镜像/构建缓存清理，**不删 MySQL 数据卷**）：
+
+```bash
+./scripts/deploy.sh
+```
+
+仅手工回收磁盘时：
+
+```bash
+bash scripts/docker-prune-safe.sh            # dangling + BuildKit 缓存
+bash scripts/docker-prune-safe.sh --old-tags # 额外删未在跑的 aiwatch-server:旧版本
 ```
 
 数据库表结构会在 **MySQL 容器首次初始化（数据卷为空）时自动导入**（靠 compose 把 `schema.sql` 挂到 `/docker-entrypoint-initdb.d`），无需手工跑 SQL。
@@ -179,11 +196,13 @@ curl http://localhost:9527/actuator/health      # 期望 {"status":"UP"}
 ### 6.1 在有外网的机器编 jar 与 agent 分发包
 
 ```bash
-cd server && ./gradlew clean bootJar          # 产物 server/build/libs/aiwatch-server-1.2.7.jar
-cd ../agent && VERSION=1.2.7 bash build-dist.sh   # 产物 agent/dist/install/
+# 版本与 .env 的 AIWATCH_VERSION 对齐（示例 1.2.7）
+VER=1.2.7
+cd server && ./gradlew clean bootJar -PaiwatchVersion=$VER   # 产物 server/build/libs/aiwatch-server-$VER.jar
+cd ../agent && VERSION=$VER bash build-dist.sh               # 产物 agent/dist/install/
 ```
 
-把 `aiwatch-server-1.2.7.jar` 和 `agent/dist/install/` 拷到生产机仓库对应位置。
+把 `aiwatch-server-*.jar` 和 `agent/dist/install/` 拷到生产机仓库对应位置。
 
 ### 6.2 生产机用精简 Dockerfile（只 COPY，不构建）
 
@@ -231,8 +250,8 @@ ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
 镜像默认内置了一份 agent 分发包。要在不重建镜像的情况下更新：
 
 ```bash
-# 1) 重新编分发包（用 Go 容器，避免本机装 Go）
-docker run --rm -e VERSION=1.2.7 -e GOPROXY=https://goproxy.cn,direct \
+# 1) 重新编分发包（用 Go 容器，避免本机装 Go；VERSION 与 .env 的 AIWATCH_VERSION 对齐）
+docker run --rm -e VERSION="${AIWATCH_VERSION:-1.2.7}" -e GOPROXY=https://goproxy.cn,direct \
   -v "$PWD/agent:/agent" -w /agent docker.m.daocloud.io/library/golang:1.25-bookworm bash build-dist.sh
 
 # 2) 解开 docker-compose.yml 中 server 的 volumes 挂载：
@@ -274,6 +293,8 @@ docker compose restart server     # 重启 server
 docker compose down               # 停止并删容器（保留数据卷）
 docker compose down -v            # 连同 MySQL 数据卷一起删除（谨慎！会清库）
 docker compose up -d --build      # 改了代码后重建并启动
+bash scripts/docker-prune-safe.sh # 手工回收旧镜像与 BuildKit 缓存（不删卷）
+docker system df                  # 查看 Images / Build Cache / Volumes 占用
 ```
 
 ### 10.1 一键更新（拉新代码 → 重建 → 重启 → 健康检查）
@@ -292,6 +313,8 @@ PRUNE=0 ./scripts/deploy.sh         # 跳过部署成功后的自动清理（默
 
 > 磁盘管理：构建前脚本会检查 `/var/lib/docker`、`/var/lib/containerd` 所在分区的可用空间，不足 `MIN_FREE_GB` 时自动清理旧版本 `aiwatch-server` 镜像、dangling 镜像与全部构建缓存后重试；部署成功后默认再做一次常规清理（保留 2GB 构建缓存加速下次重建）。清理只涉及镜像与构建缓存，**不动容器、不动 MySQL 数据卷**。
 
+> 发版改版本时只改 `.env` 的 `AIWATCH_VERSION`（同步镜像 tag / jar / agent）。也可单独跑 `bash scripts/docker-prune-safe.sh`（可加 `--old-tags`）做手工回收；**不要** `docker system prune -a --volumes`。
+
 ### 10.2 部署后数据自检（可选）
 
 `scripts/p1p3-verify/` 是可在 CentOS docker 里直接跑的数据处理/校验脚本：线上库只读自检（schema/索引/`@Version`/`source_ref`/种子安全）、`id_sequences` 种子校验与安全补种（只升不降）、以及对独立 CI 库跑完整测试套件。连接参数走环境变量，用法见该目录 `README.md`。
@@ -309,13 +332,14 @@ DB_HOST=127.0.0.1 DB_USER=am DB_PASS=*** ./run-all.sh
 | 现象 | 排查 |
 | ---- | ---- |
 | 构建报 `lookup mirror.baidubce.com … no such host` / 拉 `golang`·`eclipse-temurin` 基础镜像失败 | 先确认已拉到显式使用 `docker.m.daocloud.io` 的新版 `Dockerfile`；新版构建不经过百度镜像。旧版则需从 `/etc/docker/daemon.json` 删除已失效的百度镜像，换成可用地址（见 4.1），重启 Docker 后重建 |
-| 构建报 `failed to create prepare snapshot dir … no space left on device` | Docker 存储盘（`/var/lib/docker` 或 `/var/lib/containerd` 所在分区）满了：历次版本升级留下的旧 `aiwatch-server` 镜像 + BuildKit 构建缓存累积所致。新版 `deploy.sh` 构建前会自动预检并清理；老版本或需手工处理时依次跑 `docker system df` 定位、`docker system prune -af` 清理（不动数据卷）、`df -h` 确认分区，必要时扩容 |
+| 构建报 `failed to create prepare snapshot dir … no space left on device` | Docker 存储盘（`/var/lib/docker` 或 `/var/lib/containerd` 所在分区）满了：历次版本升级留下的旧 `aiwatch-server` 镜像 + BuildKit 构建缓存累积所致。新版 `deploy.sh` 构建前会自动预检并清理；也可 `bash scripts/docker-prune-safe.sh`（可加 `--old-tags`）。老版本或需更狠清理时依次跑 `docker system df` 定位、`docker system prune -af`（**勿**带 `--volumes`）、`df -h` 确认分区，必要时扩容或把 data-root 迁到大分区（见 4.2） |
 | 构建卡在下载 Node/Gradle | 网络问题。方案 A 需外网；国内可在 Dockerfile 解开 `GOPROXY`，或改用方案 B |
 | server 起不来、报连不上库 | 确认 `.env` 的 `DB_URL` host 是 `mysql`（compose 服务名）、账号密码与 MySQL 一致；`docker compose logs mysql` 看库是否就绪 |
 | 中文乱码 | 确认 `DB_URL` 的 `characterEncoding=UTF-8`（不是 utf8mb4），MySQL 启动参数为 `utf8mb4` |
 | 登录页能开、登录转圈/超时 | 多为大量员工同时首装、bootstrap 大包压库。prod 默认已 `audit-scan-enabled=false`；建议分批推广，并保证 MySQL `max_connections` ≥ HikariCP `maximum-pool-size`(prod=100) |
 | 后台"安装客户端"提示未就绪 | `AIWATCH_INSTALL_DIR` 下需有四平台二进制 + 两个安装脚本 + `manifest.json`，见第 8 节 |
 | 大 payload 上报失败(code=50000) | 走反代时设置 `client_max_body_size 512m`；后端已配 `max-http-form-post-size: 512MB` |
+| 磁盘被 Docker 占满 / 镜像版本越堆越多 | `docker system df` 看 Images vs Build Cache；改版本只改 `.env` 的 `AIWATCH_VERSION`；回收用 `./scripts/deploy.sh` 或 `bash scripts/docker-prune-safe.sh --old-tags` |
 
 ---
 
