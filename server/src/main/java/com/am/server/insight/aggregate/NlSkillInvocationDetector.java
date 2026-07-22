@@ -21,7 +21,8 @@ import java.util.regex.Pattern;
  * <p>与 {@link UserSlashInvocationExtractor} 互补：
  * <ul>
  *   <li>Cursor / Claude / OpenHarness / OpenClaw / Hermes：Read + SKILL.md 路径（见各 Provider {@code content_parts}）</li>
- *   <li>Codex 显式 {@code $skill}：仍由 {@link UserSlashInvocationExtractor} 在 user 正文统计（{@code kind=skill}）</li>
+ *   <li>Codex 显式 {@code $skill}：由 {@link UserSlashInvocationExtractor} 认执行时注入的
+ *       {@code <skill><name>…</name>} 信封（{@code kind=skill}；正文 {@code $xxx} 不再解析）</li>
  *   <li>Codex NL：若后续 Read SKILL.md，本类从 {@code role=tool} + {@code tool_name=Read} + 参数 JSON 识别</li>
  * </ul>
  * gz

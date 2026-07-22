@@ -31,7 +31,8 @@ public class CapabilityDailyBackfillPatch {
 
     private static final Logger log = LoggerFactory.getLogger(CapabilityDailyBackfillPatch.class);
 
-    static final String MARKER_KEY = "capability.backfill_v1";
+    /** v2：codex skill 口径改为 {@code <skill>} 执行信封（SlashAnnotationBackfillPatch v3）后的整表重算。 */
+    static final String MARKER_KEY = "capability.backfill_v2";
 
     private static final String MARKER_EXISTS = "SELECT 1 FROM sys_config WHERE config_key = ?";
 
@@ -41,7 +42,7 @@ public class CapabilityDailyBackfillPatch {
             VALUES (?, 'done', 'string', 'scheduling', 0, 'capability_daily 历史全量回溯完成标记', 'seed', NOW(), NOW())
             """;
 
-    /** 晚于 CapabilityDailySchemaPatches（@Order(120)）：先建表再回溯。 */
+    /** 晚于 CapabilityDailySchemaPatches（@Order(120)）与 SlashAnnotationBackfillPatch（@Order(880)，slash 重刷须先落库）：先建表、刷完 hits 再回溯。 */
     @Bean
     @Order(900)
     ApplicationRunner backfillCapabilityDaily(DataSource dataSource, CapabilityDailyAggregator aggregator) {

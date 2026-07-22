@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -18,10 +19,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 存量 {@code ai_session_message.slash_*} 三列按收紧后的提取规则一次性重算
+ * 存量 {@code ai_session_message.slash_*} 三列按现行提取规则一次性重算
  * （替换 command/skill/noise 行、保留 nl_skill 行，见 {@link SlashHitsJsonSupport#recomputeExtracted}）。
  *
- * <p>新规则是旧规则的严格子集 → 只扫既有命中行；候选谓词无索引，
+ * <p>v3（codex 改认 {@code <skill>} 执行信封）起新规则不再是旧规则的子集：除既有命中行外，
+ * 还要扫 codex 的信封行（旧规则下可能零命中）。候选谓词无索引，
  * 全量完成后写 sys_config marker（{@value #MARKER_KEY}），后续启动直接跳过。
  * gz
  */
@@ -30,7 +32,7 @@ public class SlashAnnotationBackfillPatch {
 
     private static final Logger log = LoggerFactory.getLogger(SlashAnnotationBackfillPatch.class);
 
-    static final String MARKER_KEY = "insight.slash_backfill_v2";
+    static final String MARKER_KEY = "insight.slash_backfill_v3";
 
     private static final String SELECT_BATCH = """
             SELECT m.id, m.content_text, m.slash_command_count, m.slash_skill_count,
@@ -39,7 +41,8 @@ public class SlashAnnotationBackfillPatch {
             JOIN ai_session s ON s.id = m.ai_session_id
             WHERE m.id > ?
               AND LOWER(m.role) = 'user'
-              AND (m.slash_command_count > 0 OR m.slash_skill_count > 0 OR m.slash_hits_json IS NOT NULL)
+              AND (m.slash_command_count > 0 OR m.slash_skill_count > 0 OR m.slash_hits_json IS NOT NULL
+                   OR (s.target_type = 'codex' AND m.content_text LIKE '<skill>%'))
             ORDER BY m.id
             LIMIT 500
             """;
@@ -60,7 +63,12 @@ public class SlashAnnotationBackfillPatch {
 
     private record Row(long id, String contentText, int cmd, int sk, String hitsJson, String targetType) {}
 
+    /**
+     * 先于 CapabilityDailyBackfillPatch（@Order(900)}）同步完成：capability_daily 的整表重算
+     * 消费 slash_hits_json，必须读到重刷后的行。
+     */
     @Bean
+    @Order(880)
     ApplicationRunner backfillSlashAnnotations(DataSource dataSource) {
         return args -> {
             try (Connection c = dataSource.getConnection()) {

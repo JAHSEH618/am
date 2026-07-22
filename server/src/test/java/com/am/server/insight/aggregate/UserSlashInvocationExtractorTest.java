@@ -26,92 +26,89 @@ class UserSlashInvocationExtractorTest {
         assertNull(a.slashHitsJson());
     }
 
-    // ---------- codex：合法 $技能 保留（原有用例不动） ----------
+    // ---------- codex：只认 <skill> 执行信封 ----------
 
     @Test
-    void codexDollarHyphenatedSkillName() {
-        UserSlashInvocationExtractor.Annotation a = annotate("$skill-creator 这是什么", "codex");
-        assertEquals(0, a.slashCommandCount());
-        assertEquals(1, a.slashSkillCount());
-    }
-
-    @Test
-    void codexDollarSkillsOnly() {
-        UserSlashInvocationExtractor.Annotation a = annotate("$review\n/help\n/fix\n", "codex");
-        assertEquals(0, a.slashCommandCount());
-        assertEquals(1, a.slashSkillCount());
-    }
-
-    @Test
-    void codexDollarAnywhereInLine() {
-        UserSlashInvocationExtractor.Annotation a =
-                annotate("please run $review on this file\n$lint /help", "codex");
-        assertEquals(0, a.slashCommandCount());
-        assertEquals(2, a.slashSkillCount());
-    }
-
-    @Test
-    void codexIgnoresDollarNumbers() {
-        UserSlashInvocationExtractor.Annotation a = annotate("cost is $100 and $200", "codex");
-        assertEquals(0, a.slashSkillCount());
-    }
-
-    @Test
-    void codexFullWidthDollar() {
-        UserSlashInvocationExtractor.Annotation a = annotate("＄review 一下这个文件", "codex");
-        assertEquals(1, a.slashSkillCount());
-    }
-
-    // ---------- codex：变量误报排除（新增，修复主目标） ----------
-
-    @Test
-    void codexRejectsUpperCaseEnvVars() {
-        UserSlashInvocationExtractor.Annotation a =
-                annotate("请把 $HOME 和 $AM_SERVER_URL 换成实际值", "codex");
-        assertEquals(0, a.slashSkillCount());
-        assertNull(a.slashHitsJson());
-    }
-
-    @Test
-    void codexRejectsSnakeAndCamelCaseVars() {
-        // $foo_bar 尾随 '_'、$myVar 尾随大写字母 → 均按变量论
-        UserSlashInvocationExtractor.Annotation a =
-                annotate("$foo_bar 与 $myVar 都是变量", "codex");
-        assertEquals(0, a.slashSkillCount());
-    }
-
-    @Test
-    void codexRejectsDollarWithoutLeadingBoundary() {
-        // 引号内 "$path"、赋值 =$path、花括号 ${var} 均无"行首/空白"前界
-        UserSlashInvocationExtractor.Annotation a =
-                annotate("echo \"$path\" 然后 PATH=$path:/usr/bin 以及 ${var}", "codex");
-        assertEquals(0, a.slashSkillCount());
-    }
-
-    @Test
-    void codexRejectsSingleLetterName() {
-        UserSlashInvocationExtractor.Annotation a = annotate("$a 是位置变量", "codex");
-        assertEquals(0, a.slashSkillCount());
-    }
-
-    @Test
-    void codexSkipsFencedCodeBlocks() {
+    void codexSkillEnvelopeCountsOnce() throws Exception {
         String body = """
-                请看这段脚本
-                ```bash
-                export $config-name
-                ```
-                然后 $review 一下
+                <skill>
+                <name>humanizer-zh</name>
+                <path>/Users/x/.agents/skills/humanizer-zh/SKILL.md</path>
+                ---
+                name: humanizer-zh
+                description: 去除文本中的 AI 生成痕迹
+                """;
+        UserSlashInvocationExtractor.Annotation a = annotate(body, "codex");
+        assertEquals(0, a.slashCommandCount());
+        assertEquals(1, a.slashSkillCount());
+        JsonNode arr = MAPPER.readTree(a.slashHitsJson());
+        assertEquals(1, arr.size());
+        assertEquals("$humanizer-zh", arr.get(0).path("token").asText());
+        assertEquals("skill", arr.get(0).path("kind").asText());
+    }
+
+    @Test
+    void codexEnvelopeBodyDollarTokensNotCounted() {
+        // SKILL.md 正文里的 $foo-bar 不再产生额外命中，整条信封只记 1 次
+        String body = """
+                <skill>
+                <name>impeccable</name>
+                <path>/x/SKILL.md</path>
+                用法：先跑 $lint 再看 $config-name 输出
                 """;
         UserSlashInvocationExtractor.Annotation a = annotate(body, "codex");
         assertEquals(1, a.slashSkillCount());
     }
 
     @Test
-    void codexSkipsInlineBacktickSpans() {
+    void codexEnvelopeNameNormalizedToLowercase() throws Exception {
         UserSlashInvocationExtractor.Annotation a =
-                annotate("先跑 `echo $var` 再 $review", "codex");
+                annotate("<skill>\n<name>Create-Readme</name>\n<path>/x</path>", "codex");
         assertEquals(1, a.slashSkillCount());
+        JsonNode arr = MAPPER.readTree(a.slashHitsJson());
+        assertEquals("$create-readme", arr.get(0).path("token").asText());
+    }
+
+    @Test
+    void codexEnvelopeWithoutNameIgnored() {
+        assertNull(annotate("<skill>\n<path>/x/SKILL.md</path>", "codex").slashHitsJson());
+        assertNull(annotate("<skill>\n<name>   </name>", "codex").slashHitsJson());
+        assertNull(annotate("<skill>\n<name>two words</name>", "codex").slashHitsJson());
+    }
+
+    @Test
+    void codexNameTagInBodyOnlyDoesNotMatch() {
+        // <name> 不紧跟信封头（如用户贴的 XML 片段）不算
+        UserSlashInvocationExtractor.Annotation a =
+                annotate("<skill>\n<path>/x</path>\n<name>later</name>", "codex");
+        assertEquals(0, a.slashSkillCount());
+    }
+
+    // ---------- codex：正文 $xxx 一律不计（变量误报修复主目标） ----------
+
+    @Test
+    void codexTypedDollarMentionsNotCounted() {
+        // 显式 $技能提及若真触发，Codex 会另注入 <skill> 信封；正文本身不再计数
+        UserSlashInvocationExtractor.Annotation a =
+                annotate("$skill-creator 这是什么，先 $review 一下", "codex");
+        assertEquals(0, a.slashCommandCount());
+        assertEquals(0, a.slashSkillCount());
+        assertNull(a.slashHitsJson());
+    }
+
+    @Test
+    void codexShellAndTemplateVarsNotCounted() {
+        UserSlashInvocationExtractor.Annotation a =
+                annotate("echo $path 然后 rm $file，schema 里有 $ref 和 $id", "codex");
+        assertEquals(0, a.slashSkillCount());
+        assertNull(a.slashHitsJson());
+    }
+
+    @Test
+    void codexSlashTokensStillIgnored() {
+        UserSlashInvocationExtractor.Annotation a = annotate("/help\n/fix\n", "codex");
+        assertEquals(0, a.slashCommandCount());
+        assertEquals(0, a.slashSkillCount());
     }
 
     // ---------- cursor/默认：只认消息首 token（新语义） ----------

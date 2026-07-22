@@ -3,7 +3,6 @@ package com.am.server.insight.aggregate;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -20,9 +19,11 @@ import java.util.regex.Pattern;
  *       为 {@code /…} 且过 {@link UserSlashInvocationKind} 形态校验才算（命令只在输入框开头才会执行，
  *       行中 {@code /xxx} 视为叙述引用，不计）。</li>
  *   <li><b>claude</b>（Claude Code）：<strong>不解析、不统计</strong> slash/skill（显式 / 与自动技能均不靠正文启发式）。</li>
- *   <li><b>codex</b>（Codex CLI）：行内匹配 {@code $技能名} 或全角 {@code ＄…}（技能引用可出现在行内），
- *       但仅认<strong>全小写 kebab</strong> 命名、{@code $} 前须行首或空白、跳过 ``` 围栏与行内反引号——
- *       排除 {@code $HOME}、{@code "$var"}、{@code $foo_bar} 这类 shell/模板变量；忽略 {@code /}；command 恒为 0。</li>
+ *   <li><b>codex</b>（Codex CLI）：只认技能<strong>真正执行</strong>时 CLI 以 user 角色注入的
+ *       {@code <skill><name>…</name>…} 信封，token 记为 {@code $技能名}；正文里的 {@code $xxx}
+ *       <strong>不再启发式解析</strong>——正文提及既混入 {@code $ref}/{@code $path} 这类 JSON/shell
+ *       变量，又把未触发的技能引用记成调用（本机实测 108 次行内 {@code $impeccable} 提及仅 16 次
+ *       实际执行，而信封与执行一一对应）；command 恒为 0。</li>
  * </ul>
  *
  * <p>入库字段名仍为 {@code slash_* }（历史原因），计数与明细 JSON 语义按上表解释。
@@ -37,12 +38,11 @@ public final class UserSlashInvocationExtractor {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
-     * Codex CLI 正文：技能触发词，形如 {@code $review}、{@code $skill-creator}；
-     * ASCII {@code $} 与全角 {@code ＄} 等价。仅全小写 kebab 且名字 ≥2 字符，
-     * 配合 {@link #codexSkillTokensIn} 的前后边界判断排除 shell/模板变量。
+     * Codex CLI 技能执行信封头：{@code <skill>}（后可带换行）紧跟 {@code <name>技能名</name>}。
+     * 锚定信封起始，避免命中 SKILL.md 正文里出现的 {@code <name>} 标签。
      */
-    private static final Pattern CODEX_DOLLAR_SKILL =
-            Pattern.compile("(?:\\$|\uFF04)[a-z][a-z0-9-]+");
+    private static final Pattern CODEX_SKILL_ENVELOPE_NAME =
+            Pattern.compile("\\A<skill>\\s*<name>([^<>]{1,120})</name>");
 
     private UserSlashInvocationExtractor() {}
 
@@ -71,7 +71,7 @@ public final class UserSlashInvocationExtractor {
         }
         String tt = normalizeTargetType(targetType);
         if ("codex".equals(tt)) {
-            return annotateCodexDollarSkills(contentText);
+            return annotateCodexSkillEnvelope(contentText);
         }
         if ("claude".equals(tt)) {
             return Annotation.empty();
@@ -114,60 +114,33 @@ public final class UserSlashInvocationExtractor {
         return finalizeAnnotation(cmd, sk, List.of(row));
     }
 
-    /** Codex CLI：行内 {@code $技能名}；跳过 ``` 围栏与行内反引号 span；{@code $} 前须行首或空白 */
-    private static Annotation annotateCodexDollarSkills(String contentText) {
-        List<Map<String, String>> hits = new ArrayList<>();
-        int sk = 0;
-        boolean inFence = false;
-        for (String rawLine : contentText.split("\\R")) {
-            String line = rawLine.trim();
-            if (line.startsWith("```")) {
-                inFence = !inFence;
-                continue;
-            }
-            if (inFence || line.isEmpty()) {
-                continue;
-            }
-            String[] segments = line.split("`", -1);
-            for (int si = 0; si < segments.length; si += 2) {
-                for (String token : codexSkillTokensIn(segments[si], si == 0)) {
-                    Map<String, String> row = new LinkedHashMap<>();
-                    row.put("token", token);
-                    row.put("kind", "skill");
-                    sk++;
-                    hits.add(row);
-                }
-            }
+    /** Codex CLI：只认 {@code <skill><name>…</name>} 执行信封，整条消息记 1 次 skill；其余正文一律不计 */
+    private static Annotation annotateCodexSkillEnvelope(String contentText) {
+        String trimmed = contentText.trim();
+        if (!trimmed.startsWith("<skill>")) {
+            return Annotation.empty();
         }
-        return finalizeAnnotation(0, sk, hits);
+        Matcher matcher = CODEX_SKILL_ENVELOPE_NAME.matcher(trimmed);
+        if (!matcher.find()) {
+            return Annotation.empty();
+        }
+        String name = matcher.group(1).trim().toLowerCase(Locale.ROOT);
+        if (name.isEmpty() || hasWhitespace(name)) {
+            return Annotation.empty();
+        }
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("token", "$" + name);
+        row.put("kind", "skill");
+        return finalizeAnnotation(0, 1, List.of(row));
     }
 
-    /** 收集一段无行内代码文本里的 $技能 token；前界=段首（仅整行首算）或空白，后界=段尾或非 token 字符 */
-    private static List<String> codexSkillTokensIn(String segment, boolean startIsLineStart) {
-        List<String> out = new ArrayList<>();
-        Matcher matcher = CODEX_DOLLAR_SKILL.matcher(segment);
-        while (matcher.find()) {
-            int start = matcher.start();
-            boolean leadingOk = start == 0
-                    ? startIsLineStart
-                    : Character.isWhitespace(segment.charAt(start - 1));
-            if (!leadingOk) {
-                continue;
+    private static boolean hasWhitespace(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isWhitespace(s.charAt(i))) {
+                return true;
             }
-            int end = matcher.end();
-            if (end < segment.length() && isTokenChar(segment.charAt(end))) {
-                continue;
-            }
-            out.add(matcher.group().toLowerCase(Locale.ROOT));
         }
-        return out;
-    }
-
-    private static boolean isTokenChar(char c) {
-        return c == '-' || c == '_'
-                || (c >= '0' && c <= '9')
-                || (c >= 'a' && c <= 'z')
-                || (c >= 'A' && c <= 'Z');
+        return false;
     }
 
     private static Annotation finalizeAnnotation(int cmd, int sk, List<Map<String, String>> hits) {
