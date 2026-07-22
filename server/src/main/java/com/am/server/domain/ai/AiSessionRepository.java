@@ -900,4 +900,22 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
             @Param("t0") LocalDateTime t0,
             @Param("t1") LocalDateTime t1,
             @Param("userCode") String userCode);
+
+    /**
+     * 归因引擎候选会话：单用户、有效（invalid_reason IS NULL）、活动区间与给定窗口相交。
+     * commit_time ∈ [started_at-30min, last_activity+30min] ⇔ started_at ≤ ct+30min 且
+     * last_activity ≥ ct-30min，故对一批 commit 取 [min(ct)-30min, max(ct)+30min] 超集窗口。
+     * repo 归一比较在 Java 侧做（与 aiPenetrationLines 的 SQL 归一语义一致）。
+     */
+    @Query("""
+        SELECT s FROM AiSession s
+        WHERE s.userCode = :userCode
+          AND s.invalidReason IS NULL
+          AND s.startedAt <= :winEnd
+          AND s.lastActivity >= :winStart
+        """)
+    List<AiSession> findAttributionCandidates(
+            @Param("userCode") String userCode,
+            @Param("winStart") LocalDateTime winStart,
+            @Param("winEnd") LocalDateTime winEnd);
 }

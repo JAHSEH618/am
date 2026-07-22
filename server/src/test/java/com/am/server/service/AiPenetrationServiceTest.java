@@ -1,5 +1,6 @@
 package com.am.server.service;
 
+import com.am.server.domain.git.GitCommitAttributionRepository;
 import com.am.server.domain.git.GitCommitRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,6 +13,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -20,8 +23,41 @@ class AiPenetrationServiceTest {
     @Mock
     private GitCommitRepository gitCommitRepository;
 
+    /** 未 stub 时返回 null → 视为归因表无数据，走 legacy 兜底（回溯未完成的语义）。 */
+    @Mock
+    private GitCommitAttributionRepository attributionRepository;
+
     @InjectMocks
     private AiPenetrationService service;
+
+    @Test
+    void compute_prefersAttributionTable() {
+        when(attributionRepository.penetrationLines(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{50L, 200L}));
+        assertEquals(25, service.compute(PenetrationWindow.D30));
+        verify(gitCommitRepository, never()).aiPenetrationLines(any());
+    }
+
+    @Test
+    void compute_fallsBackToLegacyWhenAttributionEmpty() {
+        when(attributionRepository.penetrationLines(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{0L, 0L}));
+        when(gitCommitRepository.aiPenetrationLines(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{60L, 200L}));
+        assertEquals(30, service.compute(PenetrationWindow.D30));
+    }
+
+    @Test
+    void compare_reportsDeviation() {
+        when(attributionRepository.penetrationLines(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{52L, 200L}));
+        when(gitCommitRepository.aiPenetrationLines(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{56L, 200L}));
+        AiPenetrationService.Comparison c = service.compare(PenetrationWindow.D30);
+        assertEquals(28, c.legacyPercent());
+        assertEquals(26, c.attributionPercent());
+        assertEquals(2, c.deviationPp());
+    }
 
     @Test
     void compute_returnsPercent() {

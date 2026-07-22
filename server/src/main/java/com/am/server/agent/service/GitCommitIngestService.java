@@ -2,6 +2,7 @@ package com.am.server.agent.service;
 
 import com.am.server.agent.api.dto.GitCommitReportRequest;
 import com.am.server.agent.security.SignatureContext;
+import com.am.server.aggregator.GitCommitAttributionEngine;
 import com.am.server.domain.agent.AgentDevice;
 import com.am.server.domain.agent.AgentDeviceRepository;
 import com.am.server.domain.git.GitCommit;
@@ -42,17 +43,20 @@ public class GitCommitIngestService {
     private final GitCommitFileRepository gitCommitFileRepository;
     private final ObjectMapper objectMapper;
     private final AgentDeviceRepository deviceRepository;
+    private final GitCommitAttributionEngine attributionEngine;
     private final GitCommitIngestService self;
 
     public GitCommitIngestService(GitCommitRepository gitCommitRepository,
                                   GitCommitFileRepository gitCommitFileRepository,
                                   ObjectMapper objectMapper,
                                   AgentDeviceRepository deviceRepository,
+                                  GitCommitAttributionEngine attributionEngine,
                                   @Lazy GitCommitIngestService self) {
         this.gitCommitRepository = gitCommitRepository;
         this.gitCommitFileRepository = gitCommitFileRepository;
         this.objectMapper = objectMapper;
         this.deviceRepository = deviceRepository;
+        this.attributionEngine = attributionEngine;
         this.self = self;
     }
 
@@ -75,6 +79,9 @@ public class GitCommitIngestService {
         int duplicates = 0;
         int detailsUpdated = 0;
         int ignoredMismatch = 0;
+        // 归因增量：本次落库/更新的 commit 按 (日期 → user) 收集，循环后交引擎去抖重算。
+        // DETAIL_UPDATED 也入队——message_body 可能此时才到，B 档 trailer 判定会变。
+        java.util.Map<java.time.LocalDate, Set<String>> attributionDates = new java.util.HashMap<>();
 
         for (GitCommitReportRequest.Item item : request.getCommits()) {
             try {
@@ -84,6 +91,11 @@ public class GitCommitIngestService {
                     case DETAIL_UPDATED -> detailsUpdated++;
                     case IGNORED_IDENTITY -> ignoredMismatch++;
                 }
+                if (item.getCommitTime() != null) {
+                    attributionDates
+                            .computeIfAbsent(item.getCommitTime().toLocalDate(), d -> new HashSet<>())
+                            .add(ctx.getUserCode());
+                }
             } catch (Exception e) {
                 log.warn("ingest commit failed repo={} hash={} err={}",
                         item.getRepoUrl(), item.getCommitHash(), e.toString());
@@ -92,6 +104,9 @@ public class GitCommitIngestService {
         if (ignoredMismatch > 0) {
             log.info("git commit ingest: ignored_identity_mismatch={} agent_id={}",
                     ignoredMismatch, ctx.getAgentId());
+        }
+        if (inserted + detailsUpdated > 0) {
+            attributionEngine.enqueue(attributionDates);
         }
         return new IngestSummary(inserted, duplicates, ignoredMismatch, detailsUpdated);
     }

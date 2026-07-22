@@ -113,4 +113,30 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, Long> {
               AND c.commit_time >= :from
             """, nativeQuery = true)
     List<Object[]> aiPenetrationLines(@Param("from") LocalDateTime from);
+
+    /** 归因引擎取数：窗口 [from, to) 内全部非 merge commit（merge 全口径排除，不落归因行）。 */
+    @Query("""
+        SELECT c FROM GitCommit c
+        WHERE c.commitTime >= :from AND c.commitTime < :to
+          AND c.isMerge = 0
+        ORDER BY c.userCode, c.commitTime
+        """)
+    List<GitCommit> findNonMergeInCommitWindow(
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
+
+    /** 归因引擎增量取数：同上，限指定用户集。 */
+    @Query("""
+        SELECT c FROM GitCommit c
+        WHERE c.commitTime >= :from AND c.commitTime < :to
+          AND c.isMerge = 0
+          AND c.userCode IN :userCodes
+        ORDER BY c.userCode, c.commitTime
+        """)
+    List<GitCommit> findNonMergeInCommitWindowAndUserCodeIn(
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
+            @Param("userCodes") Collection<String> userCodes);
+
+    /** 归因全量回溯起点：最早 commit_time（空表 null）。 */
+    @Query("SELECT MIN(c.commitTime) FROM GitCommit c")
+    LocalDateTime findMinCommitTime();
 }
