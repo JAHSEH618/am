@@ -307,6 +307,26 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
             @Param("activeTypes") Collection<String> activeTypes);
 
     /**
+     * capability 日聚合（MCP 兜底路径）：窗内疑似含 MCP tool_call part 的消息。
+     * 返回 [userCode, aiSessionId, contentPartsJson]。
+     * <p>{@code LIKE '%mcp__%'} 宽松预滤（通配/大小写同 event 侧说明），part 级严格解析由
+     * {@code com.am.server.aggregator.CapabilityDailyAggregator} 完成；调用方仅对
+     * 「当日无 MCP TOOL_CALL 事件」的会话启用本路径，覆盖 hermes 这类基本不写 event、
+     * message 密集的 provider，且不与 event 路径重复计数。
+     */
+    @Query("""
+        SELECT m.userCode, m.aiSessionId, m.contentPartsJson
+        FROM AiSessionMessage m JOIN AiSession s ON s.id = m.aiSessionId
+        WHERE s.invalidReason IS NULL
+          AND m.messageTime >= :from AND m.messageTime < :to
+          AND m.targetType IN :activeTypes
+          AND m.contentPartsJson LIKE '%mcp__%'
+        """)
+    List<Object[]> loadMcpContentPartsInWindowGlobal(
+            LocalDateTime from, LocalDateTime to,
+            @Param("activeTypes") Collection<String> activeTypes);
+
+    /**
      * 斜杠 Top 回算：仅缺 slash_hits_json 且有正文的 user 消息。返回 [userCode, sessionId, contentText, targetType]。
      */
     @Query("""

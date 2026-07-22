@@ -175,7 +175,11 @@ public final class SlashHitsJsonSupport {
         return true;
     }
 
-    private static List<Map<String, String>> parseHits(String json) {
+    /**
+     * 解析 {@code slash_hits_json} 为 {@code [{token, kind}, ...]} 行；kind 缺省按 {@code command}。
+     * 容错：非数组 / 解析失败返回空列表。公开给 CapabilityDailyAggregator 等聚合方复用。
+     */
+    public static List<Map<String, String>> parseHits(String json) {
         List<Map<String, String>> rows = new ArrayList<>();
         if (json == null || json.isBlank() || "null".equalsIgnoreCase(json.trim()) || "[]".equals(json.trim())) {
             return rows;

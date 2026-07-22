@@ -118,6 +118,43 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
             String userCode, LocalDateTime from, LocalDateTime to,
             @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
 
+    /**
+     * capability 日聚合：窗内 MCP 工具调用原始分组行，返回 [userCode, aiSessionId, toolName, count]。
+     * <p>{@code LIKE 'mcp__%'} 只是宽松预滤（{@code _} 是单字符通配、utf8mb4_unicode_ci 大小写
+     * 不敏感，Mcp__ / mcpXY 之类也会放过），server/tool 的严格解析与大小写合并由
+     * {@code com.am.server.aggregator.CapabilityItemParser} 在 Java 侧完成。
+     * <p>按 (user, session, toolName) 保留原始行而非直接按 toolName 聚合：同一 server/tool 的
+     * 大小写变体要在解析后合并，会话去重必须发生在合并之后。
+     */
+    @Query("""
+        SELECT e.userCode, e.aiSessionId, e.toolName, COUNT(e)
+        FROM AiSessionEvent e JOIN AiSession s ON s.id = e.aiSessionId
+        WHERE s.invalidReason IS NULL
+          AND e.eventType = 'TOOL_CALL'
+          AND e.eventTime >= :from AND e.eventTime < :to
+          AND e.toolName IS NOT NULL
+          AND e.toolName LIKE 'mcp__%'
+          AND e.targetType IN :activeTypes
+        GROUP BY e.userCode, e.aiSessionId, e.toolName
+        """)
+    List<Object[]> aggregateMcpToolCallRowsInWindowAndTargetTypeIn(
+            LocalDateTime from, LocalDateTime to,
+            @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
+
+    /**
+     * 归因引擎「commit 前最近活动事件」信号源：候选会话集在窗口内的 (sessionId, eventTime) 时间点。
+     * 只取两列，量级 = 用户单日事件数；走 idx_session_time。
+     */
+    @Query("""
+        SELECT e.aiSessionId, e.eventTime
+        FROM AiSessionEvent e
+        WHERE e.aiSessionId IN :sessionIds
+          AND e.eventTime >= :from AND e.eventTime <= :to
+        """)
+    List<Object[]> findEventTimesBySessionIdsInWindow(
+            @org.springframework.data.repository.query.Param("sessionIds") Collection<Long> sessionIds,
+            LocalDateTime from, LocalDateTime to);
+
     /** 窗内 TOOL_CALL 事件总数（左闭右开） */
     @Query("""
         SELECT COUNT(e) FROM AiSessionEvent e JOIN AiSession s ON s.id = e.aiSessionId
