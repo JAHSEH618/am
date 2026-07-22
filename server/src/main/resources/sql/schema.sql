@@ -14,10 +14,10 @@
 --   表分组（按读写依赖排序）：
 --     §1  员工 / 项目              employee · project_mapping
 --     §2  Agent 安全               agent_device · agent_nonce · agent_version · agent_alert
---     §3  Agent 流水（v1.x 工时）   agent_heartbeat · work_session · daily_summary
+--     §3  Agent 流水（v1.x 工时）   agent_heartbeat · work_session · daily_summary · capability_daily
 --     §4  AI 监控字典              monitor_target（含字典种子）
 --     §5  AI 会话主链              ai_session · ai_session_event · ai_session_message
---     §6  Git 提交透视（Phase 3）   git_commit
+--     §6  Git 提交透视（Phase 3）   git_commit · git_commit_file · git_commit_attribution
 --     §7  报告中心（Phase 3）       usage_report
 --     §8  分析报告 V3             ai_session_audit · analysis_report · analysis_report_user
 --     §9  系统设置                 sys_config · sys_config_audit
@@ -237,6 +237,33 @@ CREATE TABLE IF NOT EXISTS daily_summary
     UNIQUE KEY uk_user_date (user_code, work_date),
     KEY idx_work_date (work_date)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '员工日汇总（v2.0）';
+
+
+-- 能力使用日聚合（v2.12 · 《管理后台-产出归因与能力使用分析 v1.0》§3.3）：
+--   一行 = work_date × user_code × kind × item × sub_item，由 CapabilityDailyAggregator 按日整日重算
+--   （当日 delete+insert；本表是纯派生物，口径变更可整表重建）。/capability 页排行/趋势/矩阵只打本表。
+--   kind：skill（显式技能）/ nl_skill（NL 隐式技能）/ mcp（MCP server 工具调用）/ plugin_ns（插件命名空间技能）
+--   两级维度约定：mcp / plugin_ns 同时落两种粒度——
+--     sub_item = ''  汇总行（item = server / namespace，session_count 为该一级维度的去重会话数）
+--     sub_item <> '' 明细行（mcp = tool 名、plugin_ns = 技能名）
+--   查询必须按粒度过滤（sub_item = '' 或 <> ''），跨粒度求和会重复计数；skill / nl_skill 恒为 sub_item=''。
+CREATE TABLE IF NOT EXISTS capability_daily
+(
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    work_date     DATE         NOT NULL,
+    user_code     VARCHAR(64)  NOT NULL,
+    kind          VARCHAR(16)  NOT NULL COMMENT 'skill / nl_skill / mcp / plugin_ns',
+    item          VARCHAR(128) NOT NULL COMMENT '一级维度：skill 名 / MCP server / 插件 namespace（统一小写）',
+    sub_item      VARCHAR(256) NOT NULL DEFAULT '' COMMENT '二级维度：mcp=tool 名、plugin_ns=技能名；汇总行与 skill/nl_skill 恒为空串',
+    invoke_count  INT          NOT NULL DEFAULT 0 COMMENT '当日调用次数',
+    session_count INT          NOT NULL DEFAULT 0 COMMENT '当日去重会话数（本行粒度内）',
+    created_time  DATETIME     NOT NULL,
+    updated_time  DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_day_user_kind_item (work_date, user_code, kind, item, sub_item),
+    KEY idx_kind_item_date (kind, item, work_date),
+    KEY idx_user_date (user_code, work_date)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '能力使用日聚合（skill / MCP / 插件），CapabilityDailyAggregator 写入';
 
 
 -- =====================================================================
@@ -491,6 +518,41 @@ CREATE TABLE IF NOT EXISTS git_commit_file
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'Git 提交逐文件明细与 gzip patch';
 
 
+-- commit → AI 产出归因预计算（v2.12 · 《管理后台-产出归因与能力使用分析 v1.0》§2）：
+--   每个非 merge commit 一行（含 tier=NONE 未命中行，占比分母直接来自本表）；merge commit 全口径排除、不落行。
+--   tier：'B' 确定 AI 产出（message_body 命中 AI trailer）/ 'A' 疑似 AI 辅助（±30min 会话窗口）/ 'NONE' 未命中。
+--   单一归属：A 档取 commit 前最近活动事件的会话，并列取窗口重叠最长——各维度求和 = 总数（交叉透视可加和）。
+--   本表是纯派生物，由 GitCommitAttributionEngine 维护（ingest 增量 + 夜间批近 2 天 + 启动期全量回溯 backfilled=1）；
+--   口径变更（trailer 规则 / 窗口参数）可整表 drop 重算，不污染 git_commit 事实表。
+--   历史备注：git_commit 曾有 ingest 时写死的 ai_assisted 预计算列，因身份归因修正前误差大且无法重算被下线
+--   （GitCommitSchemaPatches DROP）；本表与其本质区别 = 独立派生表 + 任务全量/增量重算。
+CREATE TABLE IF NOT EXISTS git_commit_attribution
+(
+    id               BIGINT       NOT NULL,
+    commit_id        BIGINT       NOT NULL COMMENT '-> git_commit.id',
+    repo_url         VARCHAR(512) NOT NULL COMMENT '冗余自 git_commit，避免透视 JOIN',
+    user_code        VARCHAR(64)  NOT NULL,
+    project_name     VARCHAR(128) DEFAULT NULL COMMENT '归属会话的 project_name（NONE 行为 NULL）',
+    commit_time      DATETIME     NOT NULL,
+    lines_added      INT          NOT NULL DEFAULT 0,
+    lines_deleted    INT          NOT NULL DEFAULT 0,
+    tier             VARCHAR(8)   NOT NULL COMMENT 'B 确定 / A 疑似 / NONE 未命中',
+    trailer_kind     VARCHAR(32)  DEFAULT NULL COMMENT 'B 档命中的 trailer 规则名',
+    session_id       BIGINT       DEFAULT NULL COMMENT '归属会话（B 档窗口内找不到该工具会话时可空）',
+    target_type      VARCHAR(32)  DEFAULT NULL COMMENT '归属工具（B 档取 trailer 映射，A 档取归属会话）',
+    model            VARCHAR(128) DEFAULT NULL COMMENT '归属模型（B 档无会话时为 unknown）',
+    overlap_seconds  INT          DEFAULT NULL COMMENT '归属会话活动区间与 commit ±30min 窗口的重叠秒数（核查用）',
+    backfilled       TINYINT      NOT NULL DEFAULT 0 COMMENT '1=上线前历史回溯所得（前端趋势图注明回溯推算）',
+    computed_time    DATETIME     NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_commit (commit_id),
+    KEY idx_commit_time (commit_time),
+    KEY idx_user_time (user_code, commit_time),
+    KEY idx_tier_time (tier, commit_time),
+    KEY idx_target_time (target_type, commit_time)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'commit→AI 产出归因（每非 merge commit 一行，GitCommitAttributionEngine 写入）';
+
+
 -- =====================================================================
 -- §7  报告中心（Phase 3 实装）
 --
@@ -741,7 +803,20 @@ VALUES
     ('scheduling.daily_summary_hourly.cron',    '0 0 * * * *', 'string',  'scheduling', 0, '小时滚动聚合（today + yesterday） - cron 表达式', 'seed', NOW(), NOW()),
     ('scheduling.daily_summary_hourly.enabled', 'true',        'boolean', 'scheduling', 0, '小时滚动聚合（today + yesterday） - 是否启用', 'seed', NOW(), NOW()),
     ('scheduling.ai_session_stale_closer.cron',    '0 * * * * *', 'string',  'scheduling', 0, '卡僵会话兜底关闭 - cron 表达式', 'seed', NOW(), NOW()),
-    ('scheduling.ai_session_stale_closer.enabled', 'true',        'boolean', 'scheduling', 0, '卡僵会话兜底关闭 - 是否启用', 'seed', NOW(), NOW());
+    ('scheduling.ai_session_stale_closer.enabled', 'true',        'boolean', 'scheduling', 0, '卡僵会话兜底关闭 - 是否启用', 'seed', NOW(), NOW()),
+    ('scheduling.capability_daily_daily.cron',    '0 15 0 * * *', 'string',  'scheduling', 0, '能力使用每日聚合（昨日 capability_daily） - cron 表达式', 'seed', NOW(), NOW()),
+    ('scheduling.capability_daily_daily.enabled', 'true',         'boolean', 'scheduling', 0, '能力使用每日聚合（昨日 capability_daily） - 是否启用', 'seed', NOW(), NOW()),
+    ('scheduling.capability_daily_hourly.cron',    '0 10 * * * *', 'string',  'scheduling', 0, '能力使用小时滚动聚合（today + yesterday） - cron 表达式', 'seed', NOW(), NOW()),
+    ('scheduling.capability_daily_hourly.enabled', 'true',         'boolean', 'scheduling', 0, '能力使用小时滚动聚合（today + yesterday） - 是否启用', 'seed', NOW(), NOW()),
+    ('scheduling.git_attribution_nightly.cron',    '0 30 0 * * *', 'string',  'scheduling', 0, 'Git 产出归因夜间批（重算近 2 天） - cron 表达式', 'seed', NOW(), NOW()),
+    ('scheduling.git_attribution_nightly.enabled', 'true',         'boolean', 'scheduling', 0, 'Git 产出归因夜间批（重算近 2 天） - 是否启用', 'seed', NOW(), NOW());
+
+-- sys_config：产出归因（category=attribution）—— trailer 匹配规则扩展位（常量规则之外追加，JSON 数组
+-- [{"kind":"...","pattern":"正则(大小写不敏感)","target_type":"cursor|claude|codex|..."}]，热生效）
+INSERT IGNORE INTO sys_config
+    (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
+VALUES
+    ('attribution.trailer_rules', '[]', 'json', 'attribution', 0, 'AI trailer 追加匹配规则（JSON 数组，叠加在内置常量规则之上）', 'seed', NOW(), NOW());
 
 -- sys_config：Judge 双模型（category=judge；默认 mock，可在系统设置页改）
 INSERT IGNORE INTO sys_config
@@ -810,3 +885,4 @@ INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_message'
 INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'ai_session_audit',   COALESCE(MAX(id), 0) + 1000 FROM ai_session_audit;
 INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit',         COALESCE(MAX(id), 0) + 1000 FROM git_commit;
 INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit_file',    COALESCE(MAX(id), 0) + 1000 FROM git_commit_file;
+INSERT IGNORE INTO id_sequences (seq_name, next_val) SELECT 'git_commit_attribution', COALESCE(MAX(id), 0) + 1000 FROM git_commit_attribution;

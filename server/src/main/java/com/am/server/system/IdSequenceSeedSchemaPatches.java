@@ -25,7 +25,8 @@ public class IdSequenceSeedSchemaPatches {
     private static final Logger log = LoggerFactory.getLogger(IdSequenceSeedSchemaPatches.class);
 
     private static final String[] TABLES = {
-            "ai_session_event", "ai_session_message", "ai_session_audit", "git_commit", "git_commit_file"
+            "ai_session_event", "ai_session_message", "ai_session_audit", "git_commit", "git_commit_file",
+            "git_commit_attribution"
     };
 
     // 必须先于其它启动期 ApplicationRunner(如 GitCommitPathStatsBackfill)跑:后者会向
