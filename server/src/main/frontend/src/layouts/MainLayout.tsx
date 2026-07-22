@@ -7,6 +7,8 @@ import {
   ApartmentOutlined,
   ProjectOutlined,
   ExperimentOutlined,
+  ApiOutlined,
+  BranchesOutlined,
   FileSearchOutlined,
   AlertOutlined,
   SettingOutlined,
@@ -44,6 +46,8 @@ const NAV_ITEMS: NavItem[] = [
   { key: '/analysis',     icon: <FileSearchOutlined />,  label: '分析报告',  title: '分析报告',  subtitle: '基于全量 LLM 审计的能力洞察 + 产出验证（按时间窗 · 管理员视图）' },
   { key: '/projects',     icon: <ProjectOutlined />,     label: '项目透视',  title: '项目透视',  subtitle: '以仓库为锚的 AI 协助率与提交关联' },
   { key: '/models-tools', icon: <ExperimentOutlined />,  label: '模型与工具', title: '模型与工具', subtitle: '模型 Token 占比 + Slash Commands Top' },
+  { key: '/capability',   icon: <ApiOutlined />,         label: '能力分析',  title: '能力使用分析', subtitle: 'Skill 与插件（MCP）的真实使用画像' },
+  { key: '/attribution',  icon: <BranchesOutlined />,    label: '归因分析',  title: 'AI 产出归因', subtitle: '代码产出归到 AI：B 确定 / A 疑似双档' },
   { key: '/alerts',       icon: <AlertOutlined />,       label: '异常告警',  title: '异常告警',  subtitle: 'Agent 离线 / 签名异常 / 重放等运行时告警' },
   { key: '/system',       icon: <SettingOutlined />,     label: '系统设置',  title: '系统设置',  subtitle: '活跃 Agent / 定时任务 / Judge 模型 / 鉴权 —— 改完即时生效，不重启' },
 ];
@@ -52,7 +56,7 @@ const NAV_ITEMS: NavItem[] = [
 // 观测（看现状） / 洞察（看分析） / 运维（看异常与配置）。
 const NAV_GROUPS: { title: string; keys: string[] }[] = [
   { title: '观测', keys: ['/dashboard', '/realtime', '/sessions', '/people'] },
-  { title: '洞察', keys: ['/analysis', '/projects', '/models-tools'] },
+  { title: '洞察', keys: ['/analysis', '/projects', '/models-tools', '/capability', '/attribution'] },
   { title: '运维', keys: ['/alerts', '/system'] },
 ];
 

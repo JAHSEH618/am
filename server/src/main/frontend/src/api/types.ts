@@ -782,6 +782,130 @@ export interface ModelHeatmap {
   cells: { day_index: number; model_index: number; tokens: number }[];
 }
 
+// ===== 能力使用分析（/admin/capability）=====
+// 与后端 CapabilityController + web/dto/Capability*Dto 对齐；只读 capability_daily 预聚合表。
+
+export type CapabilityKind = 'skill' | 'mcp' | 'plugin_ns';
+
+/** 排行二级明细行：kind=mcp 为 tool，kind=plugin_ns 为命名空间下技能。 */
+export interface CapabilityRankingChild {
+  sub_item: string;
+  invoke_count: number;
+  session_count: number;
+}
+
+/** 排行一级行：skill 名 / MCP server / 插件 namespace。 */
+export interface CapabilityRankingRow {
+  item: string;
+  invoke_count: number;
+  /** kind=skill 时为显式 /技能 调用次数；其它 kind 为 null */
+  explicit_count: number | null;
+  /** kind=skill 时为 NL 隐式识别次数（启发式，可能有噪音）；其它 kind 为 null */
+  nl_count: number | null;
+  user_count: number;
+  session_count: number;
+  /** kind=mcp / plugin_ns 的二级明细（已按调用量降序）；kind=skill 为 null */
+  children: CapabilityRankingChild[] | null;
+}
+
+/** 趋势点（date 升序）；kind=skill 时 explicit/nl 分档，invoke = 显式 + NL。 */
+export interface CapabilityTrendPoint {
+  date: string;
+  invoke_count: number;
+  explicit_count: number | null;
+  nl_count: number | null;
+}
+
+export interface CapabilityMatrixUser {
+  user_code: string;
+  display_name: string;
+  total_count: number;
+}
+
+/** 人×一级维度覆盖矩阵：users/items 均按总量降序；cells = [userIndex, itemIndex, invokeCount]。 */
+export interface CapabilityMatrix {
+  users: CapabilityMatrixUser[];
+  items: string[];
+  cells: [number, number, number][];
+}
+
+/** 按人下钻行：sub_item 空串=一级汇总行、非空=二级明细行；按调用量降序。 */
+export interface CapabilityUserItem {
+  kind: string;
+  item: string;
+  sub_item: string;
+  invoke_count: number;
+  session_count: number;
+}
+
+// ===== 产出归因分析（/admin/attribution）=====
+// 与后端 AttributionController + web/dto/Attribution*Dto 对齐；只读 git_commit_attribution 预计算表。
+// 口径：B 档 = commit message 命中 AI trailer（误报≈0）；A 档 = 同人同仓库 AI 会话窗口 ±30min（上限口径）；
+// B/A 互斥（命中 B 不再计 A）；单一归属（每 commit 至多归属一个会话）；merge commit 全口径排除。
+
+export type AttributionTier = 'B' | 'A' | 'NONE';
+
+/** 透视行维度（必选）；列维度额外允许 'none' = 仅行维度。 */
+export type AttributionRowDim = 'user' | 'project' | 'tool' | 'model';
+export type AttributionColDim = AttributionRowDim | 'none';
+
+/** 趋势点（date 升序）：B/A/NONE 三档 commit 数与净行数分列；backfilled = 上线前历史回溯所得。 */
+export interface AttributionTrendPoint {
+  date: string;
+  b_commits: number;
+  a_commits: number;
+  none_commits: number;
+  b_lines: number;
+  a_lines: number;
+  none_lines: number;
+  backfilled: boolean;
+}
+
+/** 透视单元：按 (row_key, col_key, tier) 展平；col=none 时 col_key 恒为 "*"。 */
+export interface AttributionPivotCell {
+  /** 维度值为空串 = 该 commit 未归因（project/tool/model 缺失），前端渲染「未归因」。 */
+  row_key: string;
+  col_key: string;
+  tier: AttributionTier;
+  commit_count: number;
+  lines_added: number;
+  lines_deleted: number;
+}
+
+export interface AttributionPivot {
+  cells: AttributionPivotCell[];
+  /** 行或列含"人"维度时携带：user_code → 显示名。 */
+  user_names: Record<string, string> | null;
+}
+
+/** commit 明细抽屉行；session_id 非空可跳 /sessions/:id 人工核查。 */
+export interface AttributionCommitRow {
+  commit_id: number;
+  commit_hash: string;
+  subject: string;
+  user_code: string;
+  project_name: string | null;
+  repo_url: string;
+  commit_time: string;
+  lines_added: number;
+  lines_deleted: number;
+  tier: string;
+  trailer_kind: string | null;
+  session_id: number | null;
+  target_type: string | null;
+  model: string | null;
+  overlap_seconds: number | null;
+  backfilled: boolean;
+}
+
+/** 渗透率迁移对照（-1 = 无数据）。 */
+export interface PenetrationCheck {
+  window: string;
+  legacy_percent: number;
+  attribution_percent: number;
+  deviation_pp: number;
+}
+
 // 安装客户端弹框：与 InstallController.StatusDto / Platform 对齐
 export interface InstallPlatform {
   os: 'darwin' | 'linux' | 'windows';

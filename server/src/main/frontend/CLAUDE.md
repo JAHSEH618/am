@@ -39,9 +39,11 @@ the proxy at whichever port your backend is actually on, or run the backend on 8
   prepend `/console` (see the 401 handler in `client.ts`).
 - **Routing** (`src/App.tsx`, React Router v6): every route except `/login` is wrapped by `RequireAuth` +
   `MainLayout` (sidebar + header). Heavy pages (`Analysis`, `Projects`, `ModelsTools`, `SystemSettings`,
-  `SessionDetail`) are `lazy()`-loaded. Main routes: `/dashboard`, `/realtime`, `/sessions[/:id]`,
-  `/people[/:userCode]`, `/analysis`, `/projects`, `/models-tools`, `/alerts`, `/system`; several legacy
-  paths (`/cost`, `/tools`, `/reports`, `/me`) redirect.
+  `SessionDetail`, `Capability`, `Attribution`) are `lazy()`-loaded. Main routes: `/dashboard`, `/realtime`,
+  `/sessions[/:id]`, `/people[/:userCode]`, `/analysis`, `/projects`, `/models-tools`, `/capability`
+  (能力使用分析：Skill / 插件 MCP 两 tab，数据全部来自预聚合表 `capability_daily`), `/attribution`
+  (AI 产出归因：B/A 双档，数据全部来自预计算表 `git_commit_attribution`), `/alerts`, `/system`; several
+  legacy paths (`/cost`, `/tools`, `/reports`, `/me`) redirect.
 - **API layer** (`src/api/client.ts`): one axios instance, `baseURL: /api/v1`, `withCredentials: true`
   (session-cookie auth — there is no token in the browser). Every backend response is the envelope
   `R<T> = { code, data, message }`; use the `unwrap<T>()` helper, which throws on non-zero `code` and

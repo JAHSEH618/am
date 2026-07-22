@@ -16,6 +16,8 @@ const SessionDetail = lazy(() => import('./pages/SessionDetail'));
 const Projects = lazy(() => import('./pages/Projects'));
 const Analysis = lazy(() => import('./pages/Analysis'));
 const ModelsTools = lazy(() => import('./pages/ModelsTools'));
+const Capability = lazy(() => import('./pages/Capability'));
+const Attribution = lazy(() => import('./pages/Attribution'));
 const SystemSettings = lazy(() => import('./pages/SystemSettings'));
 
 export default function App() {
@@ -49,6 +51,8 @@ export default function App() {
         <Route path="/analysis" element={<Suspense fallback={<PageLoading />}><Analysis /></Suspense>} />
         <Route path="/projects" element={<Suspense fallback={<PageLoading />}><Projects /></Suspense>} />
         <Route path="/models-tools" element={<Suspense fallback={<PageLoading />}><ModelsTools /></Suspense>} />
+        <Route path="/capability" element={<Suspense fallback={<PageLoading />}><Capability /></Suspense>} />
+        <Route path="/attribution" element={<Suspense fallback={<PageLoading />}><Attribution /></Suspense>} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/system" element={<Suspense fallback={<PageLoading />}><SystemSettings /></Suspense>} />
         <Route path="/cost" element={<Navigate to="/dashboard" replace />} />

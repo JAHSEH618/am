@@ -11,6 +11,16 @@ import type {
   AnalysisReportListItem,
   AnalysisReportProgress,
   AnalysisReportUser,
+  AttributionColDim,
+  AttributionCommitRow,
+  AttributionPivot,
+  AttributionRowDim,
+  AttributionTrendPoint,
+  CapabilityKind,
+  CapabilityMatrix,
+  CapabilityRankingRow,
+  CapabilityTrendPoint,
+  CapabilityUserItem,
   DashboardInsightAuditFast,
   DashboardInsightAuditSlow,
   DashboardOverview,
@@ -24,6 +34,7 @@ import type {
   OnlineAgent,
   ScheduledTaskStatus,
   PageDto,
+  PenetrationCheck,
   PeopleDetail,
   PeopleSummary,
   ProjectDetail,
@@ -284,6 +295,76 @@ export const fetchAnalysisReportProgress = (reportId: number) =>
 /** 删除历史报告（生成中不可删）。 */
 export const deleteAnalysisReport = (reportId: number) =>
   unwrap<void>(http.delete(`/admin/analysis/${reportId}`));
+
+// ---- capability ----
+// 能力使用分析：/admin/capability/**（admin session / X-Admin-Token 鉴权）。
+// kind：skill=技能 / mcp=MCP server / plugin_ns=插件命名空间；from/to 缺省近 30 天。
+
+/** 排行（kind=skill 显式/NL 分列；kind=mcp / plugin_ns 带 children 二级明细）。 */
+export const fetchCapabilityRanking = (params?: {
+  kind?: CapabilityKind;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) => unwrap<CapabilityRankingRow[]>(http.get('/admin/capability/ranking', { params }));
+
+/** 按日趋势（date 升序）。 */
+export const fetchCapabilityTrend = (params?: {
+  kind?: CapabilityKind;
+  from?: string;
+  to?: string;
+}) => unwrap<CapabilityTrendPoint[]>(http.get('/admin/capability/trend', { params }));
+
+/** 人×一级维度覆盖矩阵（heatmap 友好形态，TopN 折叠由前端做）。 */
+export const fetchCapabilityMatrix = (params?: {
+  kind?: CapabilityKind;
+  from?: string;
+  to?: string;
+}) => unwrap<CapabilityMatrix>(http.get('/admin/capability/matrix', { params }));
+
+/** 单员工能力使用明细（下钻 Drawer 用；含全部 kind）。 */
+export const fetchCapabilityUserItems = (params: {
+  user_code: string;
+  from?: string;
+  to?: string;
+}) => unwrap<CapabilityUserItem[]>(http.get('/admin/capability/user', { params }));
+
+// ---- attribution ----
+// 产出归因分析：/admin/attribution/**（admin session / X-Admin-Token 鉴权），只读 git_commit_attribution。
+// B 档 = trailer 确定 AI 产出；A 档 = 会话窗口 ±30min 疑似（上限口径）；from/to 缺省近 30 天。
+
+/** 按日趋势（date 升序；backfilled=true 为上线前回溯推算）。 */
+export const fetchAttributionTrend = (params?: { from?: string; to?: string }) =>
+  unwrap<AttributionTrendPoint[]>(http.get('/admin/attribution/trend', { params }));
+
+/** 交叉透视：row 必给（默认 user）；col 默认 none=仅行维度（此时 col_key 恒为 "*"）。 */
+export const fetchAttributionPivot = (params?: {
+  row?: AttributionRowDim;
+  col?: AttributionColDim;
+  user_code?: string;
+  project_name?: string;
+  target_type?: string;
+  model?: string;
+  from?: string;
+  to?: string;
+}) => unwrap<AttributionPivot>(http.get('/admin/attribution/pivot', { params }));
+
+/** commit 明细（服务端分页；tier ∈ B|A|NONE 可选）。 */
+export const fetchAttributionCommits = (params?: {
+  user_code?: string;
+  project_name?: string;
+  target_type?: string;
+  model?: string;
+  tier?: string;
+  page?: number;
+  size?: number;
+  from?: string;
+  to?: string;
+}) => unwrap<PageDto<AttributionCommitRow>>(http.get('/admin/attribution/commits', { params }));
+
+/** 渗透率迁移对照（北极星同源校验；-1 = 无数据）。 */
+export const fetchAttributionPenetrationCheck = (params?: { window?: 'today' | '7d' | '30d' }) =>
+  unwrap<PenetrationCheck>(http.get('/admin/attribution/penetration-check', { params }));
 
 // ========== auth ==========
 export interface AuthMe { username: string }
