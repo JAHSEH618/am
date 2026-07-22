@@ -72,6 +72,10 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
 - **`daily_summary` (live) ≠ `usage_report` (legacy, no writer)**: the current report engine is insight's
   `analysis_report` via `POST /api/v1/admin/analysis/generate`. The README's "报告中心 / `UsageReportGenerator`
   / `reports/generate-*`" section is stale v1.x — don't chase it.
+- **v2.12 派生预聚合表**：`capability_daily`（能力使用日聚合，喂 `/capability`）与 `git_commit_attribution`
+  （commit→AI 归因，喂 `/attribution` 与北极星渗透率）都是**纯派生物**——口径变更可整表重算（启动期
+  backfill 走 sys_config marker），页面查询只打这两张表、不实时扫 `slash_hits_json`/`tool_name`/JOIN。
+  规格：`docs/design/管理后台-产出归因与能力使用分析-v1.0.md`。
 - **Admin console lives at `/console`, not `/`** (Vite `base:/console/` + Router `basename`). Root `/`
   serves a standalone public install landing (`resources/landing/install.html` via `LandingController`) that
   exposes no admin SPA/routes — so employees fetching the installer can't browse the backend. `WebConfig`

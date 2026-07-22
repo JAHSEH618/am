@@ -8,7 +8,7 @@
 
 读取每位开发者机器上的本地 AI 工具会话，量化「AI 用得有多深、有多好、产出了什么」。
 
-![version](https://img.shields.io/badge/version-1.2.7-blue)
+![version](https://img.shields.io/badge/version-1.3.0-blue)
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
@@ -120,6 +120,12 @@ flowchart LR
 > `daily_summary`（实时、核心底表）≠ `usage_report`（v1.x 遗留、当前无写入方）。
 > 现役「报告」是 insight 的 `analysis_report`，经 `POST /api/v1/admin/analysis/generate` 生成。
 
+**v1.3.0 新增两条派生链**（规格：[`docs/design/管理后台-产出归因与能力使用分析-v1.0.md`](docs/design/管理后台-产出归因与能力使用分析-v1.0.md)）：
+
+- 会话流水 → `CapabilityDailyAggregator` → **`capability_daily`** → 控制台 **`/capability`** 能力分析（Skill / 插件 MCP 两 tab，接口 `GET /api/v1/admin/capability/{ranking|trend|matrix|user}`）
+- `git_commit` × 会话窗口 → `GitCommitAttributionEngine` → **`git_commit_attribution`**（B 确定 / A 疑似 / NONE，每非 merge commit 一行）→ 控制台 **`/attribution`** 归因分析（接口 `GET /api/v1/admin/attribution/{trend|pivot|commits|penetration-check}`）；北极星 **AI 渗透率**自本版起主读该表（回溯未完成时自动退回旧查询时 JOIN 口径）
+- 两张表都是纯派生物，启动期自动建表 + 全量回溯（sys_config marker），口径变更可整表重算；性能测量端点 `GET /api/v1/admin/perf/slow-requests`（>1s 慢接口清单）
+
 ---
 
 ## 安全与鉴权
@@ -185,7 +191,7 @@ cd server/src/main/frontend && pnpm install && pnpm dev
 
 # 客户端
 cd agent && go test ./...
-VERSION=1.2.7 bash build-dist.sh   # 交叉编译四平台 → dist/install/
+VERSION=1.3.0 bash build-dist.sh   # 交叉编译四平台 → dist/install/
 ```
 
 > [!WARNING]
@@ -230,7 +236,7 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 │       └── monitors/     每个 AI 工具一个子包（cursor/claude/codex/.../zcode/gitlog）
 │
 ├── server/               Spring Boot 单体（前后端不分离，一个 jar）
-│   ├── build.gradle      artifact = aiwatch-server，version 1.2.7
+│   ├── build.gradle      artifact = aiwatch-server，version 1.3.0
 │   └── src/main/
 │       ├── java/com/am/server/   web · agent · aggregator · insight · system · domain
 │       ├── frontend/             React + Vite + TS + AntD（npm name = aiwatch-web）
@@ -262,4 +268,4 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 
 ## 版本
 
-当前发布版本 **1.2.7**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+当前发布版本 **1.3.0**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。

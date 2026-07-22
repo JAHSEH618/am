@@ -196,8 +196,8 @@ curl http://localhost:9527/actuator/health      # 期望 {"status":"UP"}
 ### 6.1 在有外网的机器编 jar 与 agent 分发包
 
 ```bash
-# 版本与 .env 的 AIWATCH_VERSION 对齐（示例 1.2.7）
-VER=1.2.7
+# 版本与 .env 的 AIWATCH_VERSION 对齐（示例 1.3.0）
+VER=1.3.0
 cd server && ./gradlew clean bootJar -PaiwatchVersion=$VER   # 产物 server/build/libs/aiwatch-server-$VER.jar
 cd ../agent && VERSION=$VER bash build-dist.sh               # 产物 agent/dist/install/
 ```
@@ -251,7 +251,7 @@ ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
 
 ```bash
 # 1) 重新编分发包（用 Go 容器，避免本机装 Go；VERSION 与 .env 的 AIWATCH_VERSION 对齐）
-docker run --rm -e VERSION="${AIWATCH_VERSION:-1.2.7}" -e GOPROXY=https://goproxy.cn,direct \
+docker run --rm -e VERSION="${AIWATCH_VERSION:-1.3.0}" -e GOPROXY=https://goproxy.cn,direct \
   -v "$PWD/agent:/agent" -w /agent docker.m.daocloud.io/library/golang:1.25-bookworm bash build-dist.sh
 
 # 2) 解开 docker-compose.yml 中 server 的 volumes 挂载：

@@ -68,6 +68,18 @@ via `POST /api/v1/agent/report-commits`.
 - `DailySummaryAggregator` → writes **`daily_summary`** (the底表 for the People page and insight reports):
   an hourly job (today + yesterday) and a 00:05 daily job, plus the ingest-triggered debounced refresh.
   It computes `ai_active_seconds_union` (merged activity intervals), thinking seconds, retry count, etc.
+- `CapabilityDailyAggregator` → writes **`capability_daily`** (the only data source of `/capability`):
+  full-day delete+insert of `work_date × user × kind(skill/nl_skill/mcp/plugin_ns) × item × sub_item`
+  from `slash_hits_json` + MCP `TOOL_CALL` events (content-parts fallback for event-less providers).
+  Daily 00:15 + hourly :10 jobs + view-time `ensureFresh`; history backfilled once at boot
+  (`CapabilityDailyBackfillPatch`, sys_config marker `capability.backfill_v1`).
+- `GitCommitAttributionEngine` → writes **`git_commit_attribution`** (the only data source of
+  `/attribution`, and the primary source of the north-star AI penetration since v2.12): one row per
+  non-merge commit, tier B (trailer match, `AiTrailerRules` + sys_config `attribution.trailer_rules`) /
+  A (±30 min session window, single attribution by nearest activity event) / NONE. Ingest-debounced
+  increments + nightly 00:30 (last 2 days) + boot backfill (`GitCommitAttributionBackfillPatch`,
+  marker `attribution.backfill_v1`, rows flagged `backfilled=1`). `AiPenetrationService` reads it and
+  falls back to the legacy query-time JOIN until the backfill completes.
 - `AiSessionStaleCloser` → every minute, flips sessions idle when `last_activity` is older than ~5 min
   (clients can crash without closing), then broadcasts via SSE.
 

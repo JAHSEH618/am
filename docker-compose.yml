@@ -51,8 +51,8 @@ services:
       dockerfile: Dockerfile
       args:
         # 与 image tag、agent 分发版本对齐；默认与 server/build.gradle 当前 version 一致
-        VERSION: ${AIWATCH_VERSION:-1.2.7}
-    image: aiwatch-server:${AIWATCH_VERSION:-1.2.7}
+        VERSION: ${AIWATCH_VERSION:-1.3.0}
+    image: aiwatch-server:${AIWATCH_VERSION:-1.3.0}
     container_name: aiwatch-server
     restart: unless-stopped
     logging: *default-logging
