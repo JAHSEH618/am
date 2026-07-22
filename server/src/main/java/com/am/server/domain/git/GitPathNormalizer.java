@@ -1,5 +1,7 @@
 package com.am.server.domain.git;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,14 +25,18 @@ public final class GitPathNormalizer {
             return s;
         }
         s = stripOuterQuotes(s);
+        // quotepath 的八进制转义是 UTF-8 字节序列（如 员 = \345\221\230），必须按字节拼完
+        // 再整体 UTF-8 解码；逐个 (char) cast 等于按 Latin-1 解释，多字节字符会成乱码。
         Matcher m = OCTAL.matcher(s);
-        StringBuilder out = new StringBuilder();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int last = 0;
         while (m.find()) {
-            int code = Integer.parseInt(m.group(1), 8);
-            m.appendReplacement(out, Matcher.quoteReplacement(String.valueOf((char) code)));
+            out.writeBytes(s.substring(last, m.start()).getBytes(StandardCharsets.UTF_8));
+            out.write(Integer.parseInt(m.group(1), 8));
+            last = m.end();
         }
-        m.appendTail(out);
-        s = out.toString();
+        out.writeBytes(s.substring(last).getBytes(StandardCharsets.UTF_8));
+        s = new String(out.toByteArray(), StandardCharsets.UTF_8);
         return s.replace("\\\"", "\"").replace("\\\\", "\\");
     }
 

@@ -39,7 +39,8 @@ public class GitCommitFile {
     @Column(name = "old_path", length = 1024)
     private String oldPath;
 
-    @Column(name = "change_type", nullable = false, length = 1)
+    /** schema.sql 定义为 CHAR(1)；不显式声明的话 ddl-auto=validate 在全新导入的库上会拒启（期待 varchar(1)）。 */
+    @Column(name = "change_type", nullable = false, columnDefinition = "CHAR(1)")
     private String changeType;
 
     @Column(name = "lines_added", nullable = false)
