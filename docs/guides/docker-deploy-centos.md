@@ -325,6 +325,23 @@ cd scripts/p1p3-verify
 DB_HOST=127.0.0.1 DB_USER=am DB_PASS=*** ./run-all.sh
 ```
 
+### 10.3 删除指定员工数据（离职清理）
+
+`scripts/delete-employee-data.sh` 按 `user_code` 清理该员工在服务端的全部数据（18 张表，含
+`agent_nonce`/`git_commit_file`/blob 关联等无 `user_code` 的子表），读仓库根 `.env` 的库凭据、
+`docker exec` 进 MySQL 容器执行，单事务删除并复核归零：
+
+```bash
+./scripts/delete-employee-data.sh <user_code>          # 预览：只统计各表行数，不删
+./scripts/delete-employee-data.sh <user_code> --yes    # 真删（单事务 + 删后复核归零）
+```
+
+**先在员工机器上执行 `aiwatchd uninstall --yes` 再删**：客户端仍在线会被脚本拦截（最近 10 分钟有
+心跳即拒绝，`FORCE=1` 可跳过）——否则下次 register 会自动重建 `employee`/`agent_device`，重装后
+bootstrap 还会回灌 30 天历史。两处删不干净需人工处置：团队级 `analysis_report` 正文可能提到该员工
+（脚本会列出涉及的 `report_id`，只能整份删除）；`git_commit` 全局按 `(repo_url, commit_hash)` 唯一，
+删除后这些提交也从项目视图消失。
+
 ---
 
 ## 11. 排错 FAQ
