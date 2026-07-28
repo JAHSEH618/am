@@ -80,11 +80,30 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
     @Query("SELECT COALESCE(MAX(m.sequenceNo), 0) FROM AiSessionMessage m WHERE m.aiSessionId = :aiSessionId")
     int maxSequenceNoByAiSessionId(@Param("aiSessionId") Long aiSessionId);
 
+    /**
+     * ingest 去重用：已存消息的 external_id **连同**排序字段一次取回。
+     *
+     * <p>只取 id 是不够的：拿不到 conversation_order / message_time 就只能对每条已存消息
+     * 各发一条条件 UPDATE 去「试探」要不要改。Cursor 单次上报最多带 1000 条历史消息，
+     * 那等于每个会话每一拍上千次写不动任何行的往返 —— DB 压力一大就被放大成分钟级请求。
+     * 取回现值后在内存里比对，只有真变了才发 UPDATE，稳态是 0 次。
+     */
+    interface MessageOrderRow {
+        String getExternalMessageId();
+
+        Integer getConversationOrder();
+
+        LocalDateTime getMessageTime();
+    }
+
     @Query("""
-        SELECT m.externalMessageId FROM AiSessionMessage m
+        SELECT m.externalMessageId AS externalMessageId,
+               m.conversationOrder AS conversationOrder,
+               m.messageTime AS messageTime
+        FROM AiSessionMessage m
         WHERE m.aiSessionId = :aiSessionId AND m.externalMessageId IS NOT NULL
         """)
-    List<String> findExternalMessageIdsByAiSessionId(@Param("aiSessionId") Long aiSessionId);
+    List<MessageOrderRow> findMessageOrderByAiSessionId(@Param("aiSessionId") Long aiSessionId);
 
     /** 聚合查询：把多个 session 的消息按 (sessionId, sequenceNo) 升序一次性拉出，
      *  供 DailySummaryAggregator 按日计算"首次响应时长 / 重试次数"。 */

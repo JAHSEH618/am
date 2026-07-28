@@ -13,7 +13,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/LazyECharts';
 import { fetchPeople, fetchPersonDetail, fetchPersonGitCommits, fetchPersonSlashCommands } from '../api/client';
 import type { CompositeGrade, NameValuePair, PeopleDetail, PeopleSummary, ProjectGitCommit, WowMetric } from '../api/types';
 import { GRADE_META } from './Analysis/constants';

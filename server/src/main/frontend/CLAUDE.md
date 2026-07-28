@@ -69,6 +69,13 @@ the proxy at whichever port your backend is actually on, or run the backend on 8
   call it when a modal-heavy page can leave masks behind.
 - TS is strict with `noUnusedLocals`/`noUnusedParameters`; the `@/*` path alias maps to `src/*`.
 - ECharts / xlsx / antd are split into separate Vite chunks (see `vite.config.ts`) — keep those imports lazy.
+  **On a non-lazy route (`Dashboard`, `Realtime`, `Sessions`, `People`, `Alerts`, `Login`), import charts as
+  `components/LazyECharts`, never `echarts-for-react` directly.** `manualChunks` only decides *which* chunk
+  code lands in, not *when* it loads: one static import from an eager route makes the 1 MB echarts chunk a
+  static dependency of the entry, and Vite then `modulepreload`s it — first paint waits for it. That single
+  import was worth 347 kB gzipped on the critical path. Pages already behind `lazy()` may import directly.
+  `LazyECharts` does not forward refs (React.lazy limitation) — if you need `getEchartsInstance()`, import
+  directly and make sure the page is on a lazy route (see `Analysis/UserDetail`).
 - **PDF 导出**：与 xlsx 同模式——点击时才 `import('./Analysis/exportAnalysisPdf')`（团队报告）/
   `import('./exportUserPdf')`（UserDetail 单人）懒加载；pdfmake 是独立 Vite chunk，中文字体
   （Noto Sans SC，OFL）放 `public/fonts/` 仅导出时 fetch。公共件在 `src/lib/pdf/`

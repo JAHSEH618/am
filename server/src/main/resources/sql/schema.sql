@@ -189,7 +189,9 @@ CREATE TABLE IF NOT EXISTS work_session
     PRIMARY KEY (id),
     KEY idx_user_start (user_code, start_time),
     KEY idx_repo_start (repo_url, start_time),
-    KEY idx_status (status)
+    KEY idx_status (status),
+    -- dashboard /overview 的 aggregateTodaySeconds 按 updated_time 切今日窗口；无此索引则每次请求全表扫。
+    KEY idx_updated_time (updated_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '工作会话';
 
 -- 员工日汇总：(user_code, work_date) 唯一
@@ -493,7 +495,9 @@ CREATE TABLE IF NOT EXISTS git_commit
     PRIMARY KEY (id),
     UNIQUE KEY uk_repo_commit (repo_url, commit_hash),
     KEY idx_user_time (user_code, commit_time),
-    KEY idx_repo_time (repo_url, commit_time)
+    KEY idx_repo_time (repo_url, commit_time),
+    -- patch 保留期清理按 commit_time 切窗口（GitCommitPatchRetentionCleaner）。
+    KEY idx_commit_time (commit_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'Git 提交流水';
 
 CREATE TABLE IF NOT EXISTS git_commit_file

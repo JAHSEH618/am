@@ -729,8 +729,14 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         int seq = messageRepository.maxSequenceNoByAiSessionId(session.getId());
         int written = 0;
         Set<String> seen = new HashSet<>();
-        Set<String> existingExternalIds = new HashSet<>(
-                messageRepository.findExternalMessageIdsByAiSessionId(session.getId()));
+        // 一次把已存消息的 (external_id, conversation_order, message_time) 取全，
+        // 好在内存里判断要不要 patch —— 见 findMessageOrderByAiSessionId 的说明。
+        Map<String, AiSessionMessageRepository.MessageOrderRow> existingByExternalId = new HashMap<>();
+        for (AiSessionMessageRepository.MessageOrderRow row
+                : messageRepository.findMessageOrderByAiSessionId(session.getId())) {
+            existingByExternalId.put(row.getExternalMessageId(), row);
+        }
+        Set<String> existingExternalIds = new HashSet<>(existingByExternalId.keySet());
 
         for (ConversationMessageDto m : incoming.getRecentMessages()) {
             if (m == null) {
@@ -746,7 +752,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                     continue;
                 }
                 if (existingExternalIds.contains(externalId)) {
-                    patchExistingConversationOrder(session.getId(), externalId, m);
+                    patchExistingConversationOrder(
+                            session.getId(), externalId, m, existingByExternalId.get(externalId));
                     continue;
                 }
             }
@@ -815,7 +822,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     }
 
     /** 存量消息补写 conversation_order / 修正 message_time（Cursor 续聊批量改写 createdAt 后的回填）。 */
-    private void patchExistingConversationOrder(Long sessionId, String externalId, ConversationMessageDto m) {
+    private void patchExistingConversationOrder(Long sessionId, String externalId, ConversationMessageDto m,
+                                                AiSessionMessageRepository.MessageOrderRow stored) {
         if (m.getConversationOrder() == null || m.getConversationOrder() <= 0) {
             return;
         }
@@ -823,8 +831,27 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (messageTime == null) {
             return;
         }
+        if (conversationOrderUnchanged(stored, m.getConversationOrder(), messageTime)) {
+            return;
+        }
         messageRepository.patchConversationOrderAndTime(
                 sessionId, externalId, m.getConversationOrder(), messageTime);
+    }
+
+    /**
+     * 库里现值与本次上报一致 → 这条 UPDATE 不必发。
+     *
+     * <p>{@code patchConversationOrderAndTime} 的 WHERE 本来就带同样的条件，但那是
+     * 「发出去了才知道不用改」——这里省掉的是往返，不是写入。判据必须与那条 SQL 严格对齐：
+     * 现值为 NULL、序号不同、时间不同，三者命中其一就得发。
+     */
+    static boolean conversationOrderUnchanged(AiSessionMessageRepository.MessageOrderRow stored,
+                                              Integer incomingOrder,
+                                              LocalDateTime incomingTime) {
+        return stored != null
+                && stored.getConversationOrder() != null
+                && stored.getConversationOrder().equals(incomingOrder)
+                && incomingTime.equals(stored.getMessageTime());
     }
 
     /**

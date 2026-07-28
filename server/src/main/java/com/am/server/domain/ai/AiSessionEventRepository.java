@@ -259,6 +259,34 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
             LocalDateTime from, LocalDateTime to,
             @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
 
+    /**
+     * dashboard /overview 专用：把窗内总览与 TOOL_CALL 计数合并成**一次**扫描。
+     *
+     * <p>原先 overview 对 ai_session_event 打两条独立查询（总览 + 工具调用数），窗口、
+     * JOIN、target_type 过滤完全相同，等于把同一批行扫了两遍。合并后 WHERE 收 4 种
+     * event_type，用条件聚合把两组指标一次算出。
+     *
+     * <p>返回顺序：[inputTokens, outputTokens, messages, sessions, users, projects, toolCalls]。
+     * 前 6 项只统计非 TOOL_CALL 行，与合并前的口径逐项一致（见 DashboardOverviewQueryTest）。
+     */
+    @Query("""
+        SELECT COALESCE(SUM(CASE WHEN e.eventType <> 'TOOL_CALL' THEN e.inputTokensDelta ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN e.eventType <> 'TOOL_CALL' THEN e.outputTokensDelta ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN e.eventType <> 'TOOL_CALL' THEN e.messagesDelta ELSE 0 END), 0),
+               COUNT(DISTINCT CASE WHEN e.eventType <> 'TOOL_CALL' THEN e.aiSessionId END),
+               COUNT(DISTINCT CASE WHEN e.eventType <> 'TOOL_CALL' THEN e.userCode END),
+               COUNT(DISTINCT CASE WHEN e.eventType <> 'TOOL_CALL' THEN s.projectName END),
+               COALESCE(SUM(CASE WHEN e.eventType = 'TOOL_CALL' THEN 1 ELSE 0 END), 0)
+        FROM AiSessionEvent e JOIN AiSession s ON s.id = e.aiSessionId
+        WHERE s.invalidReason IS NULL
+          AND e.eventType IN ('SESSION_OPEN','TOKEN_DELTA','MESSAGE_DELTA','TOOL_CALL')
+          AND e.eventTime >= :from AND e.eventTime < :to
+          AND e.targetType IN :activeTypes
+        """)
+    List<Object[]> aggregateOverviewWindow(
+            LocalDateTime from, LocalDateTime to,
+            @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
+
     /** 按 user_code 分组：[userCode, totalTokens, messageCount, sessionCount, projectCount] */
     @Query("""
         SELECT e.userCode,

@@ -10,7 +10,7 @@ import {
   FundProjectionScreenOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/LazyECharts';
 import {
   fetchAiPenetration,
   fetchInsightAuditFast,
@@ -88,10 +88,17 @@ export default function Dashboard() {
   // 全公司 Token 走势(近30天):日粒度,页面挂载拉一次即可,不进 10s polling
   const [tokenTrend, setTokenTrend] = useState<TokenTrend | null>(null);
 
+  // overview 是全库最重的查询，而它同时被 10s 轮询和 SSE 触发的刷新调用。
+  // 共用一个在途标志：上一发还没回来就跳过这一拍，避免请求越堆越多——
+  // 接口一旦慢过 REFRESH_MS，没有守卫就会自我叠加，越堆越慢。
+  const overviewInFlightRef = useRef(false);
+
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
-      if (document.hidden) return;
+      if (document.hidden || overviewInFlightRef.current) return;
+      overviewInFlightRef.current = true;
       try {
         const [ov, on, tp, te] = await Promise.all([
           fetchOverview(),
@@ -105,14 +112,24 @@ export default function Dashboard() {
         setTopProjects(tp);
         setTopEmployees(te);
       } finally {
+        overviewInFlightRef.current = false;
         if (alive) setLoading(false);
       }
     };
-    tick();
-    const id = window.setInterval(tick, REFRESH_MS);
+    // 链式 setTimeout 而非 setInterval：下一拍只在上一拍 settle 之后才排，
+    // 保证两次请求之间真的隔了 REFRESH_MS，而不是每 REFRESH_MS 无条件再发一发。
+    const loop = async () => {
+      try {
+        await tick();
+      } catch {
+        // 单次失败不终止轮询——沿用原 setInterval 的语义，下一拍照跑
+      }
+      if (alive) timer = setTimeout(loop, REFRESH_MS);
+    };
+    loop();
     return () => {
       alive = false;
-      window.clearInterval(id);
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
@@ -178,12 +195,18 @@ export default function Dashboard() {
   const scheduleDashboardRefresh = useCallback(() => {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = setTimeout(async () => {
+      // 400ms 防抖只压住"排期"，压不住"在途"：ingest 密集时这里会和 10s 轮询叠加，
+      // 所以同样受在途标志约束，跳过的那次由下一轮 polling 兜底。
+      if (overviewInFlightRef.current) return;
+      overviewInFlightRef.current = true;
       try {
         const [ov, on] = await Promise.all([fetchOverview(), fetchOnline()]);
         setOverview(ov);
         setOnline(on);
       } catch {
         // 忽略；下一轮 10s polling 会兜底
+      } finally {
+        overviewInFlightRef.current = false;
       }
     }, 400);
   }, []);

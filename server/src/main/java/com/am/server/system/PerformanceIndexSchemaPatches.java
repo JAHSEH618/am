@@ -36,6 +36,12 @@ public class PerformanceIndexSchemaPatches {
                 "CREATE INDEX idx_target_status ON ai_session (target_type, status)");
         ensureIndex(dataSource, "ai_session", "idx_project_last",
                 "CREATE INDEX idx_project_last ON ai_session (project_name, last_activity)");
+        // dashboard /overview 每次请求都按 updated_time 聚合今日 work_session；缺索引 = 每次全表扫。
+        ensureIndex(dataSource, "work_session", "idx_updated_time",
+                "CREATE INDEX idx_updated_time ON work_session (updated_time)");
+        // patch 保留期清理按 commit_time 切窗口。
+        ensureIndex(dataSource, "git_commit", "idx_commit_time",
+                "CREATE INDEX idx_commit_time ON git_commit (commit_time)");
     }
 
     private static void ensureIndex(DataSource dataSource, String table, String indexName, String ddl) {

@@ -130,9 +130,10 @@ public class DashboardController {
         // 今日 token / message / 项目 / 用户（v2.4 起改为按 event_time 切片 ai_session_event 流水，
         // 修复"长会话命中今日 last_activity 后把历史 token 全算进今日"的数据放大问题）。
         // event 表是全 provider 兼容的真相源；窗内 in/out 来自 input_tokens_delta / output_tokens_delta。
+        // 总览 6 项 + 工具调用数合并成一次扫描（原先是对同一窗口的两条独立查询）。
         java.util.List<Object[]> totalsRows = activeTypes.isEmpty()
                 ? java.util.List.of()
-                : eventRepository.aggregateWindowTotalsAndTargetTypeIn(todayStart, now, activeTypes);
+                : eventRepository.aggregateOverviewWindow(todayStart, now, activeTypes);
         Object[] totals = (totalsRows == null || totalsRows.isEmpty()) ? null : totalsRows.get(0);
         long todayInput = toLong(totals != null && totals.length > 0 ? totals[0] : null);
         long todayOutput = toLong(totals != null && totals.length > 1 ? totals[1] : null);
@@ -140,6 +141,7 @@ public class DashboardController {
         long todaySessions = toLong(totals != null && totals.length > 3 ? totals[3] : null);
         long todayUsers = toLong(totals != null && totals.length > 4 ? totals[4] : null);
         long todayProjects = toLong(totals != null && totals.length > 5 ? totals[5] : null);
+        long todayToolCalls = toLong(totals != null && totals.length > 6 ? totals[6] : null);
 
         out.setTodayInputTokens(todayInput);
         out.setTodayOutputTokens(todayOutput);
@@ -152,9 +154,7 @@ public class DashboardController {
         // AI 渗透率（北极星）：首屏直出默认 30 天口径；前端切换窗口走 /dashboard/ai-penetration。
         out.setAiPenetrationPercent(aiPenetrationService.compute(PenetrationWindow.D30));
 
-        out.setTodayToolCalls(activeTypes.isEmpty()
-                ? 0L
-                : eventRepository.countToolCallsInWindowAndTargetTypeIn(todayStart, now, activeTypes));
+        out.setTodayToolCalls(todayToolCalls);
 
         out.setLatestAgentVersion(installManifestService.readPublishedClientVersion().orElse(null));
 
