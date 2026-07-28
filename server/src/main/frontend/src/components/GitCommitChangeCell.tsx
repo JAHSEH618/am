@@ -26,7 +26,15 @@ function DiffBody({
     return <Text type="secondary">二进制文件，无文本 diff</Text>;
   }
   if (!patch) {
-    return <Text type="secondary">暂无 patch 内容（旧数据或未采集）</Text>;
+    // 'expired' = 超过 diff 保留期后被清理（见 GitCommitPatchRetentionCleaner），
+    // 与"从未采集到"是两回事，分开提示，避免看起来像采集坏了。
+    return (
+      <Text type="secondary">
+        {reason === 'expired'
+          ? '该提交的 diff 已超过保留期，未再留存；如需查看请前往代码仓库'
+          : '暂无 patch 内容（旧数据或未采集）'}
+      </Text>
+    );
   }
   return (
     <>

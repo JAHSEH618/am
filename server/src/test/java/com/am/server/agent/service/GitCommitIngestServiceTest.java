@@ -50,6 +50,50 @@ class GitCommitIngestServiceTest {
     }
 
     @Test
+    void isRicherThanStored_falseWhenSameCommitReportedAgain() {
+        // 已存 3 行 / 3 个 patch，重报同样的 3 行 —— 不得触发 replaceFiles，
+        // 否则 patch_gzip 全删全插，binlog 记前后镜像 = 2 倍 blob 字节而数据没变。
+        List<GitCommitReportRequest.FileDetail> incoming = List.of(
+                filePatch("a.go"), filePatch("b.go"), filePatch("c.go"));
+        assertFalse(GitCommitIngestService.isRicherThanStored(incoming, 3, 3));
+    }
+
+    @Test
+    void isRicherThanStored_trueWhenPatchesArriveForBackfilledRows() {
+        // 存量是 path_stats 合成的无 patch 行；这次带来了真 patch，值得重写。
+        List<GitCommitReportRequest.FileDetail> incoming = List.of(filePatch("a.go"), filePatch("b.go"));
+        assertTrue(GitCommitIngestService.isRicherThanStored(incoming, 2, 0));
+    }
+
+    @Test
+    void isRicherThanStored_trueWhenMoreFilesThanStored() {
+        // 之前的明细被截断过（只存了 1 行），这次拿到了 3 行。
+        List<GitCommitReportRequest.FileDetail> incoming = List.of(
+                fileNoPatch("a.go"), fileNoPatch("b.go"), fileNoPatch("c.go"));
+        assertTrue(GitCommitIngestService.isRicherThanStored(incoming, 1, 0));
+    }
+
+    @Test
+    void isRicherThanStored_falseWhenAllBinaryCommitReportedAgain() {
+        // 全二进制 commit：两边 patch 数都是 0，行数也一样 —— 同样不该重写。
+        List<GitCommitReportRequest.FileDetail> incoming = List.of(fileNoPatch("logo.png"));
+        assertFalse(GitCommitIngestService.isRicherThanStored(incoming, 1, 0));
+    }
+
+    private static GitCommitReportRequest.FileDetail filePatch(String path) {
+        GitCommitReportRequest.FileDetail f = new GitCommitReportRequest.FileDetail();
+        f.setPath(path);
+        f.setHasPatch(true);
+        return f;
+    }
+
+    private static GitCommitReportRequest.FileDetail fileNoPatch(String path) {
+        GitCommitReportRequest.FileDetail f = new GitCommitReportRequest.FileDetail();
+        f.setPath(path);
+        return f;
+    }
+
+    @Test
     void deserializeAgentFilePayload() throws Exception {
         String json = """
                 {

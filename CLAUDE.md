@@ -76,6 +76,18 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
   （commit→AI 归因，喂 `/attribution` 与北极星渗透率）都是**纯派生物**——口径变更可整表重算（启动期
   backfill 走 sys_config marker），页面查询只打这两张表、不实时扫 `slash_hits_json`/`tool_name`/JOIN。
   规格：`docs/design/管理后台-产出归因与能力使用分析-v1.0.md`。
+- **写入这三张表前先想清楚它会不会无限涨**。2026-07 生产根分区被打满一次，三个源头都是"只增不减"：
+  binlog（无保留期，41G）、`agent_nonce`（有清理方法但零调用方，103 万行）、`git_commit_file.patch_gzip`
+  （3.5G，占 am 库一半）。现在分别由 MySQL `binlog_expire_logs_seconds=3d`、`AgentNonceCleaner`、
+  `GitCommitPatchRetentionCleaner` 兜住。**`patch_gzip` 默认只留 60 天**（`sys_config
+  git.patch_retention_days`），超期只清 blob、保留文件行——所以别在 patch 内容上建新功能，
+  它只服务 `GET /api/v1/git-commits/patch` 那一个抽屉。
+- **commit 是不可变的**：同一个 `(repo_url, commit_hash)` 重报不得整表重写 `git_commit_file`——
+  ROW binlog 会把 MEDIUMBLOB 的前后镜像各记一遍，零变更的重报也要写 2 倍 blob 字节。守卫见
+  `GitCommitIngestService#isRicherThanStored`（只有带来更多 patch / 更多文件行才重写）。
+- **HMAC 决定了请求体必须全量进内存**（`CachedBodyHttpServletRequest`，gzip 请求还要再持一份解压副本），
+  所以"并发数 × 单请求体积"直接吃堆。容器 `-Xmx2g`，Tomcat 因此限到 50 线程、Hikari 池 40——
+  调大任一项前先算这道乘法。
 - **Admin console lives at `/console`, not `/`** (Vite `base:/console/` + Router `basename`). Root `/`
   serves a standalone public install landing (`resources/landing/install.html` via `LandingController`) that
   exposes no admin SPA/routes — so employees fetching the installer can't browse the backend. `WebConfig`

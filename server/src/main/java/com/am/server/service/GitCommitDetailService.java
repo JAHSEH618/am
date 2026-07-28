@@ -41,9 +41,11 @@ public class GitCommitDetailService {
         if (commit.isEmpty()) {
             return List.of();
         }
-        List<GitCommitFile> rows = gitCommitFileRepository.findByCommitIdOrderBySortOrderAsc(commit.get().getId());
+        // 走不含 patch_gzip 的投影：列表只要元数据，取实体会把整个 commit 的 diff blob 全读进堆。
+        List<GitCommitFileRepository.FileRow> rows =
+                gitCommitFileRepository.findRowsByCommitIdOrderBySortOrderAsc(commit.get().getId());
         List<GitCommitFileRowDto> out = new ArrayList<>(rows.size());
-        for (GitCommitFile f : rows) {
+        for (GitCommitFileRepository.FileRow f : rows) {
             GitCommitFileRowDto d = new GitCommitFileRowDto();
             d.setPath(f.getPath());
             d.setOldPath(f.getOldPath());
@@ -67,21 +69,13 @@ public class GitCommitDetailService {
         if (commit.isEmpty()) {
             return Optional.empty();
         }
+        // 只取目标文件那一行——原先是遍历整个 commit 的实体列表再挑一条，
+        // 等于为看一个文件的 diff 把所有文件的 blob 都读进了堆。
         String want = GitPathNormalizer.normalize(path);
-        for (GitCommitFile f : gitCommitFileRepository.findByCommitIdOrderBySortOrderAsc(commit.get().getId())) {
-            if (!pathMatches(want, f)) {
-                continue;
-            }
-            return Optional.of(toPatchDto(f));
-        }
-        return Optional.empty();
-    }
-
-    private static boolean pathMatches(String want, GitCommitFile f) {
-        if (GitPathNormalizer.pathsEqual(want, f.getPath())) {
-            return true;
-        }
-        return f.getOldPath() != null && GitPathNormalizer.pathsEqual(want, f.getOldPath());
+        return gitCommitFileRepository.findByCommitIdAndPath(commit.get().getId(), want)
+                .stream()
+                .findFirst()
+                .map(GitCommitDetailService::toPatchDto);
     }
 
     private static GitCommitPatchDto toPatchDto(GitCommitFile f) {

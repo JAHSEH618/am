@@ -166,6 +166,13 @@ public class GitCommitIngestService {
             if (existingFileRows > 0 && !incomingHasRichFiles) {
                 return CommitIngestOutcome.DUPLICATE;
             }
+            if (existingFileRows > 0) {
+                long existingPatchRows =
+                        gitCommitFileRepository.countByCommitIdAndHasPatch(existing.get().getId(), 1);
+                if (!isRicherThanStored(details, existingFileRows, existingPatchRows)) {
+                    return CommitIngestOutcome.DUPLICATE;
+                }
+            }
             GitCommit row = existing.get();
             applyDetailFields(row, item, details);
             replaceFiles(row.getId(), details);
@@ -195,6 +202,27 @@ public class GitCommitIngestService {
             replaceFiles(row.getId(), details);
         }
         return CommitIngestOutcome.INSERTED;
+    }
+
+    /**
+     * 本次上报的文件明细是否比库里已存的更"富"——只有更富才值得走 {@link #replaceFiles}。
+     *
+     * <p>commit 是不可变的：同一个 (repo_url, commit_hash) 的 diff 永远一样，所以重报本身
+     * 不带来任何新信息。而 replaceFiles 是 delete + insert 全表重写，ROW 格式 binlog 会把
+     * 每行的前镜像（DELETE）和后镜像（INSERT）都记一遍——含 {@code patch_gzip} MEDIUMBLOB，
+     * 于是一次零变更的重报要写 2 倍 blob 字节。客户端游标只在上报成功后推进
+     * （{@code agent/internal/reporter/gitlog.go}），一旦出现超时重发就会反复触发这条路径。
+     *
+     * <p>"更富"的两种情况：拿到了更多 patch（此前是 path_stats 合成的无 patch 行），
+     * 或者拿到了更多文件行（此前的明细被截断过）。两者都不满足时直接判 DUPLICATE。
+     */
+    static boolean isRicherThanStored(List<GitCommitReportRequest.FileDetail> incoming,
+                                      long storedFileRows,
+                                      long storedPatchRows) {
+        long incomingPatchRows = incoming.stream()
+                .filter(GitCommitReportRequest.FileDetail::isHasPatch)
+                .count();
+        return incomingPatchRows > storedPatchRows || incoming.size() > storedFileRows;
     }
 
     /**

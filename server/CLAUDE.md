@@ -82,6 +82,15 @@ via `POST /api/v1/agent/report-commits`.
   falls back to the legacy query-time JOIN until the backfill completes.
 - `AiSessionStaleCloser` → every minute, flips sessions idle when `last_activity` is older than ~5 min
   (clients can crash without closing), then broadcasts via SSE.
+- `GitCommitPatchRetentionCleaner` → daily 03:45, clears `git_commit_file.patch_gzip` for commits older
+  than `sys_config git.patch_retention_days` (default **60**; `0` disables). **Blobs only — the file rows
+  stay**, so the file list, line counts and attribution are unaffected; only the "open a file's diff"
+  drawer degrades, flagged by `truncate_reason='expired'`. Patches are the single largest thing in the DB
+  and serve exactly one endpoint (`GET /api/v1/git-commits/patch`) — do not build anything else on them
+  without revisiting this retention.
+- `AgentNonceCleaner` → daily 04:15, deletes `agent_nonce` rows older than 24 h (batched). The nonce only
+  guards replay inside the ±300 s signature window, so older rows are dead weight; without this the table
+  grows forever (it hit 1.03 M rows / 276 MB in prod before the job existed).
 
 > `daily_summary` ≠ `usage_report`. `daily_summary` is live and central. `usage_report` is a legacy v1.x
 > table with **no writer in the current codebase** — the live "reports" are insight `analysis_report`s.
