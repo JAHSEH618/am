@@ -10,8 +10,13 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       pool-name: aiwatch-cp
-      maximum-pool-size: 100
-      minimum-idle: 20
+      # 现网实测：max_connections=300（有余量），但 Max_used_connections 曾达 103 —— 也就是
+      # 原来的 100 池位被打满过，请求在等连接。放大池子不是解法：单个 MySQL 容器上 100 个并发
+      # 查询只会互相拖慢。真正的限流点在 Tomcat（application.yml 已收到 50 线程），
+      # 50 个 web 线程最多同时持有 50 条连接，再留一档给后台定时任务，40 足够且不会打爆 DB。
+      # 短暂等池比 100 条并发查询一起压 MySQL 好。
+      maximum-pool-size: 40
+      minimum-idle: 10
   sql:
     init:
       mode: never

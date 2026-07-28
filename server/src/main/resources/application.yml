@@ -45,6 +45,15 @@ server:
     # Cursor 等大 payload：单次 /report 解压后 JSON 可达数 MB～十余 MB；连接器默认 maxPostSize≈2MB
     # 会触发读取/解析异常并在全局处理器里表现为 code=50000。生产务必放宽。
     max-http-form-post-size: 512MB
+    threads:
+      # 上面那条注释就是这里必须限流的原因：HMAC 校验要求把整个请求体读进内存
+      # （CachedBodyHttpServletRequest，gzip 请求还会再持有一份解压副本），
+      # 所以「并发数 × 单请求体积」直接吃堆。容器是 -Xmx2g（见 Dockerfile），
+      # 按单请求 ~12MB 峰值算，默认的 200 线程最坏情况要 2.4G —— 超过堆上限。
+      # 50 线程 ≈ 600MB 峰值，留足余量；而实际上报量级只有个位数 QPS，50 绰绰有余。
+      # 打满后新连接进 accept 队列排队，比 OOM 好。
+      max: 50
+      min-spare: 10
   compression:
     enabled: true
     mime-types: application/json,text/html,text/css,application/javascript
