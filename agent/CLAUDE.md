@@ -62,7 +62,12 @@ cadence. Each tick snapshots all policy-enabled providers **in parallel**
 - **Offline outbox** (`outbox.go`): failed report bodies are spooled to `state/outbox/` and replayed in order.
 - **Bootstrap mode**: on first run with an empty cursor store, all monitors widen to a 30d lookback to send
   history, then snap back to 48h once drained.
-- Git commits go out separately via `GitLogReporter` → `POST /api/v1/agent/report-commits`.
+- Git commits go out separately via `GitLogReporter` → `POST /api/v1/agent/report-commits`, with its own
+  per-repo commit cursor. That cursor advances **only when the response reports `failed == 0`** — the server
+  ingests per commit and returns 200 even when some rows fail, and an advanced cursor puts those commits
+  outside the next incremental window forever. Every scan logs one INFO line (`gitlog scan: repos=… `
+  `new_commits=… filtered_by_email=… repos_without_identity=…`); `repos=0` and a nonzero
+  `filtered_by_email` are the two usual reasons a machine reports no commits at all.
 
 See [`internal/monitors/CLAUDE.md`](internal/monitors/CLAUDE.md) for the collector framework itself.
 

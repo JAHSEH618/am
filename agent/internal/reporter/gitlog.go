@@ -80,12 +80,13 @@ func (g *GitLogReporter) scanAndReport(ctx context.Context) error {
 	defer g.provider.PersistCursorFile()
 
 	res := g.provider.Scan()
+	// 每轮固定打一行：repos=0 与 filtered_by_email>0 是 gitlog 最常见的两种"没有数据"成因，
+	// 以前都走 Debug / 不打日志，从服务端看与"这台机器没装 agent"无法区分。
+	logger.Infof("gitlog scan: repos=%d new_commits=%d filtered_by_email=%d repos_without_identity=%d",
+		res.ReposDiscovered, len(res.Commits), res.CommitsFilteredByEmail, res.ReposSkippedNoIdentity)
 	if len(res.Commits) == 0 {
 		if len(res.HeadByRepo) > 0 {
 			g.provider.Commit(res.HeadByRepo)
-			logger.Debugf("gitlog scan: cursor advanced only (no own commits in incremental window)")
-		} else {
-			logger.Debugf("gitlog scan: no new commits")
 		}
 		return nil
 	}
@@ -105,6 +106,15 @@ func (g *GitLogReporter) scanAndReport(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// 服务端逐条落库，单条写库失败不影响整体 200。此时推进 cursor 会让这些提交永久消失
+	// ——本机的增量窗口再也扫不到它们。保留 cursor 下轮整批重报（已入库的会判 DUPLICATE）。
+	if summary.Failed > 0 {
+		logger.Warnf("gitlog report partial: scanned=%d inserted=%d duplicates=%d details_updated=%d ignored_identity_mismatch=%d failed=%d; cursor held for retry",
+			len(res.Commits), summary.Inserted, summary.Duplicates, summary.DetailsUpdated,
+			summary.IgnoredIdentityMismatch, summary.Failed)
+		return nil
+	}
+
 	logger.Infof("gitlog report ok: scanned=%d inserted=%d duplicates=%d details_updated=%d ignored_identity_mismatch=%d",
 		len(res.Commits), summary.Inserted, summary.Duplicates, summary.DetailsUpdated, summary.IgnoredIdentityMismatch)
 

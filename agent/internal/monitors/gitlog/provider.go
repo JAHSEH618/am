@@ -45,7 +45,7 @@ func New(roots, blacklist, gitAuthorEmails []string, limits Limits) *Provider {
 // Scan 扫描所有 roots 下的 git repo，返回所有 since-cursor 之后的新提交。
 func (p *Provider) Scan() ScanResult {
 	repos := discoverRepos(mergeDiscoveryRoots(p.roots))
-	out := ScanResult{HeadByRepo: map[string]string{}}
+	out := ScanResult{HeadByRepo: map[string]string{}, ReposDiscovered: len(repos)}
 	identitySet := make(map[string]struct{})
 	for _, a := range p.gitAuthorEmails {
 		if n := NormalizeAuthorEmail(a); n != "" {
@@ -76,12 +76,14 @@ func (p *Provider) Scan() ScanResult {
 
 		allowed := allowedEmailsForRepo(dir, p.gitAuthorEmails)
 		if len(allowed) == 0 {
+			out.ReposSkippedNoIdentity++
 			logger.Warnf("gitlog: skipping %d commits from %s (no git config user.email and no git_author_emails); configure Git identity to sync commits",
 				len(commits), repoURL)
 			continue
 		}
 
 		filtered := filterCommitsByAllowedEmails(commits, allowed)
+		out.CommitsFilteredByEmail += len(commits) - len(filtered)
 		if len(filtered) == 0 {
 			if head != "" {
 				out.HeadByRepo[repoURL] = head

@@ -66,4 +66,13 @@ type ScanResult struct {
 	HeadByRepo map[string]string
 	// ReportedIdentityEmails 已规范化的邮箱列表（config.git_author_emails ∪ 各仓库 git config user.email），供服务端与 agent_device.git_user_email 对齐兜底。
 	ReportedIdentityEmails []string
+
+	// 以下计数只用于日志诊断，不参与上报。gitlog 的两种最常见失败态本来都不打日志：
+	// 「一个仓库都没发现」和「提交被 author_email 过滤光」，从服务端看都是"这台机器没有 git 数据"。
+	// ReposDiscovered 本轮发现的 git 仓库数（0 = 扫描根为空 / 根下没有仓库）。
+	ReposDiscovered int
+	// ReposSkippedNoIdentity 因取不到 git 身份（user.email 与 git_author_emails 皆空）被整仓跳过的仓库数。
+	ReposSkippedNoIdentity int
+	// CommitsFilteredByEmail 因 author_email 不在 AllowedEmails 内被丢弃的提交数。
+	CommitsFilteredByEmail int
 }

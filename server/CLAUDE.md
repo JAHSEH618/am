@@ -63,6 +63,11 @@ dedups `ai_session_message` on `(ai_session_id, external_message_id)`, then publ
 `session_changed` event and **enqueues a debounced `daily_summary` refresh**. Git commits arrive separately
 via `POST /api/v1/agent/report-commits`.
 
+> That endpoint ingests **per commit** and swallows single-commit failures so the rest of the batch lands —
+> so its `IngestSummary.failed` count is a load-bearing contract, not a stat: the agent only advances its
+> gitlog cursor when `failed == 0`, otherwise those commits fall outside the next incremental window and are
+> lost for good. Never drop the field or return 0 unconditionally.
+
 ## Aggregation & scheduling
 
 - `DailySummaryAggregator` → writes **`daily_summary`** (the底表 for the People page and insight reports):

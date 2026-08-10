@@ -137,6 +137,8 @@ type CommitReportSummary struct {
 	Duplicates              int `json:"duplicates"`
 	IgnoredIdentityMismatch int `json:"ignored_identity_mismatch"`
 	DetailsUpdated          int `json:"details_updated"`
+	// Failed 服务端落库失败的条数（整体仍返 200）；>0 时调用方必须保留 cursor 重报。
+	Failed int `json:"failed"`
 }
 
 // ReportCommits 调 /api/v1/agent/report-commits（v2.2 Phase 3）。
