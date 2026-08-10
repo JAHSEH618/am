@@ -7,7 +7,7 @@ plugins {
 
 group = 'com.am'
 // Docker 构建传入 -PaiwatchVersion=$AIWATCH_VERSION；本地直接 gradle 时用默认值
-version = findProperty('aiwatchVersion') ?: '1.3.0'
+version = findProperty('aiwatchVersion') ?: '1.3.1'
 
 java {
     toolchain {
