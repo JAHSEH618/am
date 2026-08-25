@@ -140,12 +140,12 @@ sudo rm -rf /var/lib/docker.old 2>/dev/null; sudo mv /var/lib/docker /var/lib/do
 cd /path/to/am
 cp .env.example .env
 vi .env        # 填入 MYSQL_ROOT_PASSWORD / DB_USERNAME / DB_PASSWORD
-               # 发版时改 AIWATCH_VERSION（镜像 tag / jar / agent 分发版本同源）
+               # AIWATCH_VERSION 不用手工维护：./scripts/deploy.sh 每次会按仓库版本自动写回
                # DB_URL 已指向 mysql 服务，通常不用改
 ```
 
 > `.env` 已被 `.gitignore` 忽略，不会进版本库。  
-> **版本只改一处**：`.env` 的 `AIWATCH_VERSION` 会注入 `docker-compose.yml` 的 `image` tag 与 Dockerfile 的 `VERSION` 构建参数（jar + agent 分发包）。
+> **版本只改一处，而且是在仓库里改**：`server/build.gradle` 的 `version` 是唯一版本源，`./scripts/deploy.sh` 在 `git pull` 之后、`docker compose build` 之前把 `.env` 的 `AIWATCH_VERSION` 对齐到它；该值再注入 `docker-compose.yml` 的 `image` tag 与 Dockerfile 的 `VERSION` 构建参数（jar + agent 分发包）。所以发版后部署机只需 `./scripts/deploy.sh`，不必手工改 `.env`——漏改的后果是新代码打成旧 tag、agent 分发包也标旧版本号，而自动更新按版本号字符串相等比对，同号一律判「已是最新」。临时指定版本：`AIWATCH_VERSION=x.y.z ./scripts/deploy.sh`（此时不改 `.env`）。
 
 ### 5.2 构建并启动
 
@@ -313,7 +313,7 @@ PRUNE=0 ./scripts/deploy.sh         # 跳过部署成功后的自动清理（默
 
 > 磁盘管理：构建前脚本会检查 `/var/lib/docker`、`/var/lib/containerd` 所在分区的可用空间，不足 `MIN_FREE_GB` 时自动清理旧版本 `aiwatch-server` 镜像、dangling 镜像与全部构建缓存后重试；部署成功后默认再做一次常规清理（保留 2GB 构建缓存加速下次重建）。清理只涉及镜像与构建缓存，**不动容器、不动 MySQL 数据卷**。
 
-> 发版改版本时只改 `.env` 的 `AIWATCH_VERSION`（同步镜像 tag / jar / agent）。也可单独跑 `bash scripts/docker-prune-safe.sh`（可加 `--old-tags`）做手工回收；**不要** `docker system prune -a --volumes`。
+> 发版改版本时改仓库的 `server/build.gradle`，部署脚本会把 `.env` 的 `AIWATCH_VERSION` 对齐（同步镜像 tag / jar / agent）。也可单独跑 `bash scripts/docker-prune-safe.sh`（可加 `--old-tags`）做手工回收；**不要** `docker system prune -a --volumes`。
 
 ### 10.2 部署后数据自检（可选）
 
@@ -356,7 +356,7 @@ bootstrap 还会回灌 30 天历史。两处删不干净需人工处置：团队
 | 登录页能开、登录转圈/超时 | 多为大量员工同时首装、bootstrap 大包压库。prod 默认已 `audit-scan-enabled=false`；建议分批推广，并保证 MySQL `max_connections` ≥ HikariCP `maximum-pool-size`(prod=100) |
 | 后台"安装客户端"提示未就绪 | `AIWATCH_INSTALL_DIR` 下需有四平台二进制 + 两个安装脚本 + `manifest.json`，见第 8 节 |
 | 大 payload 上报失败(code=50000) | 走反代时设置 `client_max_body_size 512m`；后端已配 `max-http-form-post-size: 512MB` |
-| 磁盘被 Docker 占满 / 镜像版本越堆越多 | `docker system df` 看 Images vs Build Cache；改版本只改 `.env` 的 `AIWATCH_VERSION`；回收用 `./scripts/deploy.sh` 或 `bash scripts/docker-prune-safe.sh --old-tags` |
+| 磁盘被 Docker 占满 / 镜像版本越堆越多 | `docker system df` 看 Images vs Build Cache；改版本只改仓库版本号（`.env` 由 deploy.sh 对齐）；回收用 `./scripts/deploy.sh` 或 `bash scripts/docker-prune-safe.sh --old-tags` |
 
 ---
 

@@ -12,6 +12,8 @@
 #   PRUNE=0 ./scripts/deploy.sh         # 跳过部署成功后的旧镜像/构建缓存自动清理（默认开启）
 #
 # 说明：
+#   - 版本号由仓库决定（server/build.gradle），脚本会自动把部署机 .env 的 AIWATCH_VERSION 对齐，
+#     发版后无需手工改 .env；要临时指定版本就 AIWATCH_VERSION=x.y.z ./scripts/deploy.sh。
 #   - 更新代码后 server 启动会自动跑 Java *SchemaPatches 补列/建索引与各回填补丁，无需手工改库。
 #   - MySQL 表结构仅在数据卷首次初始化时导入；本脚本不动库结构、不删数据卷。
 #   - 部署后如需真库自检 / id_sequences 种子校验，见 scripts/p1p3-verify/。
@@ -94,6 +96,38 @@ if [ "$OLD_SHA" = "$NEW_SHA" ]; then
     log "代码已是最新（$NEW_SHA），无新提交。"
 else
     log "代码更新：$OLD_SHA → $NEW_SHA"
+fi
+
+# ---- 版本对齐：仓库是唯一版本源，自动写回 .env ----
+# 镜像 tag、jar 版本、agent 分发包 manifest 三者都来自 compose 的 ${AIWATCH_VERSION}，
+# 而部署机 .env 里的值会盖掉 compose 的默认值。发版后只 push、不改 .env 的话：
+# 新代码会打成旧 tag 的镜像，agent 分发包也仍标旧版本号——自动更新按 manifest 版本号
+# 字符串相等比对，同号一律判「已是最新」，新客户端一台都装不上。
+# 所以这里在 pull 之后、build 之前，把 .env 对齐到仓库版本（显式导出 AIWATCH_VERSION 时以其为准）。
+repo_version() {
+    sed -nE "s/^version *= *findProperty\('aiwatchVersion'\) *\?: *'([^']+)'.*/\1/p" \
+        server/build.gradle | head -1
+}
+if [ -n "${AIWATCH_VERSION:-}" ]; then
+    log "版本取自环境变量 AIWATCH_VERSION=$AIWATCH_VERSION（不改 .env）"
+else
+    REPO_VERSION="$(repo_version)"
+    if [ -z "$REPO_VERSION" ]; then
+        log "警告：未能从 server/build.gradle 解析版本号，沿用 .env 现值"
+    else
+        ENV_VERSION="$(sed -nE 's/^AIWATCH_VERSION=[[:space:]]*(.*)$/\1/p' .env | head -1)"
+        if [ "$ENV_VERSION" = "$REPO_VERSION" ]; then
+            log "版本 $REPO_VERSION（.env 已对齐）"
+        else
+            if [ -n "$ENV_VERSION" ]; then
+                sed -i.bak -E "s|^AIWATCH_VERSION=.*|AIWATCH_VERSION=$REPO_VERSION|" .env
+                rm -f .env.bak
+            else
+                printf 'AIWATCH_VERSION=%s\n' "$REPO_VERSION" >> .env
+            fi
+            log ".env AIWATCH_VERSION: ${ENV_VERSION:-<未设置>} → $REPO_VERSION"
+        fi
+    fi
 fi
 
 # ---- 重建 + 重启 ----
