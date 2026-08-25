@@ -1,4 +1,4 @@
-// git 上报游标持久化（按 repo_url 记录 last_commit_hash）。
+// git 上报游标持久化（按 cursorKey = repo_url + 工作副本路径 记录 last_commit_hash）。
 //
 // gz
 package gitlog
@@ -19,7 +19,7 @@ import (
 type cursorState struct {
 	mu   sync.Mutex
 	path string
-	// repo_url -> last commit hash already reported
+	// cursorKey(repo_url, 仓库目录) -> last commit hash already reported
 	HeadByRepo map[string]string `json:"head_by_repo"`
 }
 

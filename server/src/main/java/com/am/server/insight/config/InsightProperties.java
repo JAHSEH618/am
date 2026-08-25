@@ -81,6 +81,15 @@ public class InsightProperties {
     /** RUNNING 租约（分钟），过期后可被下一轮扫描 reclaim。 */
     private int auditScanLeaseMinutes = 15;
 
+    /**
+     * FAILED 冷却（分钟）：失败的 session 在这段时间内不再被扫描器选中。
+     *
+     * <p>没有冷却时 FAILED 与 NONE/PENDING 同等待遇，30s 一拍原样重打——网关 429 的那一刻起，
+     * 每拍 100 个 session × 双 Judge × 3 次重试 = 每 30 秒最多 600 次调用，永不收敛
+     * （现网一小时打出过 3564 条 429 告警）。
+     */
+    private int auditFailureCooldownMinutes = 30;
+
     /** 后台审计线程池大小（与报告任务的 auditConcurrency 独立，避免抢爆网关）。 */
     private int auditBackgroundConcurrency = 2;
 

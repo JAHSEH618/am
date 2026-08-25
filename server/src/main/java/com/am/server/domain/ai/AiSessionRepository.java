@@ -824,8 +824,8 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
               AND s.total_messages > 0
               AND s.target_type IN (:types)
               AND (
-                COALESCE(s.insight_audit_status, 'NONE') IN ('NONE', 'PENDING', 'FAILED')
-                OR (s.insight_audit_status = 'RUNNING' AND (s.insight_audit_lease_until IS NULL OR s.insight_audit_lease_until < NOW(3)))
+                COALESCE(s.insight_audit_status, 'NONE') IN ('NONE', 'PENDING')
+                OR (s.insight_audit_status IN ('RUNNING', 'FAILED') AND (s.insight_audit_lease_until IS NULL OR s.insight_audit_lease_until < NOW(3)))
                 OR s.insight_reaudit_required = 1
                 OR (s.insight_audit_status = 'DONE' AND a.id IS NOT NULL AND s.total_messages > a.message_count_at_audit + :threshold)
                 OR (s.insight_audit_status = 'DONE' AND a.id IS NULL)
@@ -846,8 +846,8 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
               AND s.total_messages > 0
               AND s.target_type IN (:types)
               AND (
-                COALESCE(s.insight_audit_status, 'NONE') IN ('NONE', 'PENDING', 'FAILED')
-                OR (s.insight_audit_status = 'RUNNING' AND (s.insight_audit_lease_until IS NULL OR s.insight_audit_lease_until < NOW(3)))
+                COALESCE(s.insight_audit_status, 'NONE') IN ('NONE', 'PENDING')
+                OR (s.insight_audit_status IN ('RUNNING', 'FAILED') AND (s.insight_audit_lease_until IS NULL OR s.insight_audit_lease_until < NOW(3)))
                 OR s.insight_reaudit_required = 1
                 OR (s.insight_audit_status = 'DONE' AND a.id IS NOT NULL AND s.total_messages > a.message_count_at_audit + :threshold)
                 OR (s.insight_audit_status = 'DONE' AND a.id IS NULL)

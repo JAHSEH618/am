@@ -92,7 +92,10 @@ via `POST /api/v1/agent/report-commits`.
   stay**, so the file list, line counts and attribution are unaffected; only the "open a file's diff"
   drawer degrades, flagged by `truncate_reason='expired'`. Patches are the single largest thing in the DB
   and serve exactly one endpoint (`GET /api/v1/git-commits/patch`) — do not build anything else on them
-  without revisiting this retention.
+  without revisiting this retention. The same job also **deletes orphan file rows** (`sweepOrphans`, ≤300k
+  rows/run to cap ROW-binlog write amplification): rows whose parent `git_commit` no longer exists belong to
+  no commit, and the retention query above can never reach them because it `JOIN`s `git_commit`. Prod had
+  2.07 M of them / 8.8 GB, left behind by the `flushAutomatically` bug fixed in 1.3.2.
 - `AgentNonceCleaner` → daily 04:15, deletes `agent_nonce` rows older than 24 h (batched). The nonce only
   guards replay inside the ±300 s signature window, so older rows are dead weight; without this the table
   grows forever (it hit 1.03 M rows / 276 MB in prod before the job existed).

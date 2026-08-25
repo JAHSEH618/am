@@ -61,6 +61,7 @@ func (p *Provider) Scan() ScanResult {
 		if isBlacklisted(repoURL, p.blacklist) {
 			continue
 		}
+		key := cursorKey(repoURL, dir)
 
 		if eff := effectiveGitEmail(dir); eff != "" {
 			if n := NormalizeAuthorEmail(eff); n != "" {
@@ -68,7 +69,7 @@ func (p *Provider) Scan() ScanResult {
 			}
 		}
 
-		since := p.cursor.get(repoURL)
+		since := p.cursor.get(key)
 		commits, head, err := scanRepo(dir, repoURL, since, p.limits)
 		if err != nil || len(commits) == 0 {
 			continue
@@ -86,14 +87,14 @@ func (p *Provider) Scan() ScanResult {
 		out.CommitsFilteredByEmail += len(commits) - len(filtered)
 		if len(filtered) == 0 {
 			if head != "" {
-				out.HeadByRepo[repoURL] = head
+				out.HeadByRepo[key] = head
 			}
 			continue
 		}
 
 		out.Commits = append(out.Commits, filtered...)
 		if head != "" {
-			out.HeadByRepo[repoURL] = head
+			out.HeadByRepo[key] = head
 		}
 	}
 
@@ -140,9 +141,9 @@ func sortedStringKeys(m map[string]struct{}) []string {
 }
 
 // Commit 上报成功后调用，把 cursor 推进到 head 并持久化。
-func (p *Provider) Commit(headByRepo map[string]string) {
-	for repoURL, head := range headByRepo {
-		p.cursor.put(repoURL, head)
+func (p *Provider) Commit(headByCursorKey map[string]string) {
+	for key, head := range headByCursorKey {
+		p.cursor.put(key, head)
 	}
 	p.cursor.save()
 }
@@ -151,6 +152,19 @@ func (p *Provider) Commit(headByRepo map[string]string) {
 // 用于删除 cursor.json 后仍能尽快重建文件，并保证每轮 scan 周期末文件存在。
 func (p *Provider) PersistCursorFile() {
 	p.cursor.save()
+}
+
+// cursorKey 是游标的键：repo_url + 工作副本绝对路径。
+//
+// 只用 repo_url 会让同一个远端的两个 clone / worktree 共用一格游标：A 落盘自己的 HEAD 后，
+// 轮到 B 时 sinceHash 不在 B 的历史里，git 报 bad revision，scanRepo 降级成 30 天全量重扫，
+// 再把 B 的 HEAD 覆盖回去——两个副本互相踢，每轮都整窗重发，服务端只能靠去重兜着。
+func cursorKey(repoURL, repoDir string) string {
+	abs, err := filepath.Abs(repoDir)
+	if err != nil {
+		abs = repoDir
+	}
+	return repoURL + "#" + filepath.Clean(abs)
 }
 
 // discoverRepos：每个 root 若自身是 Git 仓库则收入；否则在其下有限深度递归查找 .git。

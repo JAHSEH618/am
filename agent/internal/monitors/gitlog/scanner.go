@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/am/aiwatch-agent/internal/logger"
 	"github.com/am/aiwatch-agent/internal/monitor"
 	"github.com/am/aiwatch-agent/internal/procutil"
 )
@@ -72,6 +73,10 @@ func scanRepo(repoDir, repoURL, sinceHash string, lim Limits) ([]Commit, string,
 		// 这种情况降级为"无 since 全量回溯 lookbackDuration"。
 		var ee *exec.ExitError
 		if sinceHash != "" && errors.As(err, &ee) {
+			// 静默降级会掩盖"游标常年不生效、每轮整窗重发"这种故障：现网就是两个 clone
+			// 共用一格游标互相踢，从服务端只能看到无穷无尽的 duplicates。
+			logger.Warnf("gitlog: cursor %s not in %s history (rebase/多副本?), falling back to full %d-day rescan",
+				sinceHash, repoURL, int(lookbackDuration.Hours()/24))
 			return scanRepo(repoDir, repoURL, "", lim)
 		}
 		return nil, "", err

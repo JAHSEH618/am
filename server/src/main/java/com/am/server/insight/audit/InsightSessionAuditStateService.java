@@ -53,11 +53,20 @@ public class InsightSessionAuditStateService {
         sessionRepository.save(s);
     }
 
+    /**
+     * 失败落 FAILED，并把租约当冷却期用：{@code insight_audit_lease_until} 推到
+     * now + {@code auditFailureCooldownMinutes}，候选 SQL 据此跳过冷却中的会话。
+     *
+     * <p>此前这里置 null，而候选 SQL 把 FAILED 与 NONE 同等对待，于是失败的 session
+     * 30 秒后原样重来——网关一旦 429 就是一个打不完的死循环。
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markFailed(Long sessionId) {
+        int cooldown = Math.max(0, insightProperties.getAuditFailureCooldownMinutes());
+        LocalDateTime retryAfter = LocalDateTime.now().plusMinutes(cooldown);
         touch(sessionId, s -> {
             s.setInsightAuditStatus(InsightAuditStatus.FAILED.code());
-            s.setInsightAuditLeaseUntil(null);
+            s.setInsightAuditLeaseUntil(retryAfter);
         });
     }
 

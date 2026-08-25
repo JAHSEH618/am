@@ -82,6 +82,12 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
   `GitCommitPatchRetentionCleaner` 兜住。**`patch_gzip` 默认只留 60 天**（`sys_config
   git.patch_retention_days`），超期只清 blob、保留文件行——所以别在 patch 内容上建新功能，
   它只服务 `GET /api/v1/git-commits/patch` 那一个抽屉。
+- **`@Modifying(clearAutomatically = true)` 必须同时开 `flushAutomatically`**。1.3.2 之前
+  `GitCommitFileRepository#deleteByCommitId` 只开了前者：`ingestOne` 里 `save(commit)` 刚 persist、
+  INSERT 还挂在持久化上下文，紧接着这条 bulk DELETE 的 `em.clear()` 就把它丢了——无异常、无回滚、
+  日志照报 `inserted=N`，`git_commit` 从 2026-07-01 起再没进过一行（id 序列却跑到 44 万），
+  子行照落，攒出 200 万孤儿 `git_commit_file` / 8.8G，归因与渗透率全线空转。孤儿由
+  `GitCommitPatchRetentionCleaner#sweepOrphans` 兜底（保留期那条 SQL 要 `JOIN git_commit`，选不中孤儿）。
 - **commit 是不可变的**：同一个 `(repo_url, commit_hash)` 重报不得整表重写 `git_commit_file`——
   ROW binlog 会把 MEDIUMBLOB 的前后镜像各记一遍，零变更的重报也要写 2 倍 blob 字节。守卫见
   `GitCommitIngestService#isRicherThanStored`（只有带来更多 patch / 更多文件行才重写）。
