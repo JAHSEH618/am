@@ -798,19 +798,29 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
     List<Object[]> findMaxEventTimePerDay(LocalDateTime from, LocalDateTime to);
 
     /**
-     * v2.10：只统计 active target_type 事件流的每日最大 event_time，用于员工数据
-     * ensureFresh 收口与 daily_summary（也按 active types 聚合）对齐口径。
+     * v2.10：只统计 active target_type 事件流，用于员工数据 ensureFresh 收口与 daily_summary
+     * （也按 active types 聚合）对齐口径。
+     *
+     * <p><b>过期探针</b>：某个自然日 {@code [from, to)} 内是否还存在「晚于 :after」的有效事件。
+     * 原实现按 {@code GROUP BY DATE(event_time)} 一次算出整窗每天的 MAX(event_time)——窗口拉到
+     * 30 天时那就是把整整 30 天的事件流全扫一遍，而它的唯一用途只是回答一个是/否问题。
+     * 改成按天探针后：稳态区间为空，走 {@code idx_target_event_time} 直接落空；有新事件时
+     * 命中第一条即返回，代价与窗口长度无关。
+     *
+     * <p>{@code event_time >= :from} 与 {@code event_time > :after} 两个下界都写上：前者框住自然日，
+     * 后者才是「比快照新」的语义，不依赖 DATETIME 的秒级精度做 ±1s 换算。
      */
     @Query(nativeQuery = true, value = """
-        SELECT DATE(e.event_time) AS work_date, MAX(e.event_time) AS latest
+        SELECT 1
         FROM ai_session_event e
         INNER JOIN ai_session s ON s.id = e.ai_session_id
         WHERE e.event_time >= :from AND e.event_time < :to
+          AND e.event_time > :after
           AND e.target_type IN (:activeTypes)
           AND s.invalid_reason IS NULL
-        GROUP BY DATE(e.event_time)
+        LIMIT 1
         """)
-    List<Object[]> findMaxEventTimePerDayAndTargetTypeIn(
-            LocalDateTime from, LocalDateTime to,
+    List<Integer> probeActiveEventAfter(
+            LocalDateTime from, LocalDateTime to, LocalDateTime after,
             @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
 }

@@ -53,7 +53,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>实现上：日汇总由 {@link DailySummaryAggregator} 按上述白名单与 invalid 过滤写入 {@code daily_summary}；
  * 窗口内「提问次数 / 问答比」等对 {@code ai_session_message} 的查询亦使用同一套 activeTypes + 有效会话 JOIN。
- * 访问列表 / 详情前对窗口内每个自然日 {@link DailySummaryAggregator#ensureFresh}，避免摘要行滞后于该口径。
+ * 访问列表 / 详情前对窗口内每个自然日判一次过期，最近几天同步 {@link DailySummaryAggregator#ensureFresh}、
+ * 更早的转后台补，避免摘要行滞后于该口径。
  *
  * <p>接口：
  * <ul>
@@ -92,6 +93,20 @@ public class PeopleController {
 
     /** 同一窗口 list/detail 连续访问时跳过重复的过期扫描与 ensureFresh（与 ENSURE_FRESH_TTL 对齐）。 */
     private static final ConcurrentHashMap<String, Instant> ENSURE_WINDOW_RECENT = new ConcurrentHashMap<>();
+
+    /** {@link #ENSURE_WINDOW_RECENT} 的键数上限：超过就顺手清掉过了 TTL 的旧窗口，防止静态表随选择过的时间窗只增不减。 */
+    private static final int ENSURE_WINDOW_KEYS_MAX = 256;
+
+    /**
+     * view-time 同步重聚的日期上限：只对最近的 N 个过期日阻塞请求，更早的交给
+     * {@link DailySummaryAggregator#enqueueRefresh(Collection)} 在后台 debounce 补。
+     * <p>没有上限时，"近30天"窗口撞上一次历史 backfill 就要在请求线程里连算 30 天
+     * （每天 = 当日活跃人数 × 4 条聚合查询），必然打穿前端 15s 超时。
+     */
+    private static final int MAX_SYNC_ENSURE_DAYS = 2;
+
+    /** 窗内消息统计的零值：{@code [userMsgCount, assistantMsgCount, slashCount]}。 */
+    private static final long[] EMPTY_MESSAGE_STATS = new long[]{0L, 0L, 0L};
 
     /**
      * 安装客户端弹框前置校验：
@@ -153,21 +168,18 @@ public class PeopleController {
         LocalDateTime msgTo = windowElapsedEndExclusive(window[1]);
         Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
         boolean applyAiDailySummary = !activeTypes.isEmpty();
-        Map<String, long[]> userAssistantByCode = loadUserAssistantCountsBulk(msgFrom, msgTo, activeTypes);
+        Map<String, long[]> msgStatsByCode = loadWindowMessageStatsBulk(msgFrom, msgTo, activeTypes);
 
         Map<String, Long> gitCommitsByUser = loadGitCommitCountsByUser(msgFrom, msgTo);
-        Map<String, Long> slashCommandsByUser = applyAiDailySummary
-                ? slashCommandStatSupport.sumCommandCountByUser(msgFrom, msgTo, activeTypes)
-                : Map.of();
 
         List<Employee> employees = employeeRepository.findByStatusOrderByUserCodeAsc(Employee.STATUS_ACTIVE);
         List<PeopleSummaryDto> out = new ArrayList<>(employees.size());
         for (Employee emp : employees) {
             List<DailySummary> rows = byUser.getOrDefault(emp.getUserCode(), List.of());
-            long[] ua = userAssistantByCode.getOrDefault(emp.getUserCode(), new long[]{0L, 0L});
+            long[] ms = msgStatsByCode.getOrDefault(emp.getUserCode(), EMPTY_MESSAGE_STATS);
             PeopleSummaryDto dto = buildSummary(
-                    emp.getUserCode(), rows, window[0], window[1], ua[0], ua[1], applyAiDailySummary);
-            dto.setToolCallCountTotal(toInt(slashCommandsByUser.getOrDefault(emp.getUserCode(), 0L)));
+                    emp.getUserCode(), rows, window[0], window[1], ms[0], ms[1], applyAiDailySummary);
+            dto.setToolCallCountTotal(toInt(ms[2]));
             dto.setGitCommitWindowCount(gitCommitsByUser.getOrDefault(emp.getUserCode(), 0L));
             out.add(dto);
         }
@@ -252,18 +264,25 @@ public class PeopleController {
         LocalDateTime t1 = windowElapsedEndExclusive(window[1]);
         Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
         boolean applyAiDailySummary = !activeTypes.isEmpty();
-        long[] ua = userAssistantCountsForUser(userCode, t0, t1, activeTypes);
-        PeopleSummaryDto summary = buildSummary(userCode, rows, window[0], window[1], ua[0], ua[1], applyAiDailySummary);
-        if (applyAiDailySummary) {
-            summary.setToolCallCountTotal(toInt(
-                    slashCommandStatSupport.sumCommandCountForUser(userCode, t0, t1, activeTypes)));
+        // 问答比、Slash 合计、Slash 按天三个数出自同一批 message 行：按天聚合一次查完，
+        // 合计由各天相加得到（窗口两端都是自然日边界，逐日相加与整窗聚合等价）。
+        Map<LocalDate, long[]> msgStatsByDay = loadWindowMessageStatsByDay(userCode, t0, t1, activeTypes);
+        long userMsgTotal = 0L;
+        long assistantMsgTotal = 0L;
+        long slashTotal = 0L;
+        for (long[] v : msgStatsByDay.values()) {
+            userMsgTotal += v[0];
+            assistantMsgTotal += v[1];
+            slashTotal += v[2];
         }
-        summary.setGitCommitWindowCount(gitCommitRepository.countByUserCodeAndCommitWindow(userCode, t0, t1));
+        PeopleSummaryDto summary = buildSummary(
+                userCode, rows, window[0], window[1], userMsgTotal, assistantMsgTotal, applyAiDailySummary);
+        if (applyAiDailySummary) {
+            summary.setToolCallCountTotal(toInt(slashTotal));
+        }
+        long curGitCommits = gitCommitRepository.countByUserCodeAndCommitWindow(userCode, t0, t1);
+        summary.setGitCommitWindowCount(curGitCommits);
         attachGrades(List.of(summary));
-
-        Map<LocalDate, Long> slashByDay = applyAiDailySummary
-                ? slashCommandStatSupport.sumCommandCountByDayForUser(userCode, t0, t1, activeTypes)
-                : Map.of();
 
         // dailyTimeline 升序展示
         List<PeopleDetailDto.DailyPoint> timeline = new ArrayList<>(rows.size());
@@ -276,7 +295,7 @@ public class PeopleController {
                         nz(r.getAiActiveSeconds()),
                         nz(r.getAiActiveSecondsUnion()),
                         nz(r.getAiMessageCount()),
-                        toInt(slashByDay.getOrDefault(r.getWorkDate(), 0L)),
+                        toInt(msgStatsByDay.getOrDefault(r.getWorkDate(), EMPTY_MESSAGE_STATS)[2]),
                         nz(r.getAiRetryCount()),
                         nz(r.getTotalInputTokens()),
                         nz(r.getTotalOutputTokens()),
@@ -326,7 +345,7 @@ public class PeopleController {
                 topModels,
                 topTools,
                 topProjects,
-                computePeriodComparison(userCode, window[0], window[1])
+                computePeriodComparison(userCode, window[0], window[1], rows, curGitCommits, applyAiDailySummary)
         );
     }
 
@@ -336,34 +355,36 @@ public class PeopleController {
      * 计算选定时间窗 vs 上一自然周的环比，基于 daily_summary 累加（Git 提交走 git_commit 表）。
      * <p>本期 = RangePicker [from, min(to, today)]；上周 = ISO 周一 ~ 周日（上一完整自然周，与本期窗口长度无关）。
      */
-    private PeopleDetailDto.WeekOverWeek computePeriodComparison(String userCode, LocalDate from, LocalDate to) {
+    private PeopleDetailDto.WeekOverWeek computePeriodComparison(
+            String userCode, LocalDate from, LocalDate to,
+            List<DailySummary> windowRows, long curGitCommits, boolean applyAiDailySummary) {
         LocalDate elapsedEnd = windowElapsedEnd(to);
         LocalDate today = LocalDate.now();
         LocalDate thisMon = today.with(DayOfWeek.MONDAY);
         LocalDate lastMon = thisMon.minusDays(7);
         LocalDate lastSun = thisMon.minusDays(1);
 
-        Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
-        List<DailySummary> currentRows = activeTypes.isEmpty()
-                ? List.of()
-                : summaryRepository.findByUserCodeAndWorkDateBetweenOrderByWorkDateDesc(userCode, from, elapsedEnd);
-        List<DailySummary> prevRows = activeTypes.isEmpty()
-                ? List.of()
-                : summaryRepository.findByUserCodeAndWorkDateBetweenOrderByWorkDateDesc(userCode, lastMon, lastSun);
+        // 本期行 = 调用方已经查过的 [from, to] 窗口行裁到已过日期，不再为同一段重发一次查询。
+        List<DailySummary> currentRows = applyAiDailySummary
+                ? windowRows.stream()
+                        .filter(r -> r.getWorkDate() != null
+                                && !r.getWorkDate().isBefore(from)
+                                && !r.getWorkDate().isAfter(elapsedEnd))
+                        .toList()
+                : List.of();
+        List<DailySummary> prevRows = applyAiDailySummary
+                ? summaryRepository.findByUserCodeAndWorkDateBetweenOrderByWorkDateDesc(userCode, lastMon, lastSun)
+                : List.of();
 
         long[] current = sumKeyMetrics(currentRows);
         long[] previous = sumKeyMetrics(prevRows);
 
-        LocalDateTime curT0 = from.atStartOfDay();
-        LocalDateTime curT1 = windowElapsedEndExclusive(to);
         LocalDateTime prevT0 = lastMon.atStartOfDay();
         LocalDateTime prevT1 = lastSun.plusDays(1).atStartOfDay();
-        long curGit = activeTypes.isEmpty()
-                ? 0L
-                : gitCommitRepository.countByUserCodeAndCommitWindow(userCode, curT0, curT1);
-        long prevGit = activeTypes.isEmpty()
-                ? 0L
-                : gitCommitRepository.countByUserCodeAndCommitWindow(userCode, prevT0, prevT1);
+        long curGit = applyAiDailySummary ? curGitCommits : 0L;
+        long prevGit = applyAiDailySummary
+                ? gitCommitRepository.countByUserCodeAndCommitWindow(userCode, prevT0, prevT1)
+                : 0L;
 
         PeopleDetailDto.WeekOverWeek wow = new PeopleDetailDto.WeekOverWeek();
         wow.setThisWeekFrom(from.toString());
@@ -547,12 +568,11 @@ public class PeopleController {
     /**
      * 访问员工数据前，确保查询窗口里所有"已过期"的 daily_summary 都被同步重聚一次。
      *
-     * <p><b>过期判定</b>：对窗口 [from, to] 内每一天，比较
-     * <ul>
-     *   <li>该天 ai_session_event 流的 MAX(event_time)（"事件真相源"的最新时刻）</li>
-     *   <li>该天 daily_summary 全员行的 MAX(updated_time)（"快照"的最近一次刷新）</li>
-     * </ul>
-     * 若 max(event_time) &gt; max(updated_time)，或者 daily_summary 整天就没生成过——视为过期。
+     * <p><b>过期判定</b>：对窗口 [from, to] 内每一天，看该天 daily_summary 全员行的
+     * MAX(updated_time)（"快照"的最近一次刷新）之后，事件真相源里是否还有新的有效事件
+     * ——{@link #isStale} 用两次索引探针回答，判定与原先「按天 MAX(event_time) vs MAX(updated_time)」等价。
+     * <p>v1.3.3 之前是一条 {@code GROUP BY DATE(event_time)} 一次性算出整窗每天的 MAX(event_time)：
+     * 那等于为了回答一个是/否问题把整个窗口的事件流全扫一遍，"近30天"预设下这一步本身就要好几秒。
      *
      * <p><b>为什么要这样做</b>：客户端 backfill 历史数据时会分批 ingest，每批触发
      * {@link DailySummaryAggregator#enqueueRefresh} 异步 debounce 15s 重聚。用户在 backfill
@@ -567,40 +587,87 @@ public class PeopleController {
      * <p>原 v2.x 实现只对 today 单点 ensureFresh，历史天的"中间快照"问题无法收口——
      * 这次改进是体感修复（用户截图过的 1h14m → 真值 2h6m 这个 case）。
      *
-     * <p><b>补充（员工数据口径）</b>：窗口内<strong>每一个自然日</strong>都尝试一次 {@link DailySummaryAggregator#ensureFresh}，
+     * <p><b>补充（员工数据口径）</b>：窗口内<strong>每一个自然日</strong>都参与过期判定，
      * 仅靠「当日存在启用 Agent 的事件」拉日历会漏掉整日只有禁用 Agent / 无效会话、却仍握着旧 daily_summary 的日期，
      * 导致列表上协作时长与问答次数脱节。
+     * <p>但<strong>同步</strong>重聚只给最近的 {@link #MAX_SYNC_ENSURE_DAYS} 天（稳态下过期的本来也只有今天），
+     * 更早的过期日改走 {@link DailySummaryAggregator#enqueueRefresh(Collection)} 在后台补，
+     * 免得一次历史 backfill 把请求线程按在 30 天的重算上。
      */
     private void ensureWindowFreshIfStale(LocalDate[] window) {
-        String debounceKey = window[0] + "|" + window[1];
-        Instant now = Instant.now();
-        Instant lastRun = ENSURE_WINDOW_RECENT.get(debounceKey);
-        if (lastRun != null && Duration.between(lastRun, now).compareTo(ENSURE_FRESH_TTL) < 0) {
+        if (!claimEnsureWindow(window)) {
             return;
         }
         Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
         if (activeTypes.isEmpty()) {
             return;
         }
-        LocalDateTime eventFrom = window[0].atStartOfDay();
-        LocalDateTime eventTo = window[1].plusDays(1).atStartOfDay();
-        Map<LocalDate, LocalDateTime> maxEventByDay = toMaxTimeByWorkDate(
-                eventRepository.findMaxEventTimePerDayAndTargetTypeIn(eventFrom, eventTo, activeTypes));
         Map<LocalDate, LocalDateTime> maxUpdatedByDay = toMaxTimeByWorkDate(
                 summaryRepository.findMaxUpdatedTimePerDay(window[0], window[1]));
 
-        for (LocalDate d = window[0]; !d.isAfter(window[1]); d = d.plusDays(1)) {
-            LocalDateTime eventMax = maxEventByDay.get(d);
-            LocalDateTime updatedMax = maxUpdatedByDay.get(d);
-            if (eventMax == null && updatedMax == null) {
-                continue;
+        // 倒序扫：离今天最近的日期先拿到同步名额——那正是用户盯着看的几天。
+        List<LocalDate> stale = new ArrayList<>();
+        for (LocalDate d = window[1]; !d.isBefore(window[0]); d = d.minusDays(1)) {
+            if (isStale(d, maxUpdatedByDay.get(d), activeTypes)) {
+                stale.add(d);
             }
-            if (eventMax != null && updatedMax != null && !eventMax.isAfter(updatedMax)) {
-                continue;
-            }
-            dailySummaryAggregator.ensureFresh(d, ENSURE_FRESH_TTL);
         }
-        ENSURE_WINDOW_RECENT.put(debounceKey, now);
+        if (stale.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < Math.min(stale.size(), MAX_SYNC_ENSURE_DAYS); i++) {
+            dailySummaryAggregator.ensureFresh(stale.get(i), ENSURE_FRESH_TTL);
+        }
+        if (stale.size() > MAX_SYNC_ENSURE_DAYS) {
+            dailySummaryAggregator.enqueueRefresh(stale.subList(MAX_SYNC_ENSURE_DAYS, stale.size()));
+        }
+    }
+
+    /**
+     * 某个自然日的 daily_summary 快照是否已过期。判定与原「按天 MAX(event_time) vs MAX(updated_time)」
+     * 完全等价，只是换成两次索引探针，代价不再随窗口长度线性增长：
+     * <ul>
+     *   <li>快照之后还有有效事件 → 过期（backfill / 实时上报没追上）</li>
+     *   <li>有快照但该日事件流已空 → 过期（口径收窄后旧快照要被清成 0，见 v2.11）</li>
+     *   <li>既没有快照也没有事件 → 无事可做</li>
+     * </ul>
+     */
+    private boolean isStale(LocalDate day, LocalDateTime updatedMax, Collection<String> activeTypes) {
+        LocalDateTime dayStart = day.atStartOfDay();
+        LocalDateTime dayEnd = day.plusDays(1).atStartOfDay();
+        // after 取 dayStart 之前一天 = "不设新旧门槛"，配合 event_time >= dayStart 就是整日范围
+        LocalDateTime anyEventFloor = dayStart.minusDays(1);
+        LocalDateTime after = updatedMax != null ? updatedMax : anyEventFloor;
+        if (!eventRepository.probeActiveEventAfter(dayStart, dayEnd, after, activeTypes).isEmpty()) {
+            return true;
+        }
+        if (updatedMax == null) {
+            // after 就是 anyEventFloor，上面那次探针已经回答了"当日没有任何有效事件"
+            return false;
+        }
+        return eventRepository.probeActiveEventAfter(dayStart, dayEnd, anyEventFloor, activeTypes).isEmpty();
+    }
+
+    /**
+     * 抢占一个窗口的过期扫描名额：同一窗口 {@link #ENSURE_FRESH_TTL} 内只允许一次。
+     * <p>用 {@code compute} 原子占位，而不是旧版的「先读、扫完再写」：员工数据的列表与详情
+     * 几乎总是同一拍并发发出，标记落得太晚会让两条请求各扫一遍窗口、再各自去抢 ensureFresh 的日期锁。
+     */
+    private static boolean claimEnsureWindow(LocalDate[] window) {
+        Instant now = Instant.now();
+        if (ENSURE_WINDOW_RECENT.size() > ENSURE_WINDOW_KEYS_MAX) {
+            ENSURE_WINDOW_RECENT.entrySet().removeIf(
+                    e -> Duration.between(e.getValue(), now).compareTo(ENSURE_FRESH_TTL) >= 0);
+        }
+        boolean[] claimed = {false};
+        ENSURE_WINDOW_RECENT.compute(window[0] + "|" + window[1], (k, last) -> {
+            if (last != null && Duration.between(last, now).compareTo(ENSURE_FRESH_TTL) < 0) {
+                return last;
+            }
+            claimed[0] = true;
+            return now;
+        });
+        return claimed[0];
     }
 
     private static Map<LocalDate, LocalDateTime> toMaxTimeByWorkDate(List<Object[]> rows) {
@@ -642,30 +709,23 @@ public class PeopleController {
     }
 
     /**
-     * 窗口 [from, to) 内各员工 user / assistant 消息条数（一次聚合查询）。
+     * 窗口 [from, to) 内各员工的 user / assistant 消息条数与 Slash 调用数（一次聚合查询）。
      * <p>v2.10：只统计 active target_type 的消息。activeTypes 为空意味着所有 agent
-     * 都被关闭，直接返回空 map（问答比统一为 null）。
+     * 都被关闭，直接返回空 map（问答比统一为 null、Slash 计 0）。
+     * <p>值为 {@code [userMsgCount, assistantMsgCount, slashCount]}。
      */
-    private Map<String, long[]> loadUserAssistantCountsBulk(LocalDateTime from, LocalDateTime to,
-                                                            Collection<String> activeTypes) {
+    private Map<String, long[]> loadWindowMessageStatsBulk(LocalDateTime from, LocalDateTime to,
+                                                           Collection<String> activeTypes) {
         Map<String, long[]> out = new HashMap<>();
         if (activeTypes.isEmpty()) {
             return out;
         }
         for (Object[] row : messageRepository
-                .countGroupedByUserAndRoleLowerInWindowAndTargetTypeIn(from, to, activeTypes)) {
-            if (row.length < 3 || row[0] == null) {
+                .aggregatePeopleMessageStatsByUserInWindow(from, to, activeTypes)) {
+            if (row.length < 4 || row[0] == null) {
                 continue;
             }
-            String code = row[0].toString();
-            String role = row[1] != null ? row[1].toString() : "";
-            long cnt = ((Number) row[2]).longValue();
-            long[] pair = out.computeIfAbsent(code, k -> new long[2]);
-            if ("user".equals(role)) {
-                pair[0] = cnt;
-            } else if ("assistant".equals(role)) {
-                pair[1] = cnt;
-            }
+            out.put(row[0].toString(), new long[]{toLong(row[1]), toLong(row[2]), toLong(row[3])});
         }
         return out;
     }
@@ -682,27 +742,29 @@ public class PeopleController {
         return out;
     }
 
-    private long[] userAssistantCountsForUser(String userCode, LocalDateTime from, LocalDateTime to,
-                                              Collection<String> activeTypes) {
-        long userCnt = 0L;
-        long assistantCnt = 0L;
+    /**
+     * 单员工窗口 [from, to) 内按自然日的 user / assistant 消息条数与 Slash 调用数（一次聚合查询）。
+     * <p>值为 {@code [userMsgCount, assistantMsgCount, slashCount]}；调用方相加即得窗口合计。
+     */
+    private Map<LocalDate, long[]> loadWindowMessageStatsByDay(String userCode,
+                                                               LocalDateTime from, LocalDateTime to,
+                                                               Collection<String> activeTypes) {
+        Map<LocalDate, long[]> out = new HashMap<>();
         if (activeTypes.isEmpty()) {
-            return new long[]{0L, 0L};
+            return out;
         }
         for (Object[] row : messageRepository
-                .countGroupedByRoleLowerForUserInWindowAndTargetTypeIn(userCode, from, to, activeTypes)) {
-            if (row.length < 2 || row[0] == null) {
+                .aggregatePeopleMessageStatsByDayForUserInWindow(userCode, from, to, activeTypes)) {
+            if (row.length < 4) {
                 continue;
             }
-            String role = row[0].toString();
-            long cnt = ((Number) row[1]).longValue();
-            if ("user".equals(role)) {
-                userCnt = cnt;
-            } else if ("assistant".equals(role)) {
-                assistantCnt = cnt;
+            LocalDate day = toLocalDate(row[0]);
+            if (day == null) {
+                continue;
             }
+            out.put(day, new long[]{toLong(row[1]), toLong(row[2]), toLong(row[3])});
         }
-        return new long[]{userCnt, assistantCnt};
+        return out;
     }
 
     /**

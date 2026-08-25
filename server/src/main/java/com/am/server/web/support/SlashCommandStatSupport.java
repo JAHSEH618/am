@@ -9,7 +9,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -31,47 +30,6 @@ public class SlashCommandStatSupport {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final AiSessionMessageRepository messageRepository;
-
-    public Map<String, Long> sumCommandCountByUser(
-            LocalDateTime from, LocalDateTime to, Collection<String> activeTypes) {
-        if (activeTypes == null || activeTypes.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, Long> out = new HashMap<>();
-        for (Object[] row : messageRepository.sumSlashCommandCountByUserInWindow(from, to, activeTypes)) {
-            String user = row[0] == null ? null : row[0].toString();
-            if (user == null || user.isBlank()) {
-                continue;
-            }
-            out.put(user, toLong(row[1]));
-        }
-        return out;
-    }
-
-    public long sumCommandCountForUser(
-            String userCode, LocalDateTime from, LocalDateTime to, Collection<String> activeTypes) {
-        if (activeTypes == null || activeTypes.isEmpty()) {
-            return 0L;
-        }
-        return messageRepository.sumSlashCommandCountForUserInWindow(userCode, from, to, activeTypes);
-    }
-
-    public Map<LocalDate, Long> sumCommandCountByDayForUser(
-            String userCode, LocalDateTime from, LocalDateTime to, Collection<String> activeTypes) {
-        if (activeTypes == null || activeTypes.isEmpty()) {
-            return Map.of();
-        }
-        Map<LocalDate, Long> out = new HashMap<>();
-        for (Object[] row : messageRepository.sumSlashCommandCountByDayForUserInWindow(
-                userCode, from, to, activeTypes)) {
-            LocalDate day = toLocalDate(row[0]);
-            if (day == null) {
-                continue;
-            }
-            out.put(day, toLong(row[1]));
-        }
-        return out;
-    }
 
     public List<PeopleDetailDto.NameValuePair> topCommandTokensForProject(
             String projectName, LocalDateTime from, LocalDateTime to,
@@ -95,9 +53,13 @@ public class SlashCommandStatSupport {
             return List.of();
         }
         Map<String, Long> counts = new HashMap<>();
-        for (Object[] row : messageRepository.loadUserMessagesForSlashStatsInWindow(
+        for (String json : messageRepository.loadSlashHitsJsonOnlyForUserInWindow(
                 userCode, from, to, activeTypes)) {
-            accumulateSlashRow(counts, stringify(row[0]), stringify(row[1]), stringify(row[2]));
+            mergeSlashHits(counts, json);
+        }
+        for (Object[] row : messageRepository.loadSlashFallbackContentForUserInWindow(
+                userCode, from, to, activeTypes)) {
+            accumulateSlashRow(counts, stringify(row[0]), stringify(row[1]), null);
         }
         return toNameValuePairs(counts, topN);
     }
@@ -252,36 +214,5 @@ public class SlashCommandStatSupport {
 
     private static String stringify(Object cell) {
         return cell == null ? null : cell.toString();
-    }
-
-    private static long toLong(Object v) {
-        if (v == null) {
-            return 0L;
-        }
-        if (v instanceof Number n) {
-            return n.longValue();
-        }
-        try {
-            return Long.parseLong(v.toString());
-        } catch (NumberFormatException e) {
-            return 0L;
-        }
-    }
-
-    private static LocalDate toLocalDate(Object v) {
-        if (v == null) {
-            return null;
-        }
-        if (v instanceof LocalDate d) {
-            return d;
-        }
-        if (v instanceof java.sql.Date sd) {
-            return sd.toLocalDate();
-        }
-        try {
-            return LocalDate.parse(v.toString().substring(0, 10));
-        } catch (Exception e) {
-            return null;
-        }
     }
 }
