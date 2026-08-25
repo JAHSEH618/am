@@ -377,18 +377,29 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
     /**
      * v2.10：窗内员工 × role 聚合消息条数 —— 只统计 active target_type 的消息。
      * 系统设置里禁用的 agent 不进入员工数据问答比口径。
+     *
+     * <p>v1.3.3：问答比（user / assistant 条数）与 Slash Commands 合计原来是两条 SQL，
+     * 扫的却是<b>同一批行</b>（同窗口、同 activeTypes、同 invalid 过滤）；员工数据列表每次
+     * 打开都要把窗内 ai_session_message 走两遍。合成一条按员工分组的 SUM(CASE ...)，
+     * 一次扫描出全部三个数。
+     * <p>返回 {@code [user_code, userMsgCount, assistantMsgCount, slashCount]}。
      */
-    @Query("""
-            SELECT m.userCode, LOWER(m.role), COUNT(m)
-            FROM AiSessionMessage m JOIN AiSession s ON s.id = m.aiSessionId
-            WHERE s.invalidReason IS NULL
-              AND m.messageTime >= :from AND m.messageTime < :to
-              AND m.targetType IN :activeTypes
-            GROUP BY m.userCode, LOWER(m.role)
-            """)
-    List<Object[]> countGroupedByUserAndRoleLowerInWindowAndTargetTypeIn(
-            LocalDateTime from, LocalDateTime to,
-            @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
+    @Query(nativeQuery = true, value = """
+        SELECT m.user_code,
+               SUM(CASE WHEN LOWER(m.role) = 'user' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN LOWER(m.role) = 'assistant' THEN 1 ELSE 0 END),
+               COALESCE(SUM(CASE WHEN LOWER(m.role) = 'user'
+                                 THEN m.slash_command_count + m.slash_skill_count ELSE 0 END), 0)
+        FROM ai_session_message m
+        INNER JOIN ai_session s ON s.id = m.ai_session_id
+        WHERE s.invalid_reason IS NULL
+          AND m.message_time >= :from AND m.message_time < :to
+          AND m.target_type IN (:activeTypes)
+        GROUP BY m.user_code
+        """)
+    List<Object[]> aggregatePeopleMessageStatsByUserInWindow(
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
+            @Param("activeTypes") Collection<String> activeTypes);
 
     /**
      * 单员工窗口期内按 role（小写）聚合消息条数。
@@ -405,19 +416,29 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
 
     /**
      * v2.10：单员工窗内按 role 聚合 —— 只统计 active target_type 的消息。
+     *
+     * <p>v1.3.3：员工详情原本为同一批行发三条 SQL——窗内 role 计数、Slash 合计、Slash 按天。
+     * 按天分组一次查完：合计由调用方把各天相加得到，与原口径逐日等价（窗口边界都是自然日）。
+     * <p>返回 {@code [work_date, userMsgCount, assistantMsgCount, slashCount]}。
      */
-    @Query("""
-            SELECT LOWER(m.role), COUNT(m)
-            FROM AiSessionMessage m JOIN AiSession s ON s.id = m.aiSessionId
-            WHERE s.invalidReason IS NULL
-              AND m.userCode = :userCode
-              AND m.messageTime >= :from AND m.messageTime < :to
-              AND m.targetType IN :activeTypes
-            GROUP BY LOWER(m.role)
-            """)
-    List<Object[]> countGroupedByRoleLowerForUserInWindowAndTargetTypeIn(
-            String userCode, LocalDateTime from, LocalDateTime to,
-            @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
+    @Query(nativeQuery = true, value = """
+        SELECT DATE(m.message_time),
+               SUM(CASE WHEN LOWER(m.role) = 'user' THEN 1 ELSE 0 END),
+               SUM(CASE WHEN LOWER(m.role) = 'assistant' THEN 1 ELSE 0 END),
+               COALESCE(SUM(CASE WHEN LOWER(m.role) = 'user'
+                                 THEN m.slash_command_count + m.slash_skill_count ELSE 0 END), 0)
+        FROM ai_session_message m
+        INNER JOIN ai_session s ON s.id = m.ai_session_id
+        WHERE s.invalid_reason IS NULL
+          AND m.user_code = :userCode
+          AND m.message_time >= :from AND m.message_time < :to
+          AND m.target_type IN (:activeTypes)
+        GROUP BY DATE(m.message_time)
+        """)
+    List<Object[]> aggregatePeopleMessageStatsByDayForUserInWindow(
+            @Param("userCode") String userCode,
+            @Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
+            @Param("activeTypes") Collection<String> activeTypes);
 
     /**
      * 分析报告：对给定会话，按用户汇总已落库的斜杠次数（入库时 {@link UserSlashInvocationExtractor} 写入）。
@@ -473,25 +494,18 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 
-    /** 窗内按用户汇总斜杠调用（command + skill，仅 user 消息）。返回 [user_code, sum]。 */
+    /**
+     * 单用户窗内 user 消息的斜杠 Top —— 只拉已有 {@code slash_hits_json} 的行。
+     * 返回 [slash_hits_json]。
+     *
+     * <p>v1.3.3：原来一条 SQL 同时 SELECT {@code content_text}（MEDIUMTEXT，消息原文不截断），
+     * 于是员工详情每开一次就要把该员工窗内**全部提问原文**搬到应用层，只为在其中极少数
+     * 缺 JSON 的历史行上回算斜杠命令——30 天窗口下这是几十 MB 级的结果集。
+     * 拆成「仅 json」+「仅回算」两路后，稳态只走本条、且不碰大字段。
+     * 与团队 Top 的 {@code loadSlashHitsJsonOnlyInWindowGlobal} 是同一套拆法（见性能归档 R2-H2）。
+     */
     @Query(nativeQuery = true, value = """
-        SELECT m.user_code, COALESCE(SUM(m.slash_command_count + m.slash_skill_count), 0)
-        FROM ai_session_message m
-        INNER JOIN ai_session s ON s.id = m.ai_session_id
-        WHERE s.invalid_reason IS NULL
-          AND LOWER(m.role) = 'user'
-          AND m.message_time >= :from AND m.message_time < :to
-          AND m.target_type IN (:activeTypes)
-        GROUP BY m.user_code
-        """)
-    List<Object[]> sumSlashCommandCountByUserInWindow(
-            @Param("from") LocalDateTime from,
-            @Param("to") LocalDateTime to,
-            @Param("activeTypes") Collection<String> activeTypes);
-
-    /** 单用户窗内斜杠调用（command + skill）合计。 */
-    @Query(nativeQuery = true, value = """
-        SELECT COALESCE(SUM(m.slash_command_count + m.slash_skill_count), 0)
+        SELECT m.slash_hits_json
         FROM ai_session_message m
         INNER JOIN ai_session s ON s.id = m.ai_session_id
         WHERE s.invalid_reason IS NULL
@@ -499,37 +513,21 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
           AND LOWER(m.role) = 'user'
           AND m.message_time >= :from AND m.message_time < :to
           AND m.target_type IN (:activeTypes)
+          AND m.slash_hits_json IS NOT NULL
+          AND m.slash_hits_json != 'null' AND m.slash_hits_json != '[]'
         """)
-    long sumSlashCommandCountForUserInWindow(
-            @Param("userCode") String userCode,
-            @Param("from") LocalDateTime from,
-            @Param("to") LocalDateTime to,
-            @Param("activeTypes") Collection<String> activeTypes);
-
-    /** 单用户按自然日汇总斜杠调用（command + skill）。返回 [work_date, sum]。 */
-    @Query(nativeQuery = true, value = """
-        SELECT DATE(m.message_time), COALESCE(SUM(m.slash_command_count + m.slash_skill_count), 0)
-        FROM ai_session_message m
-        INNER JOIN ai_session s ON s.id = m.ai_session_id
-        WHERE s.invalid_reason IS NULL
-          AND m.user_code = :userCode
-          AND LOWER(m.role) = 'user'
-          AND m.message_time >= :from AND m.message_time < :to
-          AND m.target_type IN (:activeTypes)
-        GROUP BY DATE(m.message_time)
-        """)
-    List<Object[]> sumSlashCommandCountByDayForUserInWindow(
+    List<String> loadSlashHitsJsonOnlyForUserInWindow(
             @Param("userCode") String userCode,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to,
             @Param("activeTypes") Collection<String> activeTypes);
 
     /**
-     * 单用户窗内 user 消息，供斜杠 Top 聚合：优先 {@code slash_hits_json}，无 JSON 时由服务层从 {@code content_text} 回算。
-     * 返回 [content_text, target_type, slash_hits_json]。
+     * 单用户窗内斜杠 Top 回算：仅缺 {@code slash_hits_json} 且有正文的 user 消息。
+     * 返回 [content_text, target_type]。
      */
     @Query(nativeQuery = true, value = """
-        SELECT m.content_text, m.target_type, m.slash_hits_json
+        SELECT m.content_text, m.target_type
         FROM ai_session_message m
         INNER JOIN ai_session s ON s.id = m.ai_session_id
         WHERE s.invalid_reason IS NULL
@@ -537,12 +535,11 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
           AND LOWER(m.role) = 'user'
           AND m.message_time >= :from AND m.message_time < :to
           AND m.target_type IN (:activeTypes)
-          AND (
-            (m.slash_hits_json IS NOT NULL AND m.slash_hits_json != 'null' AND m.slash_hits_json != '[]')
-            OR (m.content_text IS NOT NULL AND TRIM(m.content_text) != '')
-          )
+          AND (m.slash_hits_json IS NULL
+               OR m.slash_hits_json = 'null' OR m.slash_hits_json = '[]')
+          AND m.content_text IS NOT NULL AND TRIM(m.content_text) != ''
         """)
-    List<Object[]> loadUserMessagesForSlashStatsInWindow(
+    List<Object[]> loadSlashFallbackContentForUserInWindow(
             @Param("userCode") String userCode,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to,

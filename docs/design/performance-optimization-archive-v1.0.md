@@ -80,6 +80,28 @@
 
 ---
 
+### 2.4 第三轮：员工数据超时（2026-08-25）
+
+现象：控制台点「员工数据」经常打穿前端 15s 超时（`api/client.ts` timeout），选「近30天 / 本月」必现。
+定位到三处，全部**不改统计口径**：
+
+| ID | 模块 | 问题 | 改法 |
+|----|------|------|------|
+| R3-1 | `PeopleController#ensureWindowFreshIfStale` | 判「快照是否过期」用 `GROUP BY DATE(event_time)` 把整窗事件流扫一遍——为一个是/否问题付整窗代价 | 改成按天两次索引探针 `probeActiveEventAfter`（走 `idx_target_event_time`），代价与窗口长度无关 |
+| R3-2 | 同上 | 过期日**逐天同步**重聚，每天 = 当日活跃人数 × 4 条聚合查询；30 天窗口撞上 backfill 必超时。且窗口去重标记扫完才落，list/detail 并发各扫一遍 | 同步只给最近 `MAX_SYNC_ENSURE_DAYS=2` 天，更早的转 `enqueueRefresh` 后台 debounce；去重标记改 `compute` 原子占位 |
+| R3-3 | `/people` 列表 | 「问答比」与「Slash 合计」是两条 SQL，扫的却是同一批 `ai_session_message` 行 | 合成一条 `SUM(CASE WHEN ...)` 按员工分组，窗内只扫一遍 |
+| R3-4 | `/people/{code}` 详情 | 同一批行发三条 SQL（role 计数 / Slash 合计 / Slash 按天）；`computePeriodComparison` 又把本期 daily_summary 与本期 Git 计数各重查一遍 | 按天聚合一条查完、合计由各天相加；本期行与 Git 计数由 `buildDetail` 传入复用 |
+| R3-5 | `SlashCommandStatSupport#topCommandTokensForUser` | 一条 SQL 同时 `SELECT content_text`（MEDIUMTEXT，原文不截断），把该员工窗内**全部提问原文**搬到应用层，只为在极少数缺 JSON 的历史行上回算 | 拆「仅 slash_hits_json」+「仅回算」两路，与团队 Top 的 R2-H2 同一套拆法 |
+
+回归护栏：`PeopleMessageStatsQueryTest`（真 MySQL）钉住条件聚合的每一项——role 大小写、Slash 只算 user 行、
+invalid / 窗外 / 非 active target_type 一条不进、按天相加 == 整窗合计——以及探针的三种过期语义。
+
+**仍未做（本轮范围外）：** `ai_session_message` 上给列表那次扫描做覆盖索引（省掉每行一次聚簇索引回表，
+但按现表量估 +150~400MB 且随表增长）；或把「提问数 / 回复数 / Slash 数」落进 `daily_summary`
+（列表彻底不碰 message 表，但要加列 + 聚合器写入 + 一次性回填）。
+
+---
+
 ## 3. 明确未改 / 暂缓
 
 ### 3.1 按产品决策排除
