@@ -7,6 +7,13 @@ agent/dist/
 server/build/
 server/.gradle/
 server/src/main/resources/static/
+server/bin/
+
+# IDE 本地工程元数据（Eclipse / Buildship，即 VS Code Java 扩展导入 Gradle 时生成）
+server/.classpath
+server/.factorypath
+server/.project
+server/.settings/
 
 # 工具本地缓存 / 中间产物（非源码，不入库）
 **/.impeccable/
