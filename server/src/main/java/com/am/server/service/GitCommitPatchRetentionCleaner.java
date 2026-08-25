@@ -26,6 +26,9 @@ import java.util.List;
  * 所以文件列表、统计口径、归因全都不受影响；只有"点开看 diff"对过期 commit 降级，
  * 前端按 {@code truncate_reason='expired'} 显示"已超过保留期"，与"从未采集"区分开。
  *
+ * <p><b>唯一会删行的地方</b>是孤儿清理（{@code sweepOrphans}）：父 {@code git_commit} 已不存在的
+ * 文件行不属于任何 commit，保留期逻辑（要 {@code JOIN git_commit}）结构上也永远选不中它们。
+ *
  * gz
  */
 @Component
@@ -45,6 +48,15 @@ public class GitCommitPatchRetentionCleaner {
 
     /** 单次运行的批次上限：存量首清可能是几万个 commit，删不完留给下一拍。 */
     private static final int MAX_BATCHES = 500;
+
+    /** 孤儿文件行单批删除条数。 */
+    private static final int ORPHAN_BATCH = 1000;
+
+    /**
+     * 孤儿清理单次运行的批次上限。存量约 200 万行 / 8.8G，一次删完会产生同量级 binlog 写放大
+     * （ROW 格式要记 MEDIUMBLOB 前镜像），所以每拍最多 30 万行、分几天摊平。
+     */
+    private static final int MAX_ORPHAN_BATCHES = 300;
 
     private final GitCommitFileRepository gitCommitFileRepository;
     private final SystemConfigService systemConfigService;
@@ -66,16 +78,18 @@ public class GitCommitPatchRetentionCleaner {
                         true,
                         "每天 03:45 清空超过保留期的 commit diff（默认 60 天，见 sys_config "
                                 + CONFIG_KEY_RETENTION_DAYS + "）。只清 patch_gzip，"
-                                + "文件行、增删行数、归因口径均不受影响。",
+                                + "文件行、增删行数、归因口径均不受影响；另顺带删除父 commit 已不存在的孤儿文件行。",
                         "Asia/Shanghai"),
                 this::cleanup);
     }
 
     public int cleanup() {
+        // 孤儿行是纯垃圾，与保留期开关无关，所以放在开关判断之前。
+        int swept = sweepOrphans();
         int retentionDays = systemConfigService.getInt(CONFIG_KEY_RETENTION_DAYS, DEFAULT_RETENTION_DAYS);
         if (retentionDays <= 0) {
             log.info("git patch retention: disabled (retention_days={})", retentionDays);
-            return 0;
+            return swept;
         }
         LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
         int cleared = 0;
@@ -91,6 +105,32 @@ public class GitCommitPatchRetentionCleaner {
             log.info("git patch retention: cleared {} file patches older than {} ({} days)",
                     cleared, cutoff, retentionDays);
         }
-        return cleared;
+        return cleared + swept;
+    }
+
+    /**
+     * 删除父 commit 已不存在的文件行。
+     *
+     * <p>这批数据是 {@code GitCommitFileRepository#deleteByCommitId} 缺 {@code flushAutomatically}
+     * 时攒下的：父行 INSERT 被 {@code em.clear()} 丢弃、子行照落，于是 {@code commit_id} 指向
+     * 一个永远不会存在的 id。它们不属于任何 commit，既不参与任何统计，也永远不会被
+     * {@link #cleanup()} 的保留期逻辑选中（那条 SQL 要 {@code JOIN git_commit}）。
+     */
+    private int sweepOrphans() {
+        int deleted = 0;
+        long afterId = 0L;
+        for (int i = 0; i < MAX_ORPHAN_BATCHES; i++) {
+            List<Long> ids = gitCommitFileRepository.findOrphanFileIds(afterId, ORPHAN_BATCH);
+            if (ids.isEmpty()) {
+                break;
+            }
+            afterId = ids.get(ids.size() - 1);
+            deleted += gitCommitFileRepository.deleteByIdIn(ids);
+        }
+        if (deleted > 0) {
+            log.info("git orphan file rows: deleted {} rows whose parent commit no longer exists"
+                    + " (cap {} per run)", deleted, ORPHAN_BATCH * MAX_ORPHAN_BATCHES);
+        }
+        return deleted;
     }
 }

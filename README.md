@@ -8,7 +8,7 @@
 
 读取每位开发者机器上的本地 AI 工具会话，量化「AI 用得有多深、有多好、产出了什么」。
 
-![version](https://img.shields.io/badge/version-1.3.1-blue)
+![version](https://img.shields.io/badge/version-1.3.2-blue)
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
@@ -191,7 +191,7 @@ cd server/src/main/frontend && pnpm install && pnpm dev
 
 # 客户端
 cd agent && go test ./...
-VERSION=1.3.1 bash build-dist.sh   # 交叉编译四平台 → dist/install/
+VERSION=1.3.2 bash build-dist.sh   # 交叉编译四平台 → dist/install/
 ```
 
 > [!WARNING]
@@ -236,7 +236,7 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 │       └── monitors/     每个 AI 工具一个子包（cursor/claude/codex/.../zcode/gitlog）
 │
 ├── server/               Spring Boot 单体（前后端不分离，一个 jar）
-│   ├── build.gradle      artifact = aiwatch-server，version 1.3.1
+│   ├── build.gradle      artifact = aiwatch-server，version 1.3.2
 │   └── src/main/
 │       ├── java/com/am/server/   web · agent · aggregator · insight · system · domain
 │       ├── frontend/             React + Vite + TS + AntD（npm name = aiwatch-web）
@@ -268,6 +268,8 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 
 ## 版本
 
-当前发布版本 **1.3.1**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+当前发布版本 **1.3.2**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+
+**v1.3.2**：修复 `git_commit` 自 2026-07-01 起整表不再进新行的丢数事故——`GitCommitFileRepository.deleteByCommitId` 声明了 `@Modifying(clearAutomatically = true)` 却没开 `flushAutomatically`，`ingestOne` 里刚 `save()` 出去、还挂在持久化上下文里的父行 INSERT 被随后的 `em.clear()` 一并丢弃：无异常、无回滚，日志照报 `inserted=N`，id 序列照取号（跑到 44 万），而子行 `git_commit_file` 照常落库，攒出 200 万孤儿行 / 8.8G，并让归因、渗透率、`/attribution` 全线空转。保留期清理要 `JOIN git_commit`，结构上永远选不中这批孤儿，故补一趟孤儿清扫（每拍上限 30 万行，摊平 ROW binlog 写放大）。另修两处：后台 LLM 审计的 FAILED 加 30 分钟冷却（此前 FAILED 与 NONE 同权、30s 一拍原样重打，网关 429 后一小时打出 3564 条告警），gitlog 游标键由 `repo_url` 改为 `repo_url + 工作副本路径`（同一远端的两个 clone 此前共用一格游标互相踢，每轮都整窗重发）。**agent 有代码变更，需发版下发。**
 
 **v1.3.1**：git 提交采集的可观测性与丢数修复——agent 每轮扫描固定打一行 `gitlog scan: repos=… new_commits=… filtered_by_email=… repos_without_identity=…`（此前"一个仓库都没发现"与"提交被作者邮箱过滤光"这两种最常见的空数据成因不打任何日志）；服务端 `/report-commits` 补成功路径汇总日志，并把逐条落库失败数经 `IngestSummary.failed` 回传，agent 据此**保留 gitlog cursor 重报**——此前失败条目照样返 200，cursor 一推进这些 commit 就永久丢失。**agent 有代码变更，需发版下发**（自动更新按 manifest 版本号字符串比对，同号重打包不会触发升级）。

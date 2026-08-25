@@ -9,16 +9,16 @@
 # 离线/内网环境请改用"先在有外网机器出 jar、镜像只 COPY jar"的精简方案，
 # 详见 docs/guides/docker-deploy-centos.md 的「方案 B」。
 #
-# 版本：compose 从 .env 的 AIWATCH_VERSION 注入 build-arg VERSION（默认 1.3.1）。
+# 版本：compose 从 .env 的 AIWATCH_VERSION 注入 build-arg VERSION（默认 1.3.2）。
 
 # 镜像 tag / agent 分发版本 / jar 版本的单一注入点
-ARG VERSION=1.3.1
+ARG VERSION=1.3.2
 
 ##############################################
 # Stage 1: 编译后端 fat jar（含 React 前端）
 ##############################################
 FROM docker.m.daocloud.io/library/eclipse-temurin:17-jdk-jammy AS server-build
-ARG VERSION=1.3.1
+ARG VERSION=1.3.2
 WORKDIR /build
 COPY server/ ./server/
 WORKDIR /build/server
@@ -62,7 +62,7 @@ RUN chmod +x gradlew && ./gradlew --no-daemon clean bootJar -PaiwatchVersion=${V
 # Stage 2: 编译 agent 四平台分发包（供"安装客户端"下载，可选）
 ##############################################
 FROM docker.m.daocloud.io/library/golang:1.25-bookworm AS agent-build
-ARG VERSION=1.3.1
+ARG VERSION=1.3.2
 WORKDIR /build/agent
 COPY agent/ ./
 ENV CGO_ENABLED=0

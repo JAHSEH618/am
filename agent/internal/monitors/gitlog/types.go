@@ -62,7 +62,7 @@ type Commit struct {
 // ScanResult 是单次 Scan 的产物。
 type ScanResult struct {
 	Commits []Commit
-	// 每个 repo 的最新 commit_hash，给上层写回 cursor。key = repo_url
+	// 每个工作副本的最新 commit_hash，给上层写回 cursor。key = cursorKey(repo_url, 仓库目录)
 	HeadByRepo map[string]string
 	// ReportedIdentityEmails 已规范化的邮箱列表（config.git_author_emails ∪ 各仓库 git config user.email），供服务端与 agent_device.git_user_email 对齐兜底。
 	ReportedIdentityEmails []string
