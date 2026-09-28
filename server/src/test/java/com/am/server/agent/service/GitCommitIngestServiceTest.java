@@ -4,6 +4,8 @@ import com.am.server.agent.api.dto.GitCommitReportRequest;
 import com.am.server.agent.security.SignatureContext;
 import com.am.server.aggregator.GitCommitAttributionEngine;
 import com.am.server.domain.agent.AgentDeviceRepository;
+import com.am.server.domain.git.GitCommit;
+import com.am.server.domain.git.GitCommitFile;
 import com.am.server.domain.git.GitCommitFileRepository;
 import com.am.server.domain.git.GitCommitRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -117,6 +120,66 @@ class GitCommitIngestServiceTest {
         assertEquals(1, summary.failed());
         assertEquals(0, summary.inserted());
         verify(engine, never()).enqueue(any());
+    }
+
+    @Test
+    void handle_newCommitInsertsFilesWithoutDelete() {
+        // 新 commit 不可能已有 file 行；空删会在 idx_commit 上加间隙锁，两条并发新 commit 上报互相死锁。
+        GitCommitRepository commitRepo = mock(GitCommitRepository.class);
+        GitCommitFileRepository fileRepo = mock(GitCommitFileRepository.class);
+        AgentDeviceRepository deviceRepo = mock(AgentDeviceRepository.class);
+        when(deviceRepo.findByAgentId(anyString())).thenReturn(Optional.empty());
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), anyString())).thenReturn(Optional.empty());
+        when(commitRepo.save(any(GitCommit.class))).thenAnswer(inv -> {
+            GitCommit c = inv.getArgument(0);
+            c.setId(99L);
+            return c;
+        });
+        GitCommitIngestService svc = selfProxied(commitRepo, fileRepo, deviceRepo);
+
+        GitCommitReportRequest.Item item = commitItem("new1");
+        item.setFiles(List.of(filePatch("a.go"), fileNoPatch("b.go")));
+        GitCommitIngestService.IngestSummary summary =
+                svc.handle(requestWith(item), new SignatureContext("agent-1", "u1", "host-1"));
+
+        assertEquals(1, summary.inserted());
+        verify(fileRepo, never()).deleteByCommitId(any());
+        verify(fileRepo).saveAll(argThat((List<GitCommitFile> rows) ->
+                rows.size() == 2 && rows.stream().allMatch(r -> r.getCommitId() == 99L)));
+    }
+
+    @Test
+    void handle_richerReReportStillReplacesFiles() {
+        // 已存 commit 的明细被截断过（1 行），这次带来 2 行：仍走 delete + insert 重写
+        GitCommitRepository commitRepo = mock(GitCommitRepository.class);
+        GitCommitFileRepository fileRepo = mock(GitCommitFileRepository.class);
+        AgentDeviceRepository deviceRepo = mock(AgentDeviceRepository.class);
+        when(deviceRepo.findByAgentId(anyString())).thenReturn(Optional.empty());
+        GitCommit existing = new GitCommit();
+        existing.setId(42L);
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), anyString())).thenReturn(Optional.of(existing));
+        when(fileRepo.countByCommitId(42L)).thenReturn(1L);
+        when(fileRepo.countByCommitIdAndHasPatch(42L, 1)).thenReturn(0L);
+        GitCommitIngestService svc = selfProxied(commitRepo, fileRepo, deviceRepo);
+
+        GitCommitReportRequest.Item item = commitItem("old1");
+        item.setFiles(List.of(fileNoPatch("a.go"), fileNoPatch("b.go")));
+        GitCommitIngestService.IngestSummary summary =
+                svc.handle(requestWith(item), new SignatureContext("agent-1", "u1", "host-1"));
+
+        assertEquals(1, summary.detailsUpdated());
+        verify(fileRepo).deleteByCommitId(42L);
+        verify(fileRepo).saveAll(any());
+    }
+
+    /** Spring 里 ingestOne 走自代理；这里用一个真实实例充当 self。 */
+    private GitCommitIngestService selfProxied(GitCommitRepository commitRepo,
+                                               GitCommitFileRepository fileRepo,
+                                               AgentDeviceRepository deviceRepo) {
+        GitCommitAttributionEngine engine = mock(GitCommitAttributionEngine.class);
+        GitCommitIngestService inner =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, null);
+        return new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, inner);
     }
 
     @Test
