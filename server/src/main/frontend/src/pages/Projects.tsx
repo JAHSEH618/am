@@ -2,8 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Col, DatePicker, Modal, Row, Space, Spin, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { InfoCircleOutlined, ProjectOutlined } from '@ant-design/icons';
-import dayjs, { type Dayjs } from 'dayjs';
-import isoWeek from 'dayjs/plugin/isoWeek';
+import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
+import type { Dayjs } from 'dayjs';
 import ReactECharts from 'echarts-for-react';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjectDetail, fetchProjects, fetchProjectGitCommits } from '../api/client';
@@ -27,7 +27,6 @@ import { accent, indigo } from '../styles/tokens';
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
 
-dayjs.extend(isoWeek);
 
 /** 项目详情三栏矩阵：等高卡片 + 表体纵向滚动 */
 const MATRIX_PANEL_BODY_HEIGHT = 320;
@@ -52,9 +51,7 @@ const matrixPanelTitleStyle: React.CSSProperties = {
 };
 
 function defaultRange(): [Dayjs, Dayjs] {
-  const monday = dayjs().isoWeekday(1).startOf('day');
-  const sunday = monday.add(6, 'day');
-  return [monday, sunday];
+  return weekToDate();
 }
 
 export default function Projects() {
@@ -147,7 +144,8 @@ export default function Projects() {
       title: '项目',
       dataIndex: 'project_name',
       key: 'project_name',
-      width: 240,
+      width: 200,
+      fixed: 'left',
       ellipsis: { showTitle: false },
       render: (v: string) => (
         <Tooltip title={v}>
@@ -159,7 +157,7 @@ export default function Projects() {
       title: '会话数',
       dataIndex: 'session_count',
       key: 'session_count',
-      width: 110,
+      width: 96,
       sorter: (a, b) => a.session_count - b.session_count,
       render: (v: number, row) => (
         <Button
@@ -182,7 +180,7 @@ export default function Projects() {
         </Space>
       ),
       key: 'messages_pair',
-      width: 130,
+      width: 120,
       sorter: (a, b) =>
         (a.user_message_count + a.assistant_message_count) -
         (b.user_message_count + b.assistant_message_count),
@@ -202,7 +200,7 @@ export default function Projects() {
         </Space>
       ),
       key: 'tokens_pair',
-      width: 170,
+      width: 160,
       sorter: (a, b) =>
         a.input_tokens + a.output_tokens - (b.input_tokens + b.output_tokens),
       render: (_: unknown, row: ProjectSummary) => (
@@ -215,13 +213,13 @@ export default function Projects() {
       title: '参与员工',
       dataIndex: 'user_count',
       key: 'user_count',
-      width: 110,
+      width: 96,
     },
     {
       title: 'Git 提交',
       dataIndex: 'git_commit_count',
       key: 'git_commit_count',
-      width: 120,
+      width: 96,
       sorter: (a, b) => a.git_commit_count - b.git_commit_count,
       render: (v: number, row) => {
         if (v > 0 && row.repo_url) {
@@ -246,7 +244,7 @@ export default function Projects() {
       title: 'Top 模型',
       dataIndex: 'top_model',
       key: 'top_model',
-      width: 170,
+      width: 150,
       ellipsis: { showTitle: false },
       render: (v: string | null) => v
         ? <Tooltip title={v}><Tag>{modelLabel(v)}</Tag></Tooltip>
@@ -256,7 +254,7 @@ export default function Projects() {
       title: '最后活跃',
       dataIndex: 'last_activity',
       key: 'last_activity',
-      width: 170,
+      width: 150,
       render: (v: string | null) => formatTime(v),
     },
   ], [goSessions, openGitCommitsModal]);
@@ -278,7 +276,8 @@ export default function Projects() {
             value={range}
             onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
             allowClear={false}
-            disabledDate={(d) => d.isAfter(dayjs(), 'day')}
+            disabledDate={disableFutureDate}
+            presets={rangePresets()}
           />
         </div>
       </Card>
@@ -290,7 +289,7 @@ export default function Projects() {
           loading={loadingList}
           columns={columns}
           dataSource={list}
-          scroll={{ x: 1220 }}
+          scroll={{ x: 1068 }}
           className="am-sticky-table"
           locale={{ emptyText: '当前时间窗内暂无项目活动' }}
           pagination={{ pageSize: 20, showSizeChanger: false }}

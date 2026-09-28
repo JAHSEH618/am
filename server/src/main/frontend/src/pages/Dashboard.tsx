@@ -605,6 +605,7 @@ export default function Dashboard() {
                 size="small"
                 pagination={false}
                 locale={{ emptyText: '今日暂无项目活动' }}
+                scroll={{ x: 'max-content' }}
                 columns={topProjectColumns}
               />
             </Card>
@@ -617,6 +618,7 @@ export default function Dashboard() {
                 size="small"
                 pagination={false}
                 locale={{ emptyText: '今日暂无员工活动' }}
+                scroll={{ x: 'max-content' }}
                 columns={topEmployeeColumns}
                 onRow={(row) => clickableRowProps(() => navigate(`/sessions?user_code=${row.key}`))}
               />
@@ -698,7 +700,7 @@ function InsightAuditProgressCard(props: {
       <Progress
         percent={total > 0 ? pct : 0}
         status={total > 0 ? 'active' : 'normal'}
-        strokeWidth={10}
+        size={[-1, 10]}
         strokeLinecap="round"
         showInfo={total > 0}
         // 仅在进度条尾部显示百分比；明细 stable/total 由下方说明段承载。

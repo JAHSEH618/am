@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Dropdown, Layout, Menu, Space, Tooltip } from 'antd';
+import { Button, Dropdown, Grid, Layout, Menu, Space, Tooltip } from 'antd';
 import {
   DashboardOutlined,
   ThunderboltOutlined,
@@ -66,6 +66,18 @@ export default function MainLayout() {
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(COLLAPSE_KEY) === '1',
   );
+  // 窄屏适配：< lg(992) 侧栏默认只留图标；< md(768) 完全收起，点顶栏按钮以浮层抽屉打开。
+  // 窄屏下的展开只是临时态（navOpen），不写回桌面端记住的折叠偏好。
+  // useBreakpoint 首帧返回 {}，用 === false 判定，测量前按桌面处理。
+  const screens = Grid.useBreakpoint();
+  const isNarrow = screens.lg === false;
+  const isMobile = screens.md === false;
+  const [navOpen, setNavOpen] = useState(false);
+  const siderCollapsed = isNarrow ? !navOpen : collapsed;
+  const mobileOverlay = isMobile && navOpen;
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname, isNarrow]);
   // 跳到主内容 skip-link 的聚焦态：平时视觉隐藏，键盘聚焦时浮现
   const [skipFocused, setSkipFocused] = useState(false);
   // Agent 字典只为右上角 badge 用：拉一次即可，下次进入直接复用浏览器内存。
@@ -77,6 +89,10 @@ export default function MainLayout() {
   }, []);
 
   const toggleCollapsed = () => {
+    if (isNarrow) {
+      setNavOpen((o) => !o);
+      return;
+    }
     setCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0');
@@ -138,18 +154,21 @@ export default function MainLayout() {
       >
         跳到主内容
       </a>
+      {mobileOverlay && (
+        <div className="am-app-sider-backdrop" onClick={() => setNavOpen(false)} aria-hidden />
+      )}
       <Sider
-        className="am-app-sider"
+        className={mobileOverlay ? 'am-app-sider am-app-sider--overlay' : 'am-app-sider'}
         theme="light"
         collapsible
-        collapsed={collapsed}
+        collapsed={siderCollapsed}
         onCollapse={(c) => {
           setCollapsed(c);
           localStorage.setItem(COLLAPSE_KEY, c ? '1' : '0');
         }}
         trigger={null}
         width={216}
-        collapsedWidth={64}
+        collapsedWidth={isMobile ? 0 : 64}
       >
         {/* Logo 区：折叠态显示观测眼标，展开态 AW 字标 + 产品名 */}
         <div
@@ -157,18 +176,18 @@ export default function MainLayout() {
             height: 56,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            padding: collapsed ? 0 : '0 20px',
+            justifyContent: siderCollapsed ? 'center' : 'flex-start',
+            padding: siderCollapsed ? 0 : '0 20px',
             borderBottom: '1px solid var(--am-border-subtle)',
             fontWeight: 600,
-            fontSize: collapsed ? 14 : 15,
-            letterSpacing: collapsed ? 0 : 0.2,
+            fontSize: siderCollapsed ? 14 : 15,
+            letterSpacing: siderCollapsed ? 0 : 0.2,
             color: 'var(--am-ink)',
             whiteSpace: 'nowrap',
             overflow: 'hidden',
           }}
         >
-          {collapsed ? (
+          {siderCollapsed ? (
             <Tooltip title="AIWatch — AI 使用观测与洞察" placement="right">
               <BrandIcon variant="eye" size={28} />
             </Tooltip>
@@ -182,13 +201,12 @@ export default function MainLayout() {
 
         <Menu
           mode="inline"
-          inlineCollapsed={collapsed}
           selectedKeys={selected}
           items={NAV_GROUPS.map((group) => ({
             key: group.title,
             type: 'group' as const,
             // 折叠态隐藏分组标题文字，只保留簇间间隔，避免 64px 宽里挤中文标题
-            label: collapsed ? '' : group.title,
+            label: siderCollapsed ? '' : group.title,
             children: group.keys.map((k) => {
               const item = NAV_ITEMS.find((i) => i.key === k)!;
               return { key: item.key, icon: item.icon, label: item.label };
@@ -222,7 +240,8 @@ export default function MainLayout() {
             }}
             role="button"
             tabIndex={0}
-            aria-label={collapsed ? '展开菜单' : '收起菜单'}
+            aria-label={siderCollapsed ? '展开菜单' : '收起菜单'}
+            aria-expanded={!siderCollapsed}
             style={{
               cursor: 'pointer',
               fontSize: 18,
@@ -234,7 +253,7 @@ export default function MainLayout() {
               justifyContent: 'center',
             }}
           >
-            {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            {siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </span>
 
           {/* 动态页名：跟随路由变化，不再写死 "Cursor · Claude Code · Codex CLI"。
@@ -283,7 +302,8 @@ export default function MainLayout() {
               - 「安装客户端」入口已下沉到登录页（左侧 Tab）：员工拿到命令的链路是
                 "找运维 → 拿登录页 URL → 自助粘贴命令"，管理员后台不再放显眼的安装按钮。 */}
           <Space size={8} style={{ flexShrink: 0 }}>
-            {targetCount > 0 && (
+            {/* 手机宽度把顶栏让给页面标题：Agent 数量 chip 属信息展示，可省 */}
+            {targetCount > 0 && !isMobile && (
               <Tooltip title="支持监控的 Agent 类型数（来源：monitor_target 字典）">
                 <span
                   style={{
@@ -341,7 +361,7 @@ export default function MainLayout() {
         <Content
           id="am-main-content"
           tabIndex={-1}
-          style={{ padding: 24, minHeight: 0, minWidth: 0, overflowX: 'clip', outline: 'none' }}
+          style={{ padding: isMobile ? 12 : 24, minHeight: 0, minWidth: 0, overflowX: 'clip', outline: 'none' }}
         >
           {/* key=路由 让错误态在换页时自动复位；主要兜「发版后旧 lazy chunk 失效」白屏 */}
           <RouteErrorBoundary key={location.pathname}>

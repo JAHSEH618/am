@@ -61,6 +61,14 @@ the proxy at whichever port your backend is actually on, or run the backend on 8
   `var(--am-*)`; ECharts uses the JS tokens; status dots use `components/StatusDot`. Never scatter raw hex —
   add/borrow a token. 8pt spacing, `tnum` tabular numbers, sticky table headers as before.
 
+- **时间窗**：默认窗口 / 快捷预设 / 禁选未来日期统一走 `src/utils/timeWindow.ts`（`weekToDate` / `lastNDays` /
+  `rangePresets` / `disableFutureDate`），**窗口终点不越过今天**（未来日期只会在热力图里画空格子）。分析报告页生成
+  整自然周报告，是唯一例外。
+- **宽表**：每列显式 `width`，`scroll.x` = 列宽合计，数字列 `whiteSpace: nowrap`，首列 `fixed: 'left'`。
+  漏一列宽度，antd 会把它挤成 ~30px 逐字折行（员工数据页曾 7 列未定宽）。token 类用"总量 + 入 / 出小字"一列承载。
+- **窄屏**：`MainLayout` 用 `Grid.useBreakpoint()`：< lg(992) 侧栏只留图标，< md(768) 收成 0 宽、顶栏按钮以浮层抽屉打开
+  （路由切换自动关闭）；窄屏展开是临时态，不写回桌面端折叠偏好。
+
 ## Gotchas
 
 - **BFCache**: `src/main.tsx` listens for `pageshow`/`persisted` and reloads, because back/forward cache
