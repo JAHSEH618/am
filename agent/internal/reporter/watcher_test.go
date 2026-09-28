@@ -5,8 +5,10 @@
 package reporter
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -87,6 +89,84 @@ func TestWatcherScanAllBaselineThenAdvance(t *testing.T) {
 	if w.scanAll() {
 		t.Error("same mtime after an advance should not re-advance")
 	}
+}
+
+// 暂停期间不扫描（基线不动）、不触发；恢复后的首轮只重建基线，之后的新变更照常触发。
+func TestWatcherPollPausedSkipsScanThenRebaselines(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "s.jsonl")
+	if err := os.WriteFile(f, []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Unix(1_000_000, 0)
+	for _, p := range []string{root, f} {
+		if err := os.Chtimes(p, t0, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var paused atomic.Bool
+	ch := make(chan struct{}, 1)
+	w := &activityWatcher{hints: []string{root}, triggerCh: ch, last: make(map[string]int64),
+		interval: watchPollInterval, paused: paused.Load}
+	w.scanAll() // run() 的首轮基线
+
+	mtime := t0
+	for i, st := range []struct {
+		paused     bool
+		touch      bool
+		wantSignal bool
+		wantLast   int64 // 本轮后基线；0 = 不检查
+	}{
+		{paused: false, touch: false, wantSignal: false},
+		{paused: true, touch: true, wantSignal: false, wantLast: t0.UnixNano()}, // 暂停：不扫、基线不动
+		{paused: true, touch: true, wantSignal: false, wantLast: t0.UnixNano()},
+		{paused: false, touch: false, wantSignal: false}, // 恢复首轮：只重建基线
+		{paused: false, touch: false, wantSignal: false},
+		{paused: false, touch: true, wantSignal: true}, // 恢复后的新变更照常触发
+		{paused: false, touch: false, wantSignal: false},
+	} {
+		paused.Store(st.paused)
+		if st.touch {
+			mtime = mtime.Add(time.Hour)
+			if err := os.Chtimes(f, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+		}
+		w.poll()
+		var got bool
+		select {
+		case <-ch:
+			got = true
+		default:
+		}
+		if got != st.wantSignal {
+			t.Fatalf("step %d: signal=%v want %v", i, got, st.wantSignal)
+		}
+		if st.wantLast != 0 && w.last[root] != st.wantLast {
+			t.Fatalf("step %d: baseline=%d want %d (paused poll must not scan)", i, w.last[root], st.wantLast)
+		}
+	}
+}
+
+// run 在 watcher goroutine 里读 paused（reporter 侧并发翻转 atomic）；配合 go test -race 守住无数据竞争。
+func TestWatcherRunConcurrentPauseToggle(t *testing.T) {
+	root := t.TempDir()
+	var paused atomic.Bool
+	ch := make(chan struct{}, 1)
+	w := &activityWatcher{hints: []string{root}, triggerCh: ch, last: make(map[string]int64),
+		interval: time.Millisecond, paused: paused.Load}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		w.run(ctx)
+		close(done)
+	}()
+	for i := 0; i < 50; i++ {
+		paused.Store(i%2 == 0)
+		time.Sleep(200 * time.Microsecond)
+	}
+	cancel()
+	<-done
 }
 
 func TestWatcherSignalNonBlocking(t *testing.T) {

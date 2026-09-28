@@ -91,7 +91,7 @@ func (g *GitLogReporter) scanAndReport(ctx context.Context) error {
 		return nil
 	}
 
-	body, err := json.Marshal(commitReportRequest{
+	rawBody, err := json.Marshal(commitReportRequest{
 		AgentID:                g.cfg.AgentID,
 		AgentVersion:           g.agentVersion,
 		CapturedAt:             monitor.Now(),
@@ -101,8 +101,13 @@ func (g *GitLogReporter) scanAndReport(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("marshal commits: %w", err)
 	}
+	// 与 /report 同一压缩路径：≥1KB gzip，HMAC 对压缩后的线上字节计算。
+	body, enc, cerr := maybeCompress(rawBody)
+	if cerr != nil {
+		body, enc = rawBody, ""
+	}
 
-	summary, err := g.client.ReportCommits(ctx, g.cfg.AgentID, g.cfg.AgentSecret, body)
+	summary, err := g.client.ReportCommits(ctx, g.cfg.AgentID, g.cfg.AgentSecret, body, enc)
 	if err != nil {
 		return err
 	}

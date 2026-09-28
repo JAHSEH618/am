@@ -61,6 +61,12 @@ const (
 	//   - 未来若改 SyntheticMessageIDByTime 的合成规则导致老 LastMsgID 找不到匹配，要升 3
 	//   - v2 → v3 (2026-05)：conversation_order / 时间轴修正后强制全量回填消息元数据
 	CursorSchemaVersion = 3
+
+	// cursorRetention：UpdatedAt 早于 now-cursorRetention 的游标在 Save 时剔除，否则 cursors.json 随
+	// 历史会话数只增不减、且每个活跃 tick 整文件重写。必须大于 monitor.BootstrapLookback（30d）：
+	// 任何还可能出现在扫描窗口里的会话都保有游标。被剔除的会话若被续聊，按"无游标"整段重发一次，
+	// 由服务端 (ai_session_id, external_message_id) 去重兜底——与首次看到该会话相同。
+	cursorRetention = 45 * 24 * time.Hour
 )
 
 // MsgCursor 单 session 的"已上报到此"水位。
@@ -73,7 +79,7 @@ type MsgCursor struct {
 	LastDeltaRef string `json:"last_delta_ref,omitempty"`
 	// LastDeltaTime 对应 activity_delta.event_time，ID 找不到时的兜底切片。
 	LastDeltaTime time.Time `json:"last_delta_time,omitempty"`
-	// UpdatedAt 这个游标最后一次推进的时刻，仅用于排查。
+	// UpdatedAt 这个游标最后一次推进的时刻：排查用，也是 Save 按 cursorRetention 剔除过期游标的依据。
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
@@ -169,11 +175,18 @@ func (s *MsgCursorStore) Set(provider, sessionID string, c MsgCursor) {
 }
 
 // Save 把内存游标原子写盘。无变更直接返回。落盘格式永远是带 schema_version 的 envelope。
+// 写盘前剔除超过 cursorRetention 未推进的游标（UpdatedAt 为零值的无法判龄，保留）。
 func (s *MsgCursorStore) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.dirty {
 		return nil
+	}
+	cutoff := time.Now().Add(-cursorRetention)
+	for k, c := range s.cursors {
+		if !c.UpdatedAt.IsZero() && c.UpdatedAt.Before(cutoff) {
+			delete(s.cursors, k)
+		}
 	}
 	env := cursorsFile{
 		SchemaVersion: CursorSchemaVersion,

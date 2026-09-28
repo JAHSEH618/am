@@ -13,6 +13,9 @@ import (
 	"github.com/am/aiwatch-agent/internal/logger"
 )
 
+// enrich 即 enrichCommit；单测替换它以观测哪些提交被富化。
+var enrich = enrichCommit
+
 // Provider 是 gitlog 模块的对外门面：管理 cursor、扫描 roots 下的 git repo、
 // 应用 blacklist、产出 ScanResult 给 reporter。
 type Provider struct {
@@ -92,6 +95,10 @@ func (p *Provider) Scan() ScanResult {
 			continue
 		}
 
+		// 先过滤再富化：同事的提交反正要丢，不必为它们各 fork 4 次 git（含整份 diff 的 git show）。
+		for i := range filtered {
+			enrich(dir, &filtered[i], p.limits)
+		}
 		out.Commits = append(out.Commits, filtered...)
 		if head != "" {
 			out.HeadByRepo[key] = head

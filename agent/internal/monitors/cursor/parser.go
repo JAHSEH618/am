@@ -137,17 +137,20 @@ func parseISO(s string) time.Time {
 	return t.In(time.Local)
 }
 
+// fetchBubblesSQL 用 key 半开区间取单会话 bubble，走 key 的 autoindex（见 sessionBubbleKeyRange）。
+const fetchBubblesSQL = "SELECT key, value FROM cursorDiskKV WHERE key >= ? AND key < ?"
+
+// fetchBubbles 刻意不接 tick 预算 ctx：全量发现（冷启动 / 每 6h）用自有 15min ctx，跑完时 tick 预算
+// 往往已耗尽；若这里受它取消，本轮 miss 的会话全部建不出来，而下个 tick 命中 data_version 快路径时只回放
+// 缓存命中项——这些会话会一直缺席到 Cursor 下一次写库。
 func fetchBubbles(db *sql.DB, sid string) map[string]string {
-	rows, err := db.Query(
-		"SELECT key, value FROM cursorDiskKV WHERE key LIKE ?",
-		"bubbleId:"+sid+":%",
-	)
+	prefix, hi := sessionBubbleKeyRange(sid)
+	rows, err := db.Query(fetchBubblesSQL, prefix, hi)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
 
-	prefix := "bubbleId:" + sid + ":"
 	result := make(map[string]string)
 	for rows.Next() {
 		var key, value string
