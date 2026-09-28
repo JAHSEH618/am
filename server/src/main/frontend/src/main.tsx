@@ -6,6 +6,13 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './styles/global.css';
 import { indigo, semantic, ink, surface, border, radius, shadow, fontFamily, fontSize } from './styles/tokens';
+import axios from 'axios';
+
+// 切时间窗时被取消的旧请求（见 api/client.ts）会以 CanceledError 拒绝；调用方多数只挂 then/finally，
+// 这里吞掉这类预期内的拒绝，免得每次切换都在控制台刷 "Uncaught (in promise)"。
+window.addEventListener('unhandledrejection', (e) => {
+  if (axios.isCancel(e.reason)) e.preventDefault();
+});
 
 // 全局 design tokens（v3 · Apple-native / indigo）。统一从 styles/tokens.ts 取值，
 // 与 global.css 的 :root 变量同源。

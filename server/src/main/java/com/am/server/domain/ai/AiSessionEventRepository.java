@@ -388,6 +388,32 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
             LocalDateTime from, LocalDateTime to,
             @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
 
+    /**
+     * 项目透视一次扫描（取代 byProject / projectModelMatrix / projectMeta 三遍扫同一批事件）：
+     * [projectName, model, userCode, SUM(tokensDelta), SUM(messagesDelta), COUNT(DISTINCT aiSessionId),
+     * MAX(eventTime), MAX(repoUrl)]，按 (project, model, user) 分组。
+     * <p>会话的 model / user 是会话级属性，每个会话只落在一组里，故 sessionCount 可按项目直接求和；
+     * userCount 由调用方对 userCode 去重。见 {@code ProjectsWindowSnapshotCache#foldProjectRows}。
+     */
+    @Query("""
+        SELECT s.projectName, s.model, e.userCode,
+               COALESCE(SUM(e.tokensDelta), 0),
+               COALESCE(SUM(e.messagesDelta), 0),
+               COUNT(DISTINCT e.aiSessionId),
+               MAX(e.eventTime),
+               MAX(s.repoUrl)
+        FROM AiSessionEvent e JOIN AiSession s ON s.id = e.aiSessionId
+        WHERE s.invalidReason IS NULL
+          AND s.projectName IS NOT NULL
+          AND e.eventType IN ('SESSION_OPEN','TOKEN_DELTA','MESSAGE_DELTA')
+          AND e.eventTime >= :from AND e.eventTime < :to
+          AND e.targetType IN :activeTypes
+        GROUP BY s.projectName, s.model, e.userCode
+        """)
+    List<Object[]> aggregateProjectModelUserInWindowAndTargetTypeIn(
+            LocalDateTime from, LocalDateTime to,
+            @org.springframework.data.repository.query.Param("activeTypes") Collection<String> activeTypes);
+
     /** 按 model 分组：[model, inputTokens, outputTokens, messageCount, sessionCount, userCount] */
     @Query("""
         SELECT s.model,

@@ -96,6 +96,12 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
   increments + nightly 00:30 (last 2 days) + boot backfill (`GitCommitAttributionBackfillPatch`,
   marker `attribution.backfill_v1`, rows flagged `backfilled=1`). `AiPenetrationService` reads it and
   falls back to the legacy query-time JOIN until the backfill completes.
+- **View-time freshness is async**: pages call `DailySummaryAggregator#ensureFreshAsync` /
+  `CapabilityDailyAggregator#ensureFreshAsync` (background, per-date single-flight) and read the current
+  snapshot; the sync `ensureFresh`, hourly/daily jobs and the ingest debounce share one per-date lock. The ingest
+  debounce has a 60 s max wait so "today" keeps converging under constant ingest.
+- `CoveringIndexBuilder` → daily 03:30, builds `idx_window_cover` on `ai_session_event` / `ai_session_message`
+  online (`ALGORITHM=INPLACE, LOCK=NONE`, 10 s metadata-lock wait); no-op once they exist.
 - `AiSessionStaleCloser` → every minute, flips sessions idle when `last_activity` is older than ~5 min
   (clients can crash without closing), then broadcasts via SSE.
 - `GitCommitPatchRetentionCleaner` → daily 03:45, clears `git_commit_file.patch_gzip` for commits older

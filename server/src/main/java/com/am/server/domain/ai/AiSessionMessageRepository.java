@@ -332,6 +332,9 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
      * {@code com.am.server.aggregator.CapabilityDailyAggregator} 完成；调用方仅对
      * 「当日无 MCP TOOL_CALL 事件」的会话启用本路径，覆盖 hermes 这类基本不写 event、
      * message 密集的 provider，且不与 event 路径重复计数。
+     * <p>{@code contentKind = 'multipart'} 先挡掉纯文本行：含 tool_call part 的消息必为 multipart
+     * （{@code ContentPartFlattener#resolveContentKind}），而 content_kind 在行内、content_parts_json 是
+     * 行外大字段——不先过滤就要把当日每条消息的 JSON 都从溢出页读出来做前导通配 LIKE。
      */
     @Query("""
         SELECT m.userCode, m.aiSessionId, m.contentPartsJson
@@ -339,6 +342,7 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         WHERE s.invalidReason IS NULL
           AND m.messageTime >= :from AND m.messageTime < :to
           AND m.targetType IN :activeTypes
+          AND m.contentKind = 'multipart'
           AND m.contentPartsJson LIKE '%mcp__%'
         """)
     List<Object[]> loadMcpContentPartsInWindowGlobal(
@@ -562,6 +566,28 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
           )
         """)
     List<Object[]> loadUserMessagesForSlashStatsInWindowGlobal(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("activeTypes") Collection<String> activeTypes);
+
+    /**
+     * 单项目窗内斜杠 Top —— 只拉已有 {@code slash_hits_json} 的行，不碰 {@code content_text}。
+     * 历史行全量标注完成（{@code SlashAnnotationFullBackfillPatch}）后取代下面带正文回算的版本。
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT m.slash_hits_json
+        FROM ai_session_message m
+        INNER JOIN ai_session s ON s.id = m.ai_session_id
+        WHERE s.invalid_reason IS NULL
+          AND s.project_name = :projectName
+          AND LOWER(m.role) = 'user'
+          AND m.message_time >= :from AND m.message_time < :to
+          AND m.target_type IN (:activeTypes)
+          AND m.slash_hits_json IS NOT NULL
+          AND m.slash_hits_json != 'null' AND m.slash_hits_json != '[]'
+        """)
+    List<String> loadSlashHitsJsonOnlyForProjectInWindow(
+            @Param("projectName") String projectName,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to,
             @Param("activeTypes") Collection<String> activeTypes);

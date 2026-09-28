@@ -52,6 +52,7 @@ public class SessionAuditService {
     private final DualJudgeService dualJudgeService;
     private final RubricLoader rubricLoader;
     private final ExecutorService reportAuditExecutor;
+    private final InsightSessionAuditStateService auditStateService;
 
     /**
      * 给定一批 session，自动判定需不需要审计并执行。返回最新的 audit 缓存（包括本批不需要重审、
@@ -101,6 +102,7 @@ public class SessionAuditService {
                         disagreeCount.incrementAndGet();
                     }
                     byId.put(s.getId(), row);
+                    markStatusDone(s.getId());
                 } catch (Exception e) {
                     failCount.incrementAndGet();
                     log.warn("audit failed: session={} reason={}", s.getId(), e.getMessage());
@@ -183,6 +185,19 @@ public class SessionAuditService {
         row.setAuditedTime(LocalDateTime.now());
 
         return auditRepository.save(row);
+    }
+
+    /**
+     * 报告路径审完也要把 {@code ai_session.insight_audit_status} 对齐为 DONE（后台扫描器自己会做）。
+     * 此前只靠每次启动的全表 UPDATE…JOIN 回填收敛，那条语句会锁住 ai_session 挡住 ingest 的 INSERT。
+     * 与 ingest 乐观锁冲突时放弃即可：审计行已落库，扫描器 / 下次报告会再对齐。
+     */
+    private void markStatusDone(Long sessionId) {
+        try {
+            auditStateService.markDoneAfterAudit(sessionId);
+        } catch (Exception e) {
+            log.debug("mark insight_audit_status DONE skipped: session={} reason={}", sessionId, e.toString());
+        }
     }
 
     /**

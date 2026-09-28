@@ -72,13 +72,13 @@ public class CapabilityController {
         return R.ok(capabilityStatSupport.userDrilldown(userCode, window[0], window[1]));
     }
 
-    /** 缺省窗口 = 近 30 天；窗口尾包含今日时触发 view-time 收口。 */
+    /** 缺省窗口 = 近 30 天；窗口尾包含今日时提交后台收口（不阻塞本请求，读现有快照）。 */
     private LocalDate[] window(LocalDate from, LocalDate to) {
         LocalDate today = LocalDate.now();
         LocalDate end = to == null ? today : to;
         LocalDate start = from == null ? end.minusDays(29) : from;
         if (!end.isBefore(today)) {
-            capabilityDailyAggregator.ensureFresh(today, ENSURE_FRESH_TTL);
+            capabilityDailyAggregator.ensureFreshAsync(today, ENSURE_FRESH_TTL);
         }
         return new LocalDate[]{start, end};
     }

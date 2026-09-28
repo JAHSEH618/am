@@ -54,14 +54,75 @@ const http = axios.create({
   withCredentials: true,
 });
 
+// ---- 切时间窗时取消上一窗口仍在途的同类请求 ----
+// 浏览器对同源 HTTP/1.1 最多 6 条并发连接：连续切几次时间窗，旧窗口的整窗查询占着连接，
+// 新窗口的请求只能在浏览器里排队，表现为"切换后加载特别慢"（服务端另有 20s SELECT 上限兜底）。
+// 规则：带时间窗参数的 GET 按「路径 + 时间窗以外的参数」分组；同组新请求的时间窗与在途请求不同 → 取消旧的。
+// 时间窗相同的并发请求（多个组件同时拉同一份数据）互不影响；不带时间窗的请求（轮询等）不参与。
+const WINDOW_PARAM_KEYS = new Set(['from', 'to', 'window', 'days']);
+
+interface InflightEntry {
+  controller: AbortController;
+  windowSig: string;
+}
+
+const inflightByGroup = new Map<string, InflightEntry>();
+const groupBySignal = new WeakMap<AbortSignal, string>();
+
+function stableEntries(params: unknown): [string, unknown][] {
+  if (!params || typeof params !== 'object') return [];
+  return Object.entries(params as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+export function windowGroupOf(url: string, params: unknown): { group: string; windowSig: string } {
+  const entries = stableEntries(params);
+  const rest = entries.filter(([k]) => !WINDOW_PARAM_KEYS.has(k));
+  const win = entries.filter(([k]) => WINDOW_PARAM_KEYS.has(k));
+  return {
+    group: `${url}?${JSON.stringify(rest)}`,
+    windowSig: win.length ? JSON.stringify(win) : '',
+  };
+}
+
+http.interceptors.request.use((config) => {
+  if ((config.method ?? 'get').toLowerCase() !== 'get' || config.signal) return config;
+  const { group, windowSig } = windowGroupOf(config.url ?? '', config.params);
+  if (!windowSig) return config;
+  const prev = inflightByGroup.get(group);
+  if (prev && prev.windowSig !== windowSig) prev.controller.abort();
+  const controller = new AbortController();
+  config.signal = controller.signal;
+  inflightByGroup.set(group, { controller, windowSig });
+  groupBySignal.set(controller.signal, group);
+  return config;
+});
+
+function releaseInflight(signal: unknown) {
+  if (!(signal instanceof AbortSignal)) return;
+  const group = groupBySignal.get(signal);
+  if (group && inflightByGroup.get(group)?.controller.signal === signal) {
+    inflightByGroup.delete(group);
+  }
+}
+
 let messageHandle: ReturnType<typeof AntdApp.useApp>['message'] | null = null;
 export function bindMessageHandle(handle: ReturnType<typeof AntdApp.useApp>['message']) {
   messageHandle = handle;
 }
 
 http.interceptors.response.use(
-  (resp: AxiosResponse<R<unknown>>) => resp,
+  (resp: AxiosResponse<R<unknown>>) => {
+    releaseInflight(resp.config?.signal);
+    return resp;
+  },
   (err: AxiosError<R<unknown>>) => {
+    releaseInflight(err.config?.signal);
+    // 被更新的时间窗请求取代而主动取消：不是错误，不弹 toast
+    if (err.code === AxiosError.ERR_CANCELED) {
+      return Promise.reject(err);
+    }
     // 401 → 跳登录页（保留 from，登录后跳回原页）
     // 由全局守卫消费：抛 'AUTH_REQUIRED' 让 RequireAuth 捕获后跳转，
     // 避免每个调用方都自己处理 401

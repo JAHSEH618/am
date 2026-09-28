@@ -20,6 +20,8 @@ public class AiSessionInsightAuditSchemaPatches {
 
     private static final Logger log = LoggerFactory.getLogger(AiSessionInsightAuditSchemaPatches.class);
 
+    static final String MARKER_KEY = "patch.insight_audit_status_v1";
+
     @Bean
     ApplicationRunner ensureAiSessionInsightAuditColumns(DataSource dataSource) {
         return args -> migrate(dataSource);
@@ -52,19 +54,30 @@ public class AiSessionInsightAuditSchemaPatches {
         backfillStatus(dataSource);
     }
 
+    /**
+     * 已有审计行却仍是 NONE 的历史会话对齐为 DONE。报告路径审完现在会自己置 DONE
+     * （{@code SessionAuditService#markStatusDone}），这里只清历史：按会话主键分批、完成后写 marker
+     * （{@value #MARKER_KEY}）。此前每次启动整表 {@code UPDATE ai_session … JOIN … WHERE status='NONE'}：
+     * 沿 idx_insight_audit 的 NONE 区间加 next-key 锁，而新会话恰好都以 NONE 插入，
+     * 语句执行期间 ingest 的 INSERT ai_session 全部排队。
+     */
     private static void backfillStatus(DataSource dataSource) {
         String sql = """
                 UPDATE ai_session s
                 INNER JOIN ai_session_audit a ON a.ai_session_id = s.id
                 SET s.insight_audit_status = 'DONE',
                     s.insight_audit_rubric_version = a.audit_version
-                WHERE s.insight_audit_status = 'NONE'
+                WHERE s.id >= ? AND s.id < ?
+                  AND s.insight_audit_status = 'NONE'
                 """;
-        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            int n = st.executeUpdate(sql);
-            if (n > 0) {
-                log.info("ai_session insight_audit backfill: {} rows -> DONE from existing ai_session_audit", n);
+        try {
+            if (OneShotBackfillSupport.markerExists(dataSource, MARKER_KEY)) {
+                return;
             }
+            long n = OneShotBackfillSupport.updateByIdRange(
+                    dataSource, "ai_session", sql, OneShotBackfillSupport.SESSION_ID_STEP);
+            OneShotBackfillSupport.writeMarker(dataSource, MARKER_KEY, "存量会话 insight_audit_status 对齐完成标记");
+            log.info("ai_session insight_audit backfill: {} rows -> DONE from existing ai_session_audit", n);
         } catch (SQLException e) {
             log.warn("ai_session insight_audit backfill skipped: {}", e.getMessage());
         }

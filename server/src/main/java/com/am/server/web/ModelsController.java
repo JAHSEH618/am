@@ -5,6 +5,7 @@ import com.am.server.domain.ai.AiSessionEventRepository;
 import com.am.server.system.ActiveTargetTypesProvider;
 import com.am.server.web.dto.ModelDistributionDto;
 import com.am.server.web.dto.ModelHeatmapDto;
+import com.am.server.web.support.TtlSingleFlightCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.sql.Timestamp;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -22,6 +24,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 模型分布与 token 燃烧分析（v2.4 重构：窗内统计基于 message_time 切片）
@@ -55,6 +58,20 @@ public class ModelsController {
     private final AiSessionEventRepository eventRepository;
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
 
+    /**
+     * 分布 / 热力图两条都是整窗事件扫描（JOIN ai_session），同一窗口会被多个标签页、切窗重试反复算。
+     * 45s TTL + single-flight，与项目透视快照同口径；key = (t0, t1, activeTypes)。
+     */
+    private static final Duration WINDOW_CACHE_TTL = Duration.ofSeconds(45);
+    private final TtlSingleFlightCache<String, List<Object[]>> distributionCache =
+            new TtlSingleFlightCache<>(WINDOW_CACHE_TTL);
+    private final TtlSingleFlightCache<String, List<Object[]>> heatmapCache =
+            new TtlSingleFlightCache<>(WINDOW_CACHE_TTL);
+
+    private static String windowKey(LocalDateTime t0, LocalDateTime t1, Collection<String> activeTypes) {
+        return t0 + "|" + t1 + "|" + activeTypes.stream().sorted().collect(Collectors.joining(","));
+    }
+
     @GetMapping("/distribution")
     public R<List<ModelDistributionDto>> distribution(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
@@ -66,7 +83,8 @@ public class ModelsController {
             return R.ok(new ArrayList<>());
         }
         // event SQL 输出：[model, inputTokens, outputTokens, messageCount, sessionCount, userCount]
-        List<Object[]> rows = eventRepository.aggregateByModelInWindowAndTargetTypeIn(window[0], window[1], activeTypes);
+        List<Object[]> rows = distributionCache.get(windowKey(window[0], window[1], activeTypes),
+                () -> eventRepository.aggregateByModelInWindowAndTargetTypeIn(window[0], window[1], activeTypes));
 
         long denom = 0L;
         for (Object[] r : rows) {
@@ -124,7 +142,8 @@ public class ModelsController {
         }
 
         // [date, model, totalTokens]
-        List<Object[]> raw = eventRepository.aggregateModelHeatmapAndTargetTypeIn(t0, t1, activeTypes);
+        List<Object[]> raw = heatmapCache.get(windowKey(t0, t1, activeTypes),
+                () -> eventRepository.aggregateModelHeatmapAndTargetTypeIn(t0, t1, activeTypes));
 
         // 第一遍：算窗内 Top N 模型（按 token）
         Map<String, Long> modelTokens = new HashMap<>();

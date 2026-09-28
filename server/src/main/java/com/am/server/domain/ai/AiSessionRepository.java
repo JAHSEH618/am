@@ -153,10 +153,16 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     /**
      * AI 会话列表时间窗：<b>与分析报告同源</b>——半开区间 {@code [t0, t1)} 内，
      * {@code started_at} 或 {@code last_activity} 任一落入即命中（等价于 overlap）。
+     *
+     * <p>本组查询都额外带 {@code lastActivity >= :t0}，让优化器能走 (target_type, last_activity) /
+     * last_activity 索引做区间扫描，不再因 OR 横跨两列而整表扫 + filesort（count 查询还要再扫一遍）。
+     * 正常会话 started_at ≤ last_activity，两个 OR 分支都蕴含该条件，结果不变；唯一差异是
+     * started_at 落在窗内、last_activity 却早于窗口起点的异常行（客户端时钟错乱）不再命中。
      */
     @Query("""
         SELECT s FROM AiSession s
         WHERE s.targetType IN :targetTypes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -173,6 +179,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     @Query("""
         SELECT s FROM AiSession s
         WHERE s.targetType IN :targetTypes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -189,6 +196,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
         SELECT s FROM AiSession s
         WHERE s.targetType IN :targetTypes
           AND s.userCode IN :userCodes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -207,6 +215,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
         SELECT s FROM AiSession s
         WHERE s.targetType IN :targetTypes
           AND s.userCode IN :userCodes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -224,6 +233,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
         SELECT s FROM AiSession s
         WHERE s.projectName = :projectName
           AND s.targetType IN :targetTypes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -242,6 +252,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
         SELECT s FROM AiSession s
         WHERE s.projectName = :projectName
           AND s.targetType IN :targetTypes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -260,6 +271,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
         WHERE s.projectName = :projectName
           AND s.userCode = :userCode
           AND s.targetType IN :targetTypes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -280,6 +292,7 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
         WHERE s.projectName = :projectName
           AND s.userCode = :userCode
           AND s.targetType IN :targetTypes
+          AND s.lastActivity >= :t0
           AND (
             (s.startedAt >= :t0 AND s.startedAt < :t1)
             OR (s.lastActivity >= :t0 AND s.lastActivity < :t1)
@@ -880,13 +893,14 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
     long countValidSessionsForInsightTypes(@Param("types") List<String> types);
 
     /**
-     * 管理员：时间窗内有效会话标记需重审（不自动因 rubric bump 触发）。
+     * 管理员"标记重审"的候选：时间窗内（overlap 口径，与报告一致）有效会话 id。
+     *
+     * <p>只读快照、不加锁；真正的 UPDATE 由 {@link #markInsightReauditRequiredByIds} 按主键分批做。
+     * 此前是一条带 OR / 可选参数的整表 UPDATE：REPEATABLE READ 下对扫过的每一行和间隙加 next-key 锁，
+     * 执行期间 ingest 的 INSERT ai_session 全部排队直至超时。
      */
-    @Modifying
-    @Transactional
     @Query(value = """
-            UPDATE ai_session s
-            SET s.insight_reaudit_required = 1
+            SELECT s.id FROM ai_session s
             WHERE s.invalid_reason IS NULL
               AND s.target_type IN (:types)
               AND (
@@ -895,11 +909,17 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
               )
               AND (:userCode IS NULL OR s.user_code = :userCode)
             """, nativeQuery = true)
-    int markInsightReauditRequiredInWindow(
+    List<Long> findIdsForReauditInWindow(
             @Param("types") List<String> types,
             @Param("t0") LocalDateTime t0,
             @Param("t1") LocalDateTime t1,
             @Param("userCode") String userCode);
+
+    /** 按主键置 {@code insight_reaudit_required=1}；只加行锁，调用方控制每批大小。 */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE ai_session SET insight_reaudit_required = 1 WHERE id IN (:ids)", nativeQuery = true)
+    int markInsightReauditRequiredByIds(@Param("ids") List<Long> ids);
 
     /**
      * 归因引擎候选会话：单用户、有效（invalid_reason IS NULL）、活动区间与给定窗口相交。

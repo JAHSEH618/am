@@ -11,6 +11,7 @@ import com.am.server.system.scheduling.ScheduledTaskDefinition;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 能力使用日聚合任务（《管理后台-产出归因与能力使用分析 v1.0》§3.3）：把
@@ -81,6 +84,18 @@ public class CapabilityDailyAggregator {
     /** {@link #ensureFresh} 的 TTL 快速路径 + per-date 互斥，语义与 DailySummaryAggregator 一致。 */
     private final ConcurrentHashMap<LocalDate, LocalDateTime> lastAggregatedAt = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<LocalDate, Object> ensureFreshLocks = new ConcurrentHashMap<>();
+    /** {@link #ensureFreshAsync} 的 per-date single-flight。 */
+    private final Set<LocalDate> asyncFreshInFlight = ConcurrentHashMap.newKeySet();
+    private final ExecutorService refreshExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "capability-daily-refresh");
+        t.setDaemon(true);
+        return t;
+    });
+
+    @PreDestroy
+    public void shutdown() {
+        refreshExecutor.shutdownNow();
+    }
 
     @PostConstruct
     public void registerDynamicTasks() {
@@ -113,7 +128,7 @@ public class CapabilityDailyAggregator {
     public void dailyJob() {
         LocalDate yesterday = LocalDate.now().minusDays(1);
         try {
-            int rows = aggregate(yesterday);
+            int rows = withDateLock(yesterday, () -> aggregate(yesterday));
             lastAggregatedAt.put(yesterday, LocalDateTime.now());
             log.info("capability daily aggregated: date={} rows={}", yesterday, rows);
         } catch (Exception e) {
@@ -125,9 +140,10 @@ public class CapabilityDailyAggregator {
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
         try {
-            int t = aggregate(today);
-            int y = aggregate(yesterday);
+            // 与 ensureFresh 共用 per-date 锁：同一天不并发 delete + insert。
+            int t = withDateLock(today, () -> aggregate(today));
             lastAggregatedAt.put(today, LocalDateTime.now());
+            int y = withDateLock(yesterday, () -> aggregate(yesterday));
             lastAggregatedAt.put(yesterday, LocalDateTime.now());
             log.info("hourly capability daily aggregated: today={} rows={} yesterday={} rows={}",
                     today, t, yesterday, y);
@@ -137,18 +153,15 @@ public class CapabilityDailyAggregator {
     }
 
     /**
-     * 节流的按需聚合：/capability 查询前调用，确保窗口尾日接近实时。
-     * per-date 锁 + 双检 TTL，不同日期可并发。
+     * 节流的按需聚合（同步）。per-date 锁（与 hourly / daily 共用）+ 双检 TTL，不同日期可并发。
+     * 页面请求走 {@link #ensureFreshAsync}。
      */
     public boolean ensureFresh(LocalDate date, Duration ttl) {
-        LocalDateTime last = lastAggregatedAt.get(date);
-        if (last != null && Duration.between(last, LocalDateTime.now()).compareTo(ttl) < 0) {
+        if (isFresh(date, ttl)) {
             return false;
         }
-        Object lock = ensureFreshLocks.computeIfAbsent(date, d -> new Object());
-        synchronized (lock) {
-            last = lastAggregatedAt.get(date);
-            if (last != null && Duration.between(last, LocalDateTime.now()).compareTo(ttl) < 0) {
+        return withDateLock(date, () -> {
+            if (isFresh(date, ttl)) {
                 return false;
             }
             try {
@@ -159,6 +172,46 @@ public class CapabilityDailyAggregator {
                 log.warn("capability ensureFresh failed: date={} reason={}", date, e.toString());
                 return false;
             }
+        });
+    }
+
+    /**
+     * /capability 页面用：过期就把整日重算丢到后台（per-date single-flight），立即返回读现有快照。
+     *
+     * <p>此前在请求线程里同步重算：一次切换窗口并发 3–8 个请求，一个在算（含全日消息扫描），
+     * 其余堵在 per-date 锁上占着 Tomcat 线程，前端 15s 超时后仍然算完。
+     *
+     * @return 是否新提交了一次后台重算
+     */
+    public boolean ensureFreshAsync(LocalDate date, Duration ttl) {
+        if (isFresh(date, ttl) || !asyncFreshInFlight.add(date)) {
+            return false;
+        }
+        try {
+            refreshExecutor.execute(() -> {
+                try {
+                    ensureFresh(date, ttl);
+                } finally {
+                    asyncFreshInFlight.remove(date);
+                }
+            });
+            return true;
+        } catch (RuntimeException e) {
+            asyncFreshInFlight.remove(date);
+            log.warn("capability ensureFreshAsync submit failed: date={} reason={}", date, e.toString());
+            return false;
+        }
+    }
+
+    private boolean isFresh(LocalDate date, Duration ttl) {
+        LocalDateTime last = lastAggregatedAt.get(date);
+        return last != null && Duration.between(last, LocalDateTime.now()).compareTo(ttl) < 0;
+    }
+
+    private <T> T withDateLock(LocalDate date, java.util.function.Supplier<T> body) {
+        Object lock = ensureFreshLocks.computeIfAbsent(date, d -> new Object());
+        synchronized (lock) {
+            return body.get();
         }
     }
 

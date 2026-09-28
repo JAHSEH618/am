@@ -1,7 +1,7 @@
 package com.am.server.insight.web;
 
 import com.am.server.common.R;
-import com.am.server.domain.ai.AiSessionRepository;
+import com.am.server.insight.audit.InsightSessionAuditStateService;
 import com.am.server.system.ActiveTargetTypesProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -24,7 +24,7 @@ import java.util.Collection;
 @RequestMapping("/api/v1/admin/insight/audit")
 public class InsightAuditAdminController {
 
-    private final AiSessionRepository sessionRepository;
+    private final InsightSessionAuditStateService auditStateService;
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
 
     /**
@@ -45,7 +45,7 @@ public class InsightAuditAdminController {
         }
         LocalDateTime t0 = from.atStartOfDay();
         LocalDateTime t1 = to.plusDays(1).atStartOfDay();
-        int updated = sessionRepository.markInsightReauditRequiredInWindow(
+        int updated = auditStateService.markReauditRequiredInWindow(
                 new ArrayList<>(typesCol), t0, t1,
                 userCode == null || userCode.isBlank() ? null : userCode.trim());
         return R.ok(updated);

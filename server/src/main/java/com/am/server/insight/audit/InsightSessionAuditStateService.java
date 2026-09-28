@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 将后台审计进度写回 {@code ai_session}（与 {@code ai_session_audit} 明细表配合）。
@@ -20,6 +21,8 @@ public class InsightSessionAuditStateService {
 
     private final AiSessionRepository sessionRepository;
     private final InsightProperties insightProperties;
+
+    static final int REAUDIT_MARK_CHUNK = 500;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markRunning(Long sessionId, LocalDateTime leaseUntil) {
@@ -68,6 +71,22 @@ public class InsightSessionAuditStateService {
             s.setInsightAuditStatus(InsightAuditStatus.FAILED.code());
             s.setInsightAuditLeaseUntil(retryAfter);
         });
+    }
+
+    /**
+     * 管理员"标记重审"：先无锁读出窗口内会话 id，再按主键每批 {@value #REAUDIT_MARK_CHUNK} 行、各自独立事务置位，
+     * 不再用一条整表 UPDATE 长时间锁住 ai_session。
+     *
+     * @return 命中的会话数
+     */
+    public int markReauditRequiredInWindow(List<String> types, LocalDateTime t0, LocalDateTime t1, String userCode) {
+        List<Long> ids = sessionRepository.findIdsForReauditInWindow(types, t0, t1, userCode);
+        int updated = 0;
+        for (int i = 0; i < ids.size(); i += REAUDIT_MARK_CHUNK) {
+            updated += sessionRepository.markInsightReauditRequiredByIds(
+                    ids.subList(i, Math.min(i + REAUDIT_MARK_CHUNK, ids.size())));
+        }
+        return updated;
     }
 
     private void touch(Long sessionId, java.util.function.Consumer<AiSession> fn) {

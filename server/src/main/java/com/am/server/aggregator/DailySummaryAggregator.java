@@ -184,7 +184,16 @@ public class DailySummaryAggregator {
      * 被合并成 1 次实际 aggregate，避免高频上报压垮 DB。
      */
     private static final long REFRESH_DEBOUNCE_MS = 15_000L;
+    /**
+     * 防抖最长等待：纯尾随防抖在持续上报下会被无限顺延（每次 ingest 都取消重排），"今天"一直不刷新，
+     * 页面只好在请求线程里现场全量重算。自该日第一次入队起最多等这么久就必须跑一次。
+     */
+    private static final long REFRESH_MAX_WAIT_MS = 60_000L;
     private final ConcurrentHashMap<LocalDate, ScheduledFuture<?>> pendingRefresh = new ConcurrentHashMap<>();
+    /** 该日当前这轮防抖的首次入队时刻（毫秒），任务开跑时清除。 */
+    private final ConcurrentHashMap<LocalDate, Long> pendingSince = new ConcurrentHashMap<>();
+    /** {@link #ensureFreshAsync} 的 per-date single-flight：已排队 / 在跑的日期不再重复提交。 */
+    private final Set<LocalDate> asyncFreshInFlight = ConcurrentHashMap.newKeySet();
     /** 与 {@link #pendingRefresh} 同键:该日 debounce 窗口内累积的受影响 user 并集,任务触发时 drain。 */
     private final ConcurrentHashMap<LocalDate, Set<String>> pendingUsers = new ConcurrentHashMap<>();
     /**
@@ -254,16 +263,20 @@ public class DailySummaryAggregator {
             if (prev != null) {
                 prev.cancel(false);
             }
+            long now = System.currentTimeMillis();
+            long since = pendingSince.computeIfAbsent(date, k -> now);
+            long delay = debounceDelayMs(since, now);
             return refreshExecutor.schedule(() -> {
+                pendingSince.remove(date);
                 boolean full = pendingFull.remove(date);
                 Set<String> users = pendingUsers.remove(date);
                 try {
-                    int n;
-                    if (full) {
-                        n = self.aggregate(date);
-                    } else {
-                        n = (users == null || users.isEmpty()) ? 0 : self.aggregate(date, users);
-                    }
+                    int n = withDateLock(date, () -> {
+                        if (full) {
+                            return self.aggregate(date);
+                        }
+                        return (users == null || users.isEmpty()) ? 0 : self.aggregate(date, users);
+                    });
                     lastAggregatedAt.put(date, LocalDateTime.now());
                     if (n > 0) {
                         log.debug("daily summary refreshed (debounced, {}): date={} users={}",
@@ -274,8 +287,14 @@ public class DailySummaryAggregator {
                 } finally {
                     pendingRefresh.remove(date);
                 }
-            }, REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+            }, delay, TimeUnit.MILLISECONDS);
         });
+    }
+
+    /** 尾随防抖延迟，但不超过"首次入队 + 最长等待"。 */
+    static long debounceDelayMs(long sinceMs, long nowMs) {
+        long untilMaxWait = sinceMs + REFRESH_MAX_WAIT_MS - nowMs;
+        return Math.max(0L, Math.min(REFRESH_DEBOUNCE_MS, untilMaxWait));
     }
 
     /**
@@ -286,7 +305,7 @@ public class DailySummaryAggregator {
     public void dailyJob() {
         LocalDate yesterday = LocalDate.now().minusDays(1);
         try {
-            int touched = self.aggregate(yesterday);
+            int touched = withDateLock(yesterday, () -> self.aggregate(yesterday));
             log.info("daily summary aggregated: date={} users={}", yesterday, touched);
         } catch (Exception e) {
             log.error("daily summary aggregate failed: date={}", yesterday, e);
@@ -305,9 +324,11 @@ public class DailySummaryAggregator {
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
         try {
-            int t = self.aggregate(today);
-            int y = self.aggregate(yesterday);
+            // 与 ensureFresh / 防抖追新共用 per-date 锁：同一天不并发重算（并发时两边都 saveAll 同一
+            // (user, date) 行，要么撞唯一键要么互相覆盖，还白白多扫一遍当日事件 / 消息）。
+            int t = withDateLock(today, () -> self.aggregate(today));
             lastAggregatedAt.put(today, LocalDateTime.now());
+            int y = withDateLock(yesterday, () -> self.aggregate(yesterday));
             lastAggregatedAt.put(yesterday, LocalDateTime.now());
             log.info("hourly daily summary aggregated: today={} users={} yesterday={} users={}",
                     today, t, yesterday, y);
@@ -317,23 +338,21 @@ public class DailySummaryAggregator {
     }
 
     /**
-     * 节流的"按需聚合"。员工数据 / 报告页查询前主动调用，确保看到的 daily_summary 数据接近实时。
+     * 节流的"按需聚合"（同步）：在调用线程里把该日 daily_summary 算到最新。
      *
-     * <p>锁粒度：per-date。不同日期可以并发跑 aggregate（典型场景是用户打开员工详情时
-     * 按窗口逐天 ensureFresh，多个用户访问不同窗口不会互相阻塞）。同一日期仍串行，
-     * 通过双检 TTL 让重复请求快速跳过。
+     * <p>页面请求不要用这个——整日全员重算在忙时是秒级到十秒级，前端 15s 超时后请求线程还占着连接继续算。
+     * 页面走 {@link #ensureFreshAsync}。
+     *
+     * <p>锁粒度：per-date，与 hourly / daily / 防抖追新共用。同一日期串行，双检 TTL 让重复请求快速跳过。
      */
     public boolean ensureFresh(LocalDate date, Duration ttl) {
         // 快速路径：TTL 内直接跳过，绝大多数稳态请求走这里
-        LocalDateTime last = lastAggregatedAt.get(date);
-        if (last != null && Duration.between(last, LocalDateTime.now()).compareTo(ttl) < 0) {
+        if (isFresh(date, ttl)) {
             return false;
         }
-        Object lock = ensureFreshLocks.computeIfAbsent(date, d -> new Object());
-        synchronized (lock) {
+        return withDateLock(date, () -> {
             // 进锁后双检——前一个等锁者刚算完，TTL 内的就别重复算了
-            last = lastAggregatedAt.get(date);
-            if (last != null && Duration.between(last, LocalDateTime.now()).compareTo(ttl) < 0) {
+            if (isFresh(date, ttl)) {
                 return false;
             }
             try {
@@ -344,6 +363,44 @@ public class DailySummaryAggregator {
                 log.warn("ensureFresh aggregate failed: date={} reason={}", date, e.toString());
                 return false;
             }
+        });
+    }
+
+    /**
+     * 页面用的"按需聚合"：过期就把重算丢到后台（per-date single-flight），立即返回，页面读现有快照。
+     * 配合防抖最长等待（{@link #REFRESH_MAX_WAIT_MS}），忙时快照滞后通常在一分钟内。
+     *
+     * @return 是否新提交了一次后台重算
+     */
+    public boolean ensureFreshAsync(LocalDate date, Duration ttl) {
+        if (isFresh(date, ttl) || !asyncFreshInFlight.add(date)) {
+            return false;
+        }
+        try {
+            refreshExecutor.execute(() -> {
+                try {
+                    ensureFresh(date, ttl);
+                } finally {
+                    asyncFreshInFlight.remove(date);
+                }
+            });
+            return true;
+        } catch (RuntimeException e) {
+            asyncFreshInFlight.remove(date);
+            log.warn("ensureFreshAsync submit failed: date={} reason={}", date, e.toString());
+            return false;
+        }
+    }
+
+    private boolean isFresh(LocalDate date, Duration ttl) {
+        LocalDateTime last = lastAggregatedAt.get(date);
+        return last != null && Duration.between(last, LocalDateTime.now()).compareTo(ttl) < 0;
+    }
+
+    private <T> T withDateLock(LocalDate date, java.util.function.Supplier<T> body) {
+        Object lock = ensureFreshLocks.computeIfAbsent(date, d -> new Object());
+        synchronized (lock) {
+            return body.get();
         }
     }
 

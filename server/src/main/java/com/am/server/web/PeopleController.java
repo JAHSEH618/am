@@ -53,8 +53,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>实现上：日汇总由 {@link DailySummaryAggregator} 按上述白名单与 invalid 过滤写入 {@code daily_summary}；
  * 窗口内「提问次数 / 问答比」等对 {@code ai_session_message} 的查询亦使用同一套 activeTypes + 有效会话 JOIN。
- * 访问列表 / 详情前对窗口内每个自然日判一次过期，最近几天同步 {@link DailySummaryAggregator#ensureFresh}、
- * 更早的转后台补，避免摘要行滞后于该口径。
+ * 访问列表 / 详情前对窗口内每个自然日判一次过期，最近几天提交后台
+ * {@link DailySummaryAggregator#ensureFreshAsync}（single-flight）、更早的走防抖队列补，页面只读现有快照。
  *
  * <p>接口：
  * <ul>
@@ -98,10 +98,9 @@ public class PeopleController {
     private static final int ENSURE_WINDOW_KEYS_MAX = 256;
 
     /**
-     * view-time 同步重聚的日期上限：只对最近的 N 个过期日阻塞请求，更早的交给
-     * {@link DailySummaryAggregator#enqueueRefresh(Collection)} 在后台 debounce 补。
-     * <p>没有上限时，"近30天"窗口撞上一次历史 backfill 就要在请求线程里连算 30 天
-     * （每天 = 当日活跃人数 × 4 条聚合查询），必然打穿前端 15s 超时。
+     * view-time 立即重算的日期上限：最近的 N 个过期日立即提交后台重算（不阻塞请求），更早的交给
+     * {@link DailySummaryAggregator#enqueueRefresh(Collection)} 防抖补，避免一次历史 backfill
+     * 让后台队列一口气压上 30 天的整日重算（每天 = 当日活跃人数 × 4 条聚合查询）。
      */
     private static final int MAX_SYNC_ENSURE_DAYS = 2;
 
@@ -146,7 +145,7 @@ public class PeopleController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         LocalDate[] window = resolveWindow(from, to);
-        // v2.9：扫窗口里每一天的过期状态，同步 ensureFresh 收口（60s TTL 节流，稳态零成本）
+        // v2.9：扫窗口里每一天的过期状态，过期日提交后台收口（60s TTL 节流，稳态零成本）
         ensureWindowFreshIfStale(window);
 
         // 列表数据源 = "全员"，而非"daily_summary 里有行的人"。
@@ -590,9 +589,10 @@ public class PeopleController {
      * <p><b>补充（员工数据口径）</b>：窗口内<strong>每一个自然日</strong>都参与过期判定，
      * 仅靠「当日存在启用 Agent 的事件」拉日历会漏掉整日只有禁用 Agent / 无效会话、却仍握着旧 daily_summary 的日期，
      * 导致列表上协作时长与问答次数脱节。
-     * <p>但<strong>同步</strong>重聚只给最近的 {@link #MAX_SYNC_ENSURE_DAYS} 天（稳态下过期的本来也只有今天），
-     * 更早的过期日改走 {@link DailySummaryAggregator#enqueueRefresh(Collection)} 在后台补，
-     * 免得一次历史 backfill 把请求线程按在 30 天的重算上。
+     * <p>最近的 {@link #MAX_SYNC_ENSURE_DAYS} 天走 {@link DailySummaryAggregator#ensureFreshAsync}（立即后台重算），
+     * 更早的过期日走 {@link DailySummaryAggregator#enqueueRefresh(Collection)} 防抖队列。
+     * 两者都<b>不阻塞请求线程</b>：此前最近两天是同步整日全员重算，忙时十几秒，
+     * 前端 15s 超时放弃后请求线程仍占着连接算完，切几次窗口就把连接池叠满。
      */
     private void ensureWindowFreshIfStale(LocalDate[] window) {
         if (!claimEnsureWindow(window)) {
@@ -605,7 +605,7 @@ public class PeopleController {
         Map<LocalDate, LocalDateTime> maxUpdatedByDay = toMaxTimeByWorkDate(
                 summaryRepository.findMaxUpdatedTimePerDay(window[0], window[1]));
 
-        // 倒序扫：离今天最近的日期先拿到同步名额——那正是用户盯着看的几天。
+        // 倒序扫：离今天最近的日期先拿到立即重算名额——那正是用户盯着看的几天。
         List<LocalDate> stale = new ArrayList<>();
         for (LocalDate d = window[1]; !d.isBefore(window[0]); d = d.minusDays(1)) {
             if (isStale(d, maxUpdatedByDay.get(d), activeTypes)) {
@@ -616,7 +616,7 @@ public class PeopleController {
             return;
         }
         for (int i = 0; i < Math.min(stale.size(), MAX_SYNC_ENSURE_DAYS); i++) {
-            dailySummaryAggregator.ensureFresh(stale.get(i), ENSURE_FRESH_TTL);
+            dailySummaryAggregator.ensureFreshAsync(stale.get(i), ENSURE_FRESH_TTL);
         }
         if (stale.size() > MAX_SYNC_ENSURE_DAYS) {
             dailySummaryAggregator.enqueueRefresh(stale.subList(MAX_SYNC_ENSURE_DAYS, stale.size()));
