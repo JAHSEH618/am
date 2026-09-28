@@ -14,7 +14,7 @@ import type {
 } from '../../api/types';
 import { formatTokens } from '../../utils/format';
 import { ink, indigo } from '../../styles/tokens';
-import { BUCKET_META, CAPABILITY_DIMENSIONS, CAP_TEAM_KEY, GRADE_META, MODE_META, WATCHLIST_META, watchlistTagColor } from './constants';
+import { BUCKET_META, CAPABILITY_DIMENSIONS, CAP_TEAM_KEY, GRADE_META, MODE_META, WATCHLIST_META, categoryTagStyle, watchlistTagColor } from './constants';
 import MetricLabel from './MetricLabel';
 
 const { Text, Paragraph } = Typography;
@@ -540,7 +540,8 @@ function HighlightSessions({
                 <Link to={`/sessions/${item.session_id}`}>会话 #{item.session_id}</Link>
                 {item.difficulty > 0 && <Tag>难度 {item.difficulty}</Tag>}
                 {item.mode && (
-                  <Tag color={MODE_META[item.mode]?.color}>{MODE_META[item.mode]?.label ?? item.mode}</Tag>
+                  // 不用 color={hex}：antd 会渲染成实心底 + 白字（对比不达标）；改 fg 文字 + 浅底 + 描边
+                  <Tag style={categoryTagStyle(MODE_META[item.mode])}>{MODE_META[item.mode]?.label ?? item.mode}</Tag>
                 )}
                 {item.nearby_commit && <Tag color="green">±30min 有提交</Tag>}
               </div>

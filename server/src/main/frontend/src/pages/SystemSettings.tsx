@@ -301,7 +301,7 @@ function ActiveAgentsPanel() {
               tone="indigo"
               extra={
                 <Tooltip title="过去 7 天落入白名单的会话数 / 全部上报会话数。差值就是被白名单过滤掉的部分。">
-                  <InfoCircleOutlined style={{ color: 'var(--am-ink-4)' }} />
+                  <InfoCircleOutlined style={{ color: 'var(--am-ink-3)' }} />
                 </Tooltip>
               }
             />
@@ -433,7 +433,8 @@ function AgentCard({
               style={{
                 fontSize: 'var(--am-fs-lg)',
                 fontWeight: 600,
-                color: target.recent7d_session_count > 0 ? 'var(--am-ink)' : 'var(--am-ink-5)',
+                // 0 也是读数（该 Agent 近 7 天无会话），不是空值：弱化到 ink-3 即止，不落到占位档 ink-5
+                color: target.recent7d_session_count > 0 ? 'var(--am-ink)' : 'var(--am-ink-3)',
                 fontVariantNumeric: 'tabular-nums',
                 lineHeight: 1.2,
               }}
@@ -465,13 +466,14 @@ function SchedulesPanel() {
   const [tasks, setTasks] = useState<ScheduledTaskStatus[] | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // silent：后台轮询静默刷新，不动 loading，否则「刷新」按钮每 5s 闪一次转圈
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const arr = await fetchScheduledTasks();
       setTasks(arr);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -481,7 +483,7 @@ function SchedulesPanel() {
     // 页面不可见（切到后台标签页 / 最小化）时跳过这一拍，避免空转请求；卸载时清理。
     const id = window.setInterval(() => {
       if (document.hidden) return;
-      load();
+      load(true);
     }, 5000);
     return () => window.clearInterval(id);
   }, [load]);
@@ -521,7 +523,7 @@ function SchedulesPanel() {
       <Card
         title={<span style={{ fontWeight: 600 }}>业务任务</span>}
         extra={
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={() => load()} loading={loading}>
             刷新
           </Button>
         }
@@ -1148,7 +1150,7 @@ function isHttpUrl(s: string): boolean {
 }
 
 function JudgeConfigPanel() {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [config, setConfig] = useState<Record<string, string> | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -1224,6 +1226,23 @@ function JudgeConfigPanel() {
 
   const handleReset = () => {
     if (config) setDraft({ ...config });
+  };
+
+  // 重新拉取会用服务端值整体覆盖草稿：有未保存变更时先确认，别让一次误点静默丢掉编辑
+  const handleReload = () => {
+    if (!dirty) {
+      load();
+      return;
+    }
+    modal.confirm({
+      title: '放弃未保存的修改并重新拉取？',
+      icon: <ExclamationCircleOutlined style={{ color: 'var(--am-warning)' }} />,
+      content: '重新拉取会用服务端已保存的配置覆盖当前所有未保存变更（含 Rubric 模板），且无法恢复。',
+      okText: '放弃并重新拉取',
+      okButtonProps: { danger: true },
+      cancelText: '继续编辑',
+      onOk: () => load(),
+    });
   };
 
   const handleTest = async (slot: 'a' | 'b') => {
@@ -1451,7 +1470,7 @@ function JudgeConfigPanel() {
           )}
         </Space>
         <Space>
-          <Button onClick={load} disabled={saving}>
+          <Button onClick={handleReload} disabled={saving}>
             重新拉取
           </Button>
           <Button onClick={handleReset} disabled={!dirty || saving}>
@@ -1878,8 +1897,11 @@ function AuthPanel() {
     setRotating(true);
     try {
       const r = await rotateAdminToken();
-      // 直接刷新展示 + 弹一个含复制按钮的提示框
-      await load();
+      // 直接刷新展示 + 弹一个含复制按钮的提示框。
+      // 草稿只回填 token：整表 load() 会把未保存的用户名 / 密码修改静默冲掉
+      const data = await fetchAuthConfig();
+      setConfig(data);
+      setDraft((prev) => ({ ...prev, [AUTH_KEYS.ADMIN_TOKEN]: data[AUTH_KEYS.ADMIN_TOKEN] ?? '' }));
       modal.success({
         title: '新 admin token 已生成',
         icon: <CheckCircleFilled style={{ color: 'var(--am-success)' }} />,

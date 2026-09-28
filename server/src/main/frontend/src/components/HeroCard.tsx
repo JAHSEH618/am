@@ -63,16 +63,18 @@ export function HeroCard({ label, value, suffix, subnote, icon, tone, onClick, a
           : undefined
       }
     >
-      {extra != null && (
-        <div className="am-hero-extra" onClick={(e) => e.stopPropagation()}>
-          {extra}
-        </div>
-      )}
       <div className="am-hero-top">
         <span className="am-hero-chip" style={{ background: c.bg, color: c.fg }}>
           {icon}
         </span>
         <span className="am-hero-label">{label}</span>
+        {/* 与标签同处一行的 flex 子项（不再绝对定位）：放不下时整体折到下一行右对齐，
+            窄卡片上不会再压住标签。 */}
+        {extra != null && (
+          <div className="am-hero-extra" onClick={(e) => e.stopPropagation()}>
+            {extra}
+          </div>
+        )}
       </div>
       <div className="am-hero-value">
         {value}

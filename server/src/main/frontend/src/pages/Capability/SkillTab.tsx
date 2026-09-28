@@ -85,7 +85,7 @@ export default function SkillTab({ from, to, onPickUser }: Props) {
         render: (v: number | null) =>
           v == null
             ? EMPTY_DASH
-            : <span style={{ color: accent.purple.base, fontWeight: 600 }}>{v}</span>,
+            : <span style={{ color: accent.purple.fg, fontWeight: 600 }}>{v}</span>, // 文字用 fg（base 仅 3.96:1）
       },
       {
         title: <CapLabel name="invoke_count" />,

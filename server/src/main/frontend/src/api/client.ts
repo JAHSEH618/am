@@ -112,6 +112,14 @@ export function bindMessageHandle(handle: ReturnType<typeof AntdApp.useApp>['mes
   messageHandle = handle;
 }
 
+/**
+ * 同文案的错误 toast 共用一个 key：后端挂掉时，Dashboard 一轮轮询就是 4～5 个并发请求、
+ * 每 10s 一轮，不去重会叠出一整列相同的「请求失败」。同 key 只刷新已有那条的计时。
+ */
+function toastError(msg: string) {
+  messageHandle?.error({ content: msg, key: `api-error:${msg}` });
+}
+
 http.interceptors.response.use(
   (resp: AxiosResponse<R<unknown>>) => {
     releaseInflight(resp.config?.signal);
@@ -141,17 +149,36 @@ http.interceptors.response.use(
     }
     const fallback = '请求失败';
     const apiMsg = err.response?.data?.message || err.message || fallback;
-    messageHandle?.error(apiMsg);
+    toastError(apiMsg);
     return Promise.reject(err);
   },
 );
 
-async function unwrap<T>(p: Promise<AxiosResponse<R<T>>>): Promise<T> {
+/** 后端 ErrorCode.RESOURCE_NOT_FOUND：资源不存在走的是 HTTP 200 + 业务码，不是 HTTP 404。 */
+export const RESOURCE_NOT_FOUND = 20002;
+
+/** unwrap 抛出的业务错误：保留后端业务码，调用方才能区分「不存在」和其它失败。 */
+export class ApiError extends Error {
+  readonly code: number | undefined;
+  constructor(message: string, code: number | undefined) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = code;
+  }
+}
+
+interface UnwrapOptions {
+  /** 返回 true 的业务错误不弹全局 toast——调用方会就地展示（如登录页的凭据错误）。 */
+  quiet?: (code: number | undefined, message: string) => boolean;
+}
+
+async function unwrap<T>(p: Promise<AxiosResponse<R<T>>>, opts?: UnwrapOptions): Promise<T> {
   const resp = await p;
   if (resp.data?.code !== 0) {
-    const msg = resp.data?.message || `服务端业务错误 code=${resp.data?.code}`;
-    messageHandle?.error(msg);
-    throw new Error(msg);
+    const code = resp.data?.code;
+    const msg = resp.data?.message || `服务端业务错误 code=${code}`;
+    if (!opts?.quiet?.(code, msg)) toastError(msg);
+    throw new ApiError(msg, code);
   }
   return resp.data.data;
 }
@@ -430,7 +457,10 @@ export const fetchAttributionPenetrationCheck = (params?: { window?: 'today' | '
 // ========== auth ==========
 export interface AuthMe { username: string }
 export const login = (username: string, password: string) =>
-  unwrap<AuthMe>(http.post('/auth/login', { username, password }));
+  unwrap<AuthMe>(http.post('/auth/login', { username, password }), {
+    // 凭据错误由登录页就地给中文提示，不再额外弹一条看不懂的 "BAD_CREDENTIALS"
+    quiet: (_code, msg) => msg === 'BAD_CREDENTIALS',
+  });
 export const logout = () => unwrap<void>(http.post('/auth/logout'));
 export const fetchMe = () => unwrap<AuthMe>(http.get('/auth/me'));
 

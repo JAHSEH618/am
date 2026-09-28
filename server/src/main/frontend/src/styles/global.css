@@ -72,7 +72,7 @@
   --am-warning-bg: #fffbeb;
   --am-warning-border: #fde68a;
   --am-error: #ef4444;
-  --am-error-fg: #dc2626;
+  --am-error-fg: #b91c1c; /* #dc2626 在 error.bg 上只有 4.4:1，不达标 */
   --am-error-bg: #fef2f2;
   --am-error-border: #fecaca;
   --am-info: #1a52dc; /* 收敛到品牌钴蓝（对齐 --am-brand / indigo-600） */
@@ -455,15 +455,20 @@ body,
   position: relative; /* 抬到晕染之上 */
 }
 .am-hero-extra {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1;
+  margin-left: auto;
+}
+/* 脚注行里放小控件（如渗透率窗口）：控件与说明同一行，放不下时整体换行 */
+.am-hero-subnote-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
 }
 .am-hero-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   margin-bottom: 14px;
 }
 .am-hero-chip {
@@ -478,6 +483,7 @@ body,
   box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.04);
 }
 .am-hero-label {
+  min-width: 0;
   font-size: var(--am-fs-sm);
   color: var(--am-ink-3);
   font-weight: var(--am-fw-semibold);
@@ -577,7 +583,7 @@ body,
   font-size: 11px;
   line-height: 16px;
   border-radius: 999px;
-  color: var(--am-ink-4);
+  color: var(--am-ink-3); /* 在线表里唯一的离线标记，属于承载信息的文字，不低于 ink-3 */
   background: var(--am-surface-sunken);
   border: 1px solid var(--am-border);
   white-space: nowrap;

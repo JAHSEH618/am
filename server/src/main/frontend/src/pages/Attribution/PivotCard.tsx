@@ -8,9 +8,8 @@ import type {
   AttributionRowDim,
   AttributionTier,
 } from '../../api/types';
-import { indigo } from '../../styles/tokens';
 import { employeeName, modelLabel, targetTypeLabel } from '../../utils/format';
-import { EMPTY_DASH, NUM_STYLE } from '../../utils/table';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../../utils/table';
 import MetricLabel from '../Analysis/MetricLabel';
 import AttrLabel from './AttrLabel';
 import type { CommitDrillRequest } from './CommitDrawer';
@@ -234,22 +233,29 @@ export default function PivotCard({ from, to, onDrill, onUserNames }: Props) {
     });
   };
 
-  /** 行首维度值单元格：空串 → 灰色「未归因」。 */
+  /** 行首维度值单元格：空串 → 灰色「未归因」（ink-3：它也是要读的维度值，不能掉到 ink-4）。 */
   const renderRowKey = (key: string) =>
     key === '' ? (
-      <Text style={{ color: 'var(--am-ink-4)' }}>{UNATTRIBUTED_LABEL}</Text>
+      <Text style={{ color: 'var(--am-ink-3)' }}>{UNATTRIBUTED_LABEL}</Text>
     ) : (
       <span title={key}>{displayKey(rowDim, key)}</span>
     );
 
-  /** 可点击数值格的公共 onCell：阻断冒泡避免同时触发行级下钻。 */
-  const clickCell = (onClick: () => void) => ({
-    onClick: (e: { stopPropagation: () => void }) => {
-      e.stopPropagation();
-      onClick();
-    },
-    style: { ...NUM_STYLE, cursor: 'pointer' },
-  });
+  /**
+   * 可点击格的公共 onCell：clickableRowProps 补齐键盘可达（Tab 聚焦 + Enter/Space + 焦点环）；
+   * 点击阻断冒泡避免同时触发行级下钻。
+   */
+  const clickCell = (onClick: () => void) => {
+    const base = clickableRowProps(onClick);
+    return {
+      ...base,
+      onClick: (e: { stopPropagation: () => void }) => {
+        e.stopPropagation();
+        onClick();
+      },
+      style: { ...NUM_STYLE, ...base.style },
+    };
+  };
 
   /** 选列维度时的格内容：主值（AI 口径 = B+A）+「B x / A x」双色小字。 */
   const renderAiCell = (rec: TierRecord | undefined) => {
@@ -265,9 +271,9 @@ export default function PivotCard({ from, to, onDrill, onUserNames }: Props) {
       <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end' }}>
         <span style={{ fontWeight: 600 }}>{main}</span>
         <span style={{ fontSize: 11, lineHeight: 1.3 }}>
-          <span style={{ color: indigo[700] }}>B {fmt(rec.B[baseMeasure])}</span>
+          <span style={{ color: TIER_META.B.fg }}>B {fmt(rec.B[baseMeasure])}</span>
           <span style={{ color: 'var(--am-ink-4)' }}> / </span>
-          <span style={{ color: indigo[400] }}>A {fmt(rec.A[baseMeasure])}</span>
+          <span style={{ color: TIER_META.A.fg }}>A {fmt(rec.A[baseMeasure])}</span>
         </span>
       </span>
     );
@@ -282,6 +288,8 @@ export default function PivotCard({ from, to, onDrill, onUserNames }: Props) {
       fixed: 'left',
       width: 180,
       ellipsis: true,
+      // 行级下钻的键盘入口（整行 <tr> 仍可鼠标点击，但不设 role=button，免得和格内按钮嵌套交互）
+      onCell: (r) => clickCell(() => drill(r.key, null)),
       render: (_: unknown, r) => renderRowKey(r.key),
     };
     if (colDim === 'none') {
@@ -293,11 +301,8 @@ export default function PivotCard({ from, to, onDrill, onUserNames }: Props) {
         onCell: (r) => clickCell(() => drill(r.key, null, tier)),
         render: (_: unknown, r) => {
           const v = r.total[tier][baseMeasure];
-          if (tier === 'B')
-            return <span style={{ color: indigo[600], fontWeight: 600 }}>{fmt(v)}</span>;
-          if (tier === 'A')
-            return <span style={{ color: indigo[400], fontWeight: 600 }}>{fmt(v)}</span>;
-          return fmt(v);
+          if (tier === 'NONE') return fmt(v);
+          return <span style={{ color: TIER_META[tier].fg, fontWeight: 600 }}>{fmt(v)}</span>;
         },
       });
       return [
@@ -331,7 +336,7 @@ export default function PivotCard({ from, to, onDrill, onUserNames }: Props) {
     const colCols: ColumnsType<PivotRow> = colKeys.map((ck) => ({
       title:
         ck === '' ? (
-          <Text style={{ color: 'var(--am-ink-4)' }}>{UNATTRIBUTED_LABEL}</Text>
+          <Text style={{ color: 'var(--am-ink-3)' }}>{UNATTRIBUTED_LABEL}</Text>
         ) : (
           <span title={ck}>{displayKey(colDim, ck)}</span>
         ),
@@ -428,6 +433,7 @@ export default function PivotCard({ from, to, onDrill, onUserNames }: Props) {
         dataSource={rows}
         locale={{ emptyText: '所选时间窗 / 筛选组合内暂无 commit 归因数据' }}
         scroll={{ x: 'max-content' }}
+        // 整行点击 = 鼠标兜底（落在占比列 / 空格上时）；键盘入口是首列与各数值格
         onRow={(r) => ({ onClick: () => drill(r.key, null), style: { cursor: 'pointer' } })}
         pagination={{
           pageSize: PIVOT_PAGE_SIZE,

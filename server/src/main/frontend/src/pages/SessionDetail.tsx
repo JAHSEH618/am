@@ -6,6 +6,7 @@ import {
   Descriptions,
   List,
   Pagination,
+  Result,
   Row,
   Segmented,
   Space,
@@ -25,13 +26,16 @@ import {
   ApartmentOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { isAxiosError, isCancel } from 'axios';
 import MessagePartList from '../components/MessagePartList';
 import StatusDot from '../components/StatusDot';
 import {
+  ApiError,
   fetchMonitorTargets,
   fetchSession,
   fetchSessionEvents,
   fetchSessionMessages,
+  RESOURCE_NOT_FOUND,
 } from '../api/client';
 import type {
   AiSession,
@@ -134,14 +138,20 @@ export default function SessionDetail() {
 
   const [session, setSession] = useState<AiSession | null>(null);
   const [loading, setLoading] = useState(true);
+  // 加载失败（旧链接 404 / 网络错误）时渲染 Result，不再无限转圈；reloadSeq 自增即「重试」（会话 / 消息 / 事件一并重拉）。
+  // 错误 toast 已由 axios 拦截器 / unwrap 弹过，这里不再重复。
+  const [loadError, setLoadError] = useState<{ notFound: boolean; message?: string } | null>(null);
+  const [reloadSeq, setReloadSeq] = useState(0);
 
   const [msgs, setMsgs] = useState<PageDto<AiSessionMessage> | null>(null);
   const [msgPage, setMsgPage] = useState(0);
   const [msgView, setMsgView] = useState<MsgView>('conversation');
   const [msgViewTouched, setMsgViewTouched] = useState(false);
+  const [msgLoading, setMsgLoading] = useState(false);
 
   const [evts, setEvts] = useState<PageDto<AiSessionEvent> | null>(null);
   const [evtPage, setEvtPage] = useState(0);
+  const [evtLoading, setEvtLoading] = useState(false);
 
   // 字典：让 target_type Tag 用上 monitor_target 表里的颜色与名称
   const [targets, setTargets] = useState<MonitorTarget[]>([]);
@@ -155,16 +165,40 @@ export default function SessionDetail() {
   }, [targets]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    // 非数字 id（手敲 / 截断的链接）直接按不存在处理，否则会停在初始 loading 一直转圈
+    if (!sessionId) {
+      setLoadError({ notFound: true });
+      setLoading(false);
+      return;
+    }
+    let alive = true;
     setLoading(true);
+    setLoadError(null);
     setMsgViewTouched(false);
     fetchSession(sessionId, { from: fromParam, to: toParam })
       .then((s) => {
+        if (!alive) return;
         setSession(s);
         setMsgView(defaultMsgView(s));
       })
-      .finally(() => setLoading(false));
-  }, [sessionId, fromParam, toParam]);
+      .catch((err: unknown) => {
+        // 已切走 / 被新时间窗请求取消：不算失败
+        if (!alive || isCancel(err)) return;
+        setLoadError({
+          // 后端「会话不存在」是 HTTP 200 + RESOURCE_NOT_FOUND 业务码，真 HTTP 404 也一并认
+          notFound:
+            (err instanceof ApiError && err.code === RESOURCE_NOT_FOUND) ||
+            (isAxiosError(err) && err.response?.status === 404),
+          message: err instanceof Error ? err.message : undefined,
+        });
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, fromParam, toParam, reloadSeq]);
 
   const messageRoleParams = useMemo(() => {
     if (msgView === 'user') return { role: 'user' as const };
@@ -183,9 +217,21 @@ export default function SessionDetail() {
     }).then(setMsgs);
   }, [sessionId, msgPage, fromParam, toParam, messageRoleParams]);
 
+  // 翻页 / 切视图时给出 loading 反馈；回填轮询直接调 loadMessages，不闪 loading
   useEffect(() => {
-    loadMessages();
-  }, [loadMessages]);
+    let alive = true;
+    setMsgLoading(true);
+    loadMessages()
+      .catch(() => {
+        // 失败已由拦截器 toast；会话本身不存在时由上方 Result 兜底，这里别再冒未处理的 rejection
+      })
+      .finally(() => {
+        if (alive) setMsgLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [loadMessages, reloadSeq]);
 
   const backfillPending = !!session && backfillIncomplete(session);
 
@@ -200,13 +246,27 @@ export default function SessionDetail() {
 
   useEffect(() => {
     if (!sessionId) return;
+    let alive = true;
+    setEvtLoading(true);
     fetchSessionEvents(sessionId, {
       page: evtPage,
       size: PAGE_SIZE_EVT,
       from: fromParam,
       to: toParam,
-    }).then(setEvts);
-  }, [sessionId, evtPage, fromParam, toParam]);
+    })
+      .then((p) => {
+        if (alive) setEvts(p);
+      })
+      .catch(() => {
+        // 同上：错误提示已由拦截器给出
+      })
+      .finally(() => {
+        if (alive) setEvtLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, evtPage, fromParam, toParam, reloadSeq]);
 
   const clearWindow = () => {
     const sp = new URLSearchParams(searchParams);
@@ -216,6 +276,24 @@ export default function SessionDetail() {
     setMsgPage(0);
     setEvtPage(0);
   };
+
+  if (loadError) {
+    return (
+      <Result
+        status={loadError.notFound ? '404' : 'error'}
+        title={loadError.notFound ? '会话不存在或已被移除' : '会话加载失败'}
+        subTitle={loadError.message}
+        extra={[
+          <Button key="list" type="primary" onClick={() => navigate('/sessions')}>
+            返回会话列表
+          </Button>,
+          <Button key="retry" onClick={() => setReloadSeq((n) => n + 1)}>
+            重试
+          </Button>,
+        ]}
+      />
+    );
+  }
 
   if (loading || !session) {
     // antd 5.x 单独使用 <Spin /> 时不能直接 tip，必须 nest 子组件，否则 5.21+
@@ -348,7 +426,8 @@ export default function SessionDetail() {
         items={[
           {
             key: 'messages',
-            label: `${msgViewLabel(msgView)} (${msgs?.total ?? 0})`,
+            // 首次加载完成前不显示条数，避免先闪「(0)」
+            label: msgs ? `${msgViewLabel(msgView)} (${msgs.total})` : msgViewLabel(msgView),
             children: (
               <Card size="small">
                 {backfillPending && (
@@ -391,7 +470,14 @@ export default function SessionDetail() {
                     </Text>
                   )}
                 </Row>
-                <MessageTimeline items={msgs?.items ?? []} targetType={session.target_type} />
+                <Spin spinning={msgLoading}>
+                  {/* 首屏未到数据时留占位高度给 spinner，不先闪「暂无消息」 */}
+                  {msgs || !msgLoading ? (
+                    <MessageTimeline items={msgs?.items ?? []} targetType={session.target_type} />
+                  ) : (
+                    <div style={{ minHeight: 120 }} />
+                  )}
+                </Spin>
                 <Row justify="end" style={{ marginTop: 16 }}>
                   <Pagination
                     current={(msgs?.page ?? 0) + 1}
@@ -411,13 +497,14 @@ export default function SessionDetail() {
                 trigger={['hover', 'focus']}
                 title="Agent 上报的原始事件流（含 TOKEN_DELTA / MESSAGE_DELTA / TOOL_CALL 等），条数通常远大于对话轮次"
               >
-                <span tabIndex={0}>{`事件流水 (${evts?.total ?? 0})`}</span>
+                <span tabIndex={0}>{evts ? `事件流水 (${evts.total})` : '事件流水'}</span>
               </Tooltip>
             ),
             children: (
               <Card size="small">
                 <List
                   size="small"
+                  loading={evtLoading}
                   dataSource={evts?.items ?? []}
                   locale={{ emptyText: '暂无事件' }}
                   renderItem={(e) => (

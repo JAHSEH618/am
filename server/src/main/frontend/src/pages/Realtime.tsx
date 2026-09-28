@@ -142,13 +142,42 @@ export default function Realtime() {
     };
   }, [connected]);
 
+  // 刚打开页面时 EventSource 还没 open，给 3s 宽限再提示断线，避免首屏一闪而过的「已断开」。
+  const [sseDownNotice, setSseDownNotice] = useState(false);
+  useEffect(() => {
+    if (connected) {
+      setSseDownNotice(false);
+      return;
+    }
+    const t = window.setTimeout(() => setSseDownNotice(true), 3000);
+    return () => window.clearTimeout(t);
+  }, [connected]);
+
+  // /dashboard/online 同时返回离线设备（device_online=false，供 Dashboard 注册员工表用）；
+  // 这里是「实时活动」，离线机器既没有活动也不该和在线空闲卡片长得一样，直接不列。
+  const liveAgents = useMemo(() => agents.filter((a) => a.device_online !== false), [agents]);
+
   return (
     <Row gutter={[16, 16]}>
       <Col xs={24} lg={14}>
         <Spin spinning={loading && agents.length === 0}>
-          <Card title={<Space><StatusDot color="var(--am-brand)" pulse />实时活动</Space>} size="small">
+          <Card
+            title={
+              // 标题圆点反映推送通道本身：断线时不再假装「实时」，改为灰点 + 说明正在靠轮询兜底。
+              <Space>
+                <StatusDot color={connected ? 'var(--am-brand)' : 'var(--am-ink-4)'} pulse={connected} />
+                实时活动
+                {sseDownNotice && (
+                  <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
+                    推送已断开 · 每 {ONLINE_POLL_FALLBACK_MS / 1000} 秒轮询
+                  </Text>
+                )}
+              </Space>
+            }
+            size="small"
+          >
             <List
-              dataSource={agents}
+              dataSource={liveAgents}
               rowKey={(a) => `${a.agent_id}|${a.target_type ?? '__none__'}|${a.device_online === false ? '0' : '1'}`}
               locale={{ emptyText: '暂无在线 Agent' }}
               grid={{ gutter: 12, xs: 1, sm: 2, md: 2, lg: 2, xl: 3 }}

@@ -262,7 +262,9 @@ export default function Analysis() {
   const actionsLocked = reportBusy || triggering;
 
   return (
-    <Layout style={{ background: 'var(--am-surface-sunken)', minHeight: 'calc(100vh - 64px)' }}>
+    // 撑满视口：减去顶栏 56（main.tsx Layout.headerHeight）+ MainLayout Content 上下 padding 24×2；
+    // 窄屏 padding 为 12×2 时只是略短、不会溢出。写成 64 会让整页永远多滚 40px。
+    <Layout style={{ background: 'var(--am-surface-sunken)', minHeight: 'calc(100vh - 104px)' }}>
       <Sider width={220} theme="light" style={{ background: 'var(--am-bg-card)', borderRight: '1px solid var(--am-border)' }}>
         <div style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', height: '100%' }}>
           <Text strong style={{ fontSize: 13, color: 'var(--am-ink-2)' }}>生成报告</Text>
@@ -335,6 +337,9 @@ export default function Analysis() {
               renderItem={(item) => {
                 const busy = item.status === 'pending' || item.status === 'running';
                 const active = currentProgress?.id === item.id;
+                // 键盘可达：焦点/回车落在内容区（不把整行设成 role=button，免得和行内「删除」按钮嵌套交互）；
+                // 鼠标点击仍由整行承接。这是重新打开历史报告的唯一入口。
+                const { onKeyDown, tabIndex, role } = clickableRowProps(() => handlePickHistory(item));
                 return (
               <List.Item
                 onClick={() => handlePickHistory(item)}
@@ -371,7 +376,13 @@ export default function Analysis() {
                   </Popconfirm>,
                 ]}
               >
-                <div style={{ width: '100%' }}>
+                <div
+                  role={role}
+                  tabIndex={tabIndex}
+                  onKeyDown={onKeyDown}
+                  aria-current={active ? 'true' : undefined}
+                  style={{ width: '100%' }}
+                >
                   <div>
                     <Text strong style={{ fontSize: 12 }}>
                       {item.window_from.slice(5)}~{item.window_to.slice(5)}
@@ -507,6 +518,7 @@ export default function Analysis() {
               >
                 <Text strong style={{ fontSize: 13, color: 'var(--am-ink-2)' }}>员工数据列表</Text>
                 <Input.Search
+                  aria-label="按姓名或工号搜索员工"
                   placeholder="按姓名 / 工号搜索"
                   size="small"
                   style={{ width: 200 }}

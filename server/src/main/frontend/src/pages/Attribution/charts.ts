@@ -1,10 +1,11 @@
 // 产出归因页 ECharts option 构造器。
 // 柱线混合：B/A 双档堆叠柱（B 深 A 浅，同为品牌 indigo 色阶）+ 右轴 AI 占比线；
-// NONE 不画柱但计入占比分母；backfilled 区间灰底 markArea + x 轴标签弱化。
-// 空态 graphic 写法照 Capability/charts.ts 先例；色值全部走 tokens。
+// NONE 不画柱但计入占比分母；backfilled 区间灰底 markArea + x 轴标签斜体。
+// 空态 graphic 写法照 Capability/charts.ts 先例；色值全部走 tokens，档位色走 TIER_META。
 
-import { accent, border, indigo, ink } from '../../styles/tokens';
+import { accent, border, ink } from '../../styles/tokens';
 import type { AttributionTrendPoint } from '../../api/types';
+import { TIER_META } from './constants';
 
 export type TrendMetric = 'commits' | 'lines';
 
@@ -23,8 +24,8 @@ function emptyChartOption(text = '暂无数据') {
   };
 }
 
-const B_NAME = 'B 确定';
-const A_NAME = 'A 疑似';
+const B_NAME = TIER_META.B.label;
+const A_NAME = TIER_META.A.label;
 const RATIO_NAME = 'AI 占比';
 
 /**
@@ -81,8 +82,10 @@ export function buildAttributionTrendOption(
       data: labels,
       axisLabel: {
         fontSize: 11,
-        // 回溯区间的日期标签弱化成占位灰，与灰底 markArea 双重提示
-        color: (_v: string, i: number) => (points[i]?.backfilled ? ink[5] : ink[3]),
+        // 日期是要读的信息，统一 ink-3；回溯区间改用斜体区分（不再降到占位灰），与灰底 markArea 双重提示
+        color: ink[3],
+        formatter: (v: string, i: number) => (points[i]?.backfilled ? `{bf|${v}}` : v),
+        rich: { bf: { fontSize: 11, color: ink[3], fontStyle: 'italic' } },
       },
     },
     yAxis: [
@@ -107,7 +110,7 @@ export function buildAttributionTrendOption(
         stack: 'tier',
         barMaxWidth: 22,
         data: b,
-        itemStyle: { color: indigo[600] },
+        itemStyle: { color: TIER_META.B.base },
         markArea:
           runs.length > 0
             ? {
@@ -123,7 +126,7 @@ export function buildAttributionTrendOption(
         stack: 'tier',
         barMaxWidth: 22,
         data: a,
-        itemStyle: { color: indigo[300] },
+        itemStyle: { color: TIER_META.A.base },
       },
       {
         name: RATIO_NAME,

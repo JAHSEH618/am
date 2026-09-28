@@ -3,6 +3,7 @@
 // 释义模式照 pages/Capability/constants.ts 的 CAP_HELP（是什么 / 怎么算 / 怎么读）。
 
 import type { AttributionRowDim } from '../../api/types';
+import { indigo, semantic, type SemanticRole } from '../../styles/tokens';
 
 /**
  * 本页释义字典：name → 显示标签 + tooltip 文案。
@@ -63,11 +64,15 @@ export const ATTR_HELP: Record<string, { label: string; help: string }> = {
   },
 };
 
-/** 三档元数据：Tag 色系 + 展示文案（B=success、A=蓝、NONE=default）。 */
-export const TIER_META: Record<string, { label: string; tag: string }> = {
-  B: { label: 'B 确定', tag: 'success' },
-  A: { label: 'A 疑似', tag: 'blue' },
-  NONE: { label: '未命中', tag: 'default' },
+/**
+ * 三档元数据：展示文案 + 全页唯一的档位色（明细 Tag / 透视数字 / 趋势柱同源，别再各自取色）。
+ * 同为品牌 indigo 色阶「B 深 A 浅」：base=图表柱色；fg=文字（白底 B 10.3:1 / A 6.4:1，
+ * 在各自 bg 上仍 ≥ 5.7:1）；bg/border=Tag 底与描边。NONE 复用中性语义。
+ */
+export const TIER_META: Record<string, SemanticRole & { label: string }> = {
+  B: { label: 'B 确定', base: indigo[600], fg: indigo[800], bg: indigo[100], border: indigo[300] },
+  A: { label: 'A 疑似', base: indigo[300], fg: indigo[600], bg: indigo[50], border: indigo[200] },
+  NONE: { label: '未命中', ...semantic.neutral },
 };
 
 /** 透视维度：value 与服务端 row/col 参数一致。 */

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card, DatePicker, Select, Skeleton, Space, Table, Tag, Tooltip } from 'antd';
-import { disableFutureDate, rangePresets } from '../utils/timeWindow';
-import dayjs, { Dayjs } from 'dayjs';
+import { disableFutureDate, lastNDays, rangePresets } from '../utils/timeWindow';
+import type { Dayjs } from 'dayjs';
 import { fetchAlerts } from '../api/client';
 import type { AgentAlert, PageDto } from '../api/types';
 import { employeeName, formatTime } from '../utils/format';
@@ -22,17 +22,17 @@ const TYPE_LABEL: Record<string, string> = Object.fromEntries(
   TYPE_OPTIONS.filter((o) => o.value).map((o) => [o.value, o.label]),
 );
 
-const LEVEL_COLOR: Record<string, string> = {
-  WARN: 'orange',
-  ERROR: 'red',
+/** 告警级别 → 中文标签 + antd 语义色预设（后端 AlertType.LEVEL_*；标签 + 颜色双通道，不只靠颜色） */
+const LEVEL_META: Record<string, { label: string; color: string }> = {
+  INFO: { label: '提示', color: 'processing' },
+  WARN: { label: '警告', color: 'warning' },
+  ERROR: { label: '错误', color: 'error' },
 };
 
 export default function Alerts() {
   const [type, setType] = useState('');
-  const [range, setRange] = useState<[Dayjs, Dayjs]>([
-    dayjs().subtract(7, 'day'),
-    dayjs(),
-  ]);
+  // 近 7 天（含今天）：与其它列表页同走 timeWindow 公共件（旧写法 subtract(7, 'day') ~ 今天实为 8 天）
+  const [range, setRange] = useState<[Dayjs, Dayjs]>(() => lastNDays(7));
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(20);
   const [data, setData] = useState<PageDto<AgentAlert> | null>(null);
@@ -95,7 +95,10 @@ export default function Alerts() {
             title: '级别',
             dataIndex: 'alert_level',
             width: 80,
-            render: (v) => <Tag color={LEVEL_COLOR[v] || 'default'}>{v}</Tag>,
+            render: (v: string) => {
+              const meta = LEVEL_META[v];
+              return <Tag color={meta?.color ?? 'default'}>{meta?.label ?? v}</Tag>;
+            },
           },
           {
             title: '类型',
