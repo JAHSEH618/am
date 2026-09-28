@@ -10,6 +10,7 @@ import com.am.server.domain.ai.AiSessionEventRepository;
 import com.am.server.domain.ai.AiSessionMessage;
 import com.am.server.domain.ai.AiSessionMessageRepository;
 import com.am.server.domain.ai.AiSessionRepository;
+import com.am.server.insight.domain.AiSessionAuditRepository;
 import com.am.server.web.sse.SseHub;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,6 +24,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -43,6 +45,7 @@ class AbstractAiSessionIngestServiceWritePathTest {
     private final AiSessionEventRepository eventRepository = mock(AiSessionEventRepository.class);
     private final AiSessionMessageRepository messageRepository = mock(AiSessionMessageRepository.class);
     private final SseHub sseHub = mock(SseHub.class);
+    private final AiSessionAuditRepository auditRepository = mock(AiSessionAuditRepository.class);
 
     private static class TestIngest extends AbstractAiSessionIngestService {
         TestIngest(AiSessionRepository s, AiSessionEventRepository e, AiSessionMessageRepository m, SseHub h) {
@@ -61,6 +64,7 @@ class AbstractAiSessionIngestServiceWritePathTest {
 
     @BeforeEach
     void setUp() {
+        ingest.setSessionAuditRepository(auditRepository);
         // 上一拍按 message 表对齐后的计数：user 18 / assistant 58 / total 76；表里共 776 行（含 tool）
         stored = new AiSession();
         stored.setId(SESSION_ID);
@@ -121,6 +125,26 @@ class AbstractAiSessionIngestServiceWritePathTest {
         verify(messageRepository, times(1)).countByAiSessionId(SESSION_ID);
         verify(messageRepository).findUserSequenceNosBefore(eq(SESSION_ID), eq(41), any(Pageable.class));
         verify(messageRepository, never()).findByAiSessionIdOrderBySequenceNoAsc(anyLong());
+    }
+
+    @Test
+    void noSseSubscribers_skipsAuditLookupAndDtoWork() {
+        when(sseHub.size()).thenReturn(0);
+
+        ingest.ingest(snapshot(sessionDto(1, 38, null)), ctx());
+
+        verify(auditRepository, never()).findByAiSessionIdIn(any());
+        verify(sseHub, never()).publish(anyString(), any());
+    }
+
+    @Test
+    void withSseSubscriber_publishesSessionChangedWithAudit() {
+        when(sseHub.size()).thenReturn(1);
+
+        ingest.ingest(snapshot(sessionDto(1, 38, null)), ctx());
+
+        verify(auditRepository).findByAiSessionIdIn(List.of(SESSION_ID));
+        verify(sseHub).publish(eq("session_changed"), any());
     }
 
     private static MonitorSnapshotDto snapshot(MonitorSessionDto s) {

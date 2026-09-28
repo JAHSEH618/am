@@ -361,7 +361,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     }
 
     private void publishSse(List<AiSessionEvent> events, Map<Long, AiSession> sessions) {
-        if (sseHub == null) {
+        // 没人订阅就什么都不做：下面的 ai_session_audit 查询（整实体）和 DTO 组装都在 ingest 线程上，
+        // 而 SseHub#publish 没有订阅者时本来就会丢弃
+        if (sseHub == null || sseHub.size() == 0) {
             return;
         }
         for (AiSessionEvent e : events) {

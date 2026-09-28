@@ -130,8 +130,11 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
   truth (`CREATE TABLE IF NOT EXISTS` / `INSERT IGNORE`), `hibernate.ddl-auto=none`. Additive columns are
   applied at boot by idempotent `*SchemaPatches` classes — add migrations there + in `schema.sql`, never via
   Hibernate auto-DDL.
-- **SSE** (`web/sse/SseHub`): in-memory `SseEmitter` fan-out for live dashboard/session updates; best-effort,
-  slow clients can't block others.
+- **SSE** (`web/sse/SseHub`): in-memory `SseEmitter` fan-out for live dashboard/session updates, best-effort.
+  `publish` only serializes on the caller's thread and enqueues the frame for a single `sse-sender` thread
+  (bounded queue of 256 frames; overflow is dropped and counted), so ingest threads never block on a browser
+  socket; ingest also skips its SSE work (`ai_session_audit` lookup, DTO building) when nobody is subscribed.
+  A stalled client can still delay frames for the other subscribers until its write fails and it is evicted.
 
 See `../README.md` for deploy steps and the admin-endpoint reference (note its report-center section is
 partly stale — defer to insight's CLAUDE.md for the live report path).
