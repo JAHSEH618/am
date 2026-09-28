@@ -326,6 +326,31 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
             @Param("activeTypes") Collection<String> activeTypes);
 
     /**
+     * Slash Commands 排行专用：同 {@link #loadSlashHitsJsonOnlyInWindowGlobal}，另加
+     * {@code slash_command_count + slash_skill_count > 0}。返回 [userCode, sessionId, slashHitsJson, targetType]。
+     * <p>两个计数列在 {@code idx_window_cover} 里，这个条件由索引下推在回表前就把无命中的提问丢掉；
+     * 原查询要为窗内<b>每一条</b> user 消息回表读 slash_hits_json 才能判空。
+     * <p>等价性：排行只数 kind ≠ noise 的命中，而所有写入方都按同一份 JSON 重记两列
+     * （command → command_count，skill / nl_skill → skill_count，noise 不计，见
+     * {@code UserSlashInvocationExtractor} / {@code SlashHitsJsonSupport#countKinds}），
+     * 故"JSON 里有可计命中"⇒"计数和 > 0"。只含 noise 的行本来就不进排行。
+     * 新增会被排行计数的 kind 时，必须同步计入这两列，否则会被这里静默滤掉。
+     */
+    @Query("""
+        SELECT m.userCode, m.aiSessionId, m.slashHitsJson, m.targetType
+        FROM AiSessionMessage m JOIN AiSession s ON s.id = m.aiSessionId
+        WHERE s.invalidReason IS NULL
+          AND m.messageTime >= :from AND m.messageTime < :to
+          AND m.targetType IN :activeTypes
+          AND LOWER(m.role) = 'user'
+          AND (m.slashCommandCount + m.slashSkillCount) > 0
+          AND m.slashHitsJson IS NOT NULL AND TRIM(m.slashHitsJson) <> '' AND TRIM(m.slashHitsJson) <> '[]'
+        """)
+    List<Object[]> loadCountedSlashHitsJsonInWindowGlobal(
+            LocalDateTime from, LocalDateTime to,
+            @Param("activeTypes") Collection<String> activeTypes);
+
+    /**
      * capability 日聚合（MCP 兜底路径）：窗内疑似含 MCP tool_call part 的消息。
      * 返回 [userCode, aiSessionId, contentPartsJson]。
      * <p>{@code LIKE '%mcp__%'} 宽松预滤（通配/大小写同 event 侧说明），part 级严格解析由
