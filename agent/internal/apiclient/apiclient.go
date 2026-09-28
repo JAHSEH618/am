@@ -165,17 +165,13 @@ type CommitReportSummary struct {
 }
 
 // ReportCommits 调 /api/v1/agent/report-commits（v2.2 Phase 3）。
-// 与 Report 相同的 HMAC 签名链路，但走独立 endpoint 避免污染会话上报通道。
-func (c *Client) ReportCommits(ctx context.Context, agentID, agentSecret string, body []byte) (*CommitReportSummary, error) {
-	headers, err := security.Sign(agentID, agentSecret, body)
+// 与 Report 相同的 HMAC 签名链路（对线上字节签名）与 contentEncoding 约定，但走独立 endpoint
+// 避免污染会话上报通道。服务端 CachedBodyHttpServletRequest 对 /api/v1/agent/* 统一按
+// Content-Encoding 解压，report-commits 与 /report 同样支持 gzip。
+func (c *Client) ReportCommits(ctx context.Context, agentID, agentSecret string, body []byte, contentEncoding string) (*CommitReportSummary, error) {
+	hdr, err := signedHeaders(agentID, agentSecret, body, contentEncoding)
 	if err != nil {
-		return nil, fmt.Errorf("sign: %w", err)
-	}
-	hdr := map[string]string{
-		"X-Agent-Id":    headers.AgentID,
-		"X-Agent-Ts":    headers.Timestamp,
-		"X-Agent-Nonce": headers.Nonce,
-		"X-Agent-Sign":  headers.Signature,
+		return nil, err
 	}
 	var summary CommitReportSummary
 	if err := c.doRaw(ctx, http.MethodPost, "/api/v1/agent/report-commits", body, hdr, &summary); err != nil {
@@ -192,6 +188,19 @@ func (c *Client) ReportCommits(ctx context.Context, agentID, agentSecret string,
 // contentEncoding 留空时按原始 JSON 上送；传 "gzip" 时表示 body 已经是 gzip 字节，
 // 会自动加 Content-Encoding 头让 server 端的 GzipDecodingFilter 解压。
 func (c *Client) Report(ctx context.Context, agentID, agentSecret string, body []byte, contentEncoding string) (*ReportSummary, error) {
+	hdr, err := signedHeaders(agentID, agentSecret, body, contentEncoding)
+	if err != nil {
+		return nil, err
+	}
+	var summary ReportSummary
+	if err := c.doRaw(ctx, http.MethodPost, "/api/v1/agent/report", body, hdr, &summary); err != nil {
+		return nil, err
+	}
+	return &summary, nil
+}
+
+// signedHeaders 对线上字节 body（可能已 gzip）计算 HMAC 头；contentEncoding 非空时一并带上。
+func signedHeaders(agentID, agentSecret string, body []byte, contentEncoding string) (map[string]string, error) {
 	headers, err := security.Sign(agentID, agentSecret, body)
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
@@ -205,11 +214,7 @@ func (c *Client) Report(ctx context.Context, agentID, agentSecret string, body [
 	if contentEncoding != "" {
 		hdr["Content-Encoding"] = contentEncoding
 	}
-	var summary ReportSummary
-	if err := c.doRaw(ctx, http.MethodPost, "/api/v1/agent/report", body, hdr, &summary); err != nil {
-		return nil, err
-	}
-	return &summary, nil
+	return hdr, nil
 }
 
 // envelope 是服务端 R<T> 三段式响应。
