@@ -10,6 +10,8 @@ import com.am.server.domain.git.GitCommit;
 import com.am.server.domain.git.GitCommitRepository;
 import com.am.server.domain.summary.DailySummary;
 import com.am.server.domain.summary.DailySummaryRepository;
+import com.am.server.insight.domain.AnalysisReportRepository;
+import com.am.server.insight.domain.AnalysisReportUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.am.server.service.EmployeeDisplayService;
 import com.am.server.system.ActiveTargetTypesProvider;
@@ -88,8 +90,8 @@ public class PeopleController {
     private final GitCommitRepository gitCommitRepository;
     private final ObjectMapper objectMapper;
     private final SlashCommandStatSupport slashCommandStatSupport;
-    private final com.am.server.insight.domain.AnalysisReportRepository analysisReportRepository;
-    private final com.am.server.insight.domain.AnalysisReportUserRepository analysisReportUserRepository;
+    private final AnalysisReportRepository analysisReportRepository;
+    private final AnalysisReportUserRepository analysisReportUserRepository;
 
     /** 员工数据访问触发的 today 聚合 TTL：60s 内不重复算同一天 */
     private static final Duration ENSURE_FRESH_TTL = Duration.ofSeconds(60);
@@ -530,21 +532,24 @@ public class PeopleController {
         return d;
     }
 
-    /** 批量回填最近 completed 报告的等级徽章；无报告时全部保持 null。 */
+    /**
+     * 批量回填最近 completed 报告的等级徽章；无报告时全部保持 null。
+     * <p>只投影用到的列：报告取 id + 窗口，员工行取 grade / score / confidence——
+     * 整行实体各带十来个 JSON 大字段，列表一次几百人。
+     */
     private void attachGrades(List<PeopleSummaryDto> dtos) {
         if (dtos.isEmpty()) {
             return;
         }
-        var reportOpt = analysisReportRepository
-                .findFirstByStatusOrderByWindowToDescIdDesc("completed");
-        if (reportOpt.isEmpty()) {
+        var reports = analysisReportRepository.findReportWindowsByStatus("completed", PageRequest.of(0, 1));
+        if (reports.isEmpty()) {
             return;
         }
-        var report = reportOpt.get();
+        var report = reports.get(0);
         String window = report.getWindowFrom() + " ~ " + report.getWindowTo();
         var codes = dtos.stream().map(PeopleSummaryDto::getUserCode).toList();
-        Map<String, com.am.server.insight.domain.AnalysisReportUser> byCode = new HashMap<>();
-        for (var u : analysisReportUserRepository.findByReportIdAndUserCodeIn(report.getId(), codes)) {
+        Map<String, AnalysisReportUserRepository.GradeBadge> byCode = new HashMap<>();
+        for (var u : analysisReportUserRepository.findGradeBadgesByReportIdAndUserCodeIn(report.getId(), codes)) {
             byCode.put(u.getUserCode(), u);
         }
         for (PeopleSummaryDto d : dtos) {
