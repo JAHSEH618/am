@@ -645,4 +645,17 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
           )
         """)
     List<Long> findSessionIdsWithSkillMdToolReads();
+
+    /** 同 {@link #findSessionIdsWithSkillMdToolReads}，限消息主键区间 {@code [fromId, toId)}——一次性回填分批扫表用。 */
+    @Query("""
+        SELECT DISTINCT m.aiSessionId FROM AiSessionMessage m
+        WHERE m.id >= :fromId AND m.id < :toId
+          AND LOWER(m.role) IN ('tool', 'assistant')
+          AND (
+            (m.contentPartsJson IS NOT NULL AND LOWER(m.contentPartsJson) LIKE '%skill.md%')
+            OR (m.contentText IS NOT NULL AND LOWER(m.contentText) LIKE '%skill.md%')
+          )
+        """)
+    List<Long> findSessionIdsWithSkillMdToolReadsInIdRange(@Param("fromId") long fromId,
+                                                           @Param("toId") long toId);
 }
