@@ -23,7 +23,7 @@ public class InsightProperties {
      * Rubric YAML 语义版本（-sys_config 同步）；写入 rubric 遥测/运维，与 LLM 审计缓存
      * <b>脱钩</b>——bump 后不会自动重审历史会话，除非管理员显式置位 {@code insight_reaudit_required}。
      */
-    private String rubricVersion = "v3.0";
+    private String rubricVersion = "v3.2";
 
     /**
      * 报告流水线 / 审计落库版本号，写入 analysis_report.report_version 与 ai_session_audit.audit_version；

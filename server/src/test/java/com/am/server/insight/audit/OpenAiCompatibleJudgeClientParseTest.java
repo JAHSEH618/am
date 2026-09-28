@@ -49,4 +49,18 @@ class OpenAiCompatibleJudgeClientParseTest {
                 + "\"reason\":\"ok\"}";
         assertThat(client.parseResult("m", json).getDifficulty()).isEqualTo(4);
     }
+
+    /** rubric v3.2 让 judge 先写 evidence 再打分：该字段不入库，解析必须忽略它而不是报错。 */
+    @Test
+    void ignoresLeadingEvidenceFieldFromRubricV32() {
+        String content = "<think>先找主任务</think>{\"evidence\":\"主任务是修复「连接池打满」，开发者贴了线程栈并指出可疑位置\","
+                + "\"difficulty\":4,\"outcome\":\"completed\",\"mode\":\"debugging\","
+                + "\"capabilities\":{\"problem_decomposition\":3,\"context_management\":4,"
+                + "\"debugging_skill\":4,\"tool_orchestration\":3,\"self_correction\":3},"
+                + "\"reason\":\"定位并修复连接池打满问题，主动缩小排查范围\"}";
+        JudgeResult r = client.parseResult("m", OpenAiCompatibleJudgeClient.extractJson(content));
+        assertThat(r.getMode()).isEqualTo("debugging");
+        assertThat(r.getCapDebuggingSkill()).isEqualTo(4);
+        assertThat(r.getReason()).startsWith("定位并修复");
+    }
 }
