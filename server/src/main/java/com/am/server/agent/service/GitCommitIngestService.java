@@ -202,7 +202,8 @@ public class GitCommitIngestService {
 
         gitCommitRepository.save(row);
         if (hasDetails) {
-            replaceFiles(row.getId(), details);
+            // 新 commit 的 id 刚分配，库里不可能有它的 file 行：直接插入，不先 DELETE（见 insertFiles）
+            insertFiles(row.getId(), details);
         }
         return CommitIngestOutcome.INSERTED;
     }
@@ -300,6 +301,18 @@ public class GitCommitIngestService {
 
     private void replaceFiles(Long commitId, List<GitCommitReportRequest.FileDetail> files) {
         gitCommitFileRepository.deleteByCommitId(commitId);
+        insertFiles(commitId, files);
+    }
+
+    /**
+     * 只插入、不删除——供刚落库的新 commit 使用。
+     *
+     * <p>不能对新 commit 也走 {@link #replaceFiles}：RR 下一条什么都没删到的 {@code DELETE … WHERE commit_id=?}
+     * 仍会在 {@code idx_commit} 上加 next-key 锁；新 id 大于所有已有 commit_id，锁住的是 supremum 前的同一段间隙。
+     * 两个并发的新 commit 上报各自持有这段间隙锁，再各自 INSERT 时互等对方的间隙锁 → 死锁，其中一条整条回滚、
+     * 计入 failed。父行 INSERT 在事务提交时照常刷写（没有 bulk DELETE，也就没有 clear 丢实体的问题）。
+     */
+    private void insertFiles(Long commitId, List<GitCommitReportRequest.FileDetail> files) {
         int order = 0;
         List<GitCommitFile> toSave = new ArrayList<>();
         for (GitCommitReportRequest.FileDetail f : files) {

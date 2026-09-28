@@ -86,6 +86,17 @@ public interface GitCommitRepository extends JpaRepository<GitCommit, Long> {
             """, nativeQuery = true)
     List<GitCommit> findWithPathStatsButNoFiles();
 
+    /** 同 {@link #findWithPathStatsButNoFiles}，限主键区间 {@code [fromId, toId)}——一次性回填分批扫表用。 */
+    @Query(value = """
+            SELECT c.* FROM git_commit c
+            WHERE c.id >= :fromId AND c.id < :toId
+              AND c.path_stats_json IS NOT NULL
+              AND JSON_LENGTH(c.path_stats_json) > 0
+              AND NOT EXISTS (SELECT 1 FROM git_commit_file f WHERE f.commit_id = c.id)
+            """, nativeQuery = true)
+    List<GitCommit> findWithPathStatsButNoFilesInIdRange(@Param("fromId") long fromId,
+                                                         @Param("toId") long toId);
+
     /**
      * AI 渗透率（北极星）：窗口 <code>[from, now]</code> 内，按行数口径返回
      * <code>[AI协助行数, 全部非merge行数]</code>。

@@ -83,6 +83,18 @@ final class OneShotBackfillSupport {
         return total;
     }
 
+    /**
+     * 驱动表主键 {@code [min, max]}；空表返回 null。供逐批 SELECT 再逐条处理（而非单条 UPDATE）的回填
+     * 自行按 {@link #ranges} 切区间。
+     *
+     * @param table 驱动表名（只传代码内常量）
+     */
+    static long[] idBounds(DataSource dataSource, String table) throws SQLException {
+        try (Connection c = dataSource.getConnection()) {
+            return minMaxId(c, table);
+        }
+    }
+
     /** {@code [min, max]} 切成左闭右开的 {@code [lo, lo+step)} 区间，覆盖 max。 */
     static List<long[]> ranges(long min, long max, int step) {
         if (step <= 0) {
