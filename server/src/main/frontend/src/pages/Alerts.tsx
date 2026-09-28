@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Card, DatePicker, Select, Skeleton, Space, Table, Tag, Tooltip } from 'antd';
+import { disableFutureDate, rangePresets } from '../utils/timeWindow';
 import dayjs, { Dayjs } from 'dayjs';
 import { fetchAlerts } from '../api/client';
 import type { AgentAlert, PageDto } from '../api/types';
@@ -66,6 +67,8 @@ export default function Alerts() {
             value={range}
             onChange={(v) => v && setRange([v[0]!, v[1]!])}
             allowClear={false}
+            disabledDate={disableFutureDate}
+            presets={rangePresets()}
           />
         </Space>
       }

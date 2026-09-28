@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, DatePicker, Descriptions, Input, Modal, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ClearOutlined, InfoCircleOutlined, RobotOutlined } from '@ant-design/icons';
+import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
 import dayjs, { type Dayjs } from 'dayjs';
-import isoWeek from 'dayjs/plugin/isoWeek';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { fetchMonitorTargets, fetchSessionAuditDetail, fetchSessions } from '../api/client';
 import type { AiSession, AiSessionAuditDetail, MonitorTarget, PageDto } from '../api/types';
@@ -43,7 +43,6 @@ const { RangePicker } = DatePicker;
 const SESSION_PAGE_SIZE_DEFAULT = 100;
 const SESSION_PAGE_SIZE_OPTIONS = ['100', '300', '500'] as const;
 
-dayjs.extend(isoWeek);
 
 /**
  * SSE session_changed 快照与列表 HTTP 口径不完全一致：ingest 推送的 AiSessionDto 没带
@@ -65,10 +64,8 @@ function mergeSessionListPatch(prev: AiSession, incoming: AiSession): AiSession 
 }
 
 function defaultRange(): [Dayjs, Dayjs] {
-  // v2.10：默认窗口统一改为自然周（周一 ~ 周日），与员工数据 / 项目透视 / 模型与工具 / 分析报告页一致。
-  const monday = dayjs().isoWeekday(1).startOf('day');
-  const sunday = monday.add(6, 'day');
-  return [monday, sunday];
+  // 默认窗口：本自然周至今（周一 ~ 今天），与员工数据 / 项目透视 / 模型与工具一致，见 utils/timeWindow。
+  return weekToDate();
 }
 
 function isDefaultRange(r: [Dayjs | null, Dayjs | null] | null): boolean {
@@ -763,6 +760,8 @@ export default function Sessions() {
             value={range as [Dayjs, Dayjs] | null}
             onChange={(v) => onRangeChange(v as [Dayjs | null, Dayjs | null] | null)}
             placeholder={['起始日', '截止日']}
+            disabledDate={disableFutureDate}
+            presets={rangePresets()}
             style={{ width: 240 }}
           />
           <Tooltip

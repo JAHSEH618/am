@@ -178,6 +178,22 @@
   flex-direction: column;
 }
 
+/* 手机宽度：侧栏收成 0 宽，展开时以浮层抽屉盖在内容上，不再把内容挤成一条窄缝 */
+.am-app-sider.am-app-sider--overlay.ant-layout-sider {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: calc(var(--am-z-header) + 2);
+  background: var(--am-bg-card) !important;
+  box-shadow: var(--am-shadow-pop);
+}
+.am-app-sider-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--am-z-header) + 1);
+  background: rgba(15, 23, 42, 0.32);
+}
+
 /* 顶栏：吸顶玻璃条，内容从其下滑过时产生真实折射（苹果工具栏质感）*/
 .am-app-header.ant-layout-header {
   position: sticky;

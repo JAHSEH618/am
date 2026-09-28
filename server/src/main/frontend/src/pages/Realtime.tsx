@@ -152,17 +152,29 @@ export default function Realtime() {
                       }
                     }}
                     title={
-                      <Space>
+                      // 姓名不省略、主机名在剩余宽度内省略：此前主机名不截断，"09-26 00:54" 这类长时间戳
+                      // 一出现就和主机名撞成 "e1009-mb09-26 00:54"。
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         {/* 标题区唯一的活跃脉冲圆点（active 时脉冲）；下方 body 圆点只承载状态色+灰化，不重复脉冲 */}
                         <StatusDot status={a.current_status} pulse={a.active} />
-                        <Text strong>{employeeName(a.user_display, a.user_code)}</Text>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{a.hostname}</Text>
-                      </Space>
+                        <Text strong style={{ flexShrink: 0 }}>{employeeName(a.user_display, a.user_code)}</Text>
+                        <Text type="secondary" ellipsis={{ tooltip: a.hostname }} style={{ fontSize: 12, minWidth: 0 }}>
+                          {a.hostname}
+                        </Text>
+                      </div>
                     }
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{formatTimeFromNow(a.last_seen_time)}</Text>}
+                    extra={
+                      <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap', marginLeft: 8 }}>
+                        {formatTimeFromNow(a.last_seen_time)}
+                      </Text>
+                    }
                     styles={{ body: { padding: 12 } }}
                   >
                     <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      {!a.current_status ? (
+                        // 设备在线但没有 AI 会话：给一句人话，而不是一个孤零零的 "● -"
+                        <Text type="secondary" style={{ fontSize: 13 }}>暂无运行中的 AI 会话</Text>
+                      ) : (
                       <Space>
                         {/* last_activity 超过阈值时仅做视觉灰化；status 以 DB 为准。脉冲已由标题圆点承载，这里不再叠加 */}
                         <StatusDot
@@ -176,6 +188,7 @@ export default function Realtime() {
                           <Tag>{a.current_tool}</Tag>
                         )}
                       </Space>
+                      )}
                       {a.project_name && (
                         <Text type="secondary" ellipsis={{ tooltip: true }} style={{ fontSize: 12 }}>
                           {a.project_name}{a.branch_name ? ` @${a.branch_name}` : ''}

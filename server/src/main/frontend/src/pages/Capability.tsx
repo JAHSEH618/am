@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Card, DatePicker, Space, Tabs, Typography } from 'antd';
-import dayjs, { type Dayjs } from 'dayjs';
+import { disableFutureDate, lastNDays, rangePresets } from '../utils/timeWindow';
+import type { Dayjs } from 'dayjs';
 import SkillTab from './Capability/SkillTab';
 import PluginTab from './Capability/PluginTab';
 import UserDrawer from './Capability/UserDrawer';
@@ -10,7 +11,7 @@ const { RangePicker } = DatePicker;
 
 /** 默认窗口 = 最近 30 天（含今日），与服务端 /admin/capability 缺省窗口一致。 */
 function defaultRange(): [Dayjs, Dayjs] {
-  return [dayjs().subtract(29, 'day').startOf('day'), dayjs().startOf('day')];
+  return lastNDays(30);
 }
 
 /**
@@ -43,7 +44,8 @@ export default function Capability() {
             value={range}
             onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
             allowClear={false}
-            disabledDate={(d) => d.isAfter(dayjs(), 'day')}
+            disabledDate={disableFutureDate}
+            presets={rangePresets()}
           />
           <Text type="secondary">默认最近 30 天；两个 Tab 共用同一时间窗</Text>
         </div>

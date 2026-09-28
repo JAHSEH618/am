@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Card, Col, DatePicker, Row, Skeleton, Space, Table, Typography } from 'antd';
+import { Card, Col, DatePicker, Row, Skeleton, Space, Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import dayjs, { type Dayjs } from 'dayjs';
-import isoWeek from 'dayjs/plugin/isoWeek';
+import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
+import type { Dayjs } from 'dayjs';
 import ReactECharts from 'echarts-for-react';
 import { fetchModelDistribution, fetchModelHeatmap } from '../api/client';
 import type { ModelDistribution, ModelHeatmap } from '../api/types';
@@ -35,12 +35,9 @@ const MODEL_TABLE_SCROLL_Y = 292;
 /** 明细表分页大小 */
 const MODEL_TABLE_PAGE_SIZE = 10;
 
-dayjs.extend(isoWeek);
 
 function defaultRange(): [Dayjs, Dayjs] {
-  const monday = dayjs().isoWeekday(1).startOf('day');
-  const sunday = monday.add(6, 'day');
-  return [monday, sunday];
+  return weekToDate();
 }
 
 export default function ModelsTools() {
@@ -206,31 +203,44 @@ export default function ModelsTools() {
     };
   }, [heatmap]);
 
+  // 列宽合计 ~430px：xl 下与左侧图表并排时也放得下，不再把"会话数 / 员工数"挤出卡片右缘。
+  // input / output 并入总量次行（与员工数据、项目透视的"入 / 出"写法一致）。
   const distColumns: ColumnsType<ModelDistribution> = [
-    { title: '模型', dataIndex: 'model', key: 'model', ellipsis: true, width: 120 },
+    { title: '模型', dataIndex: 'model', key: 'model', ellipsis: true, width: 100 },
     {
       title: '占比',
       dataIndex: 'percent',
       key: 'percent',
-      width: 84,
+      width: 72,
+      align: 'right',
       onCell: () => ({ style: NUM_STYLE }),
       sorter: (a, b) => a.percent - b.percent,
       defaultSortOrder: 'descend',
       render: (v: number) => `${v.toFixed(1)}%`,
     },
-    { title: 'input', dataIndex: 'input_tokens', key: 'input_tokens', width: 88, onCell: () => ({ style: NUM_STYLE }), render: (v: number) => formatTokens(v) },
-    { title: 'output', dataIndex: 'output_tokens', key: 'output_tokens', width: 88, onCell: () => ({ style: NUM_STYLE }), render: (v: number) => formatTokens(v) },
     {
-      title: '总量',
+      title: (
+        <Tooltip title="主数字为 Token 总量；下方小字为 input / output。">
+          <span>Token</span>
+        </Tooltip>
+      ),
       dataIndex: 'total_tokens',
       key: 'total_tokens',
-      width: 88,
-      onCell: () => ({ style: NUM_STYLE }),
+      width: 128,
+      align: 'right',
+      onCell: () => ({ style: { ...NUM_STYLE, whiteSpace: 'nowrap' } }),
       sorter: (a, b) => a.total_tokens - b.total_tokens,
-      render: (v: number) => formatTokens(v),
+      render: (v: number, row) => (
+        <div style={{ lineHeight: 1.3 }}>
+          <div>{formatTokens(v)}</div>
+          <div style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>
+            {formatTokens(row.input_tokens)} / {formatTokens(row.output_tokens)}
+          </div>
+        </div>
+      ),
     },
-    { title: '会话数', dataIndex: 'session_count', key: 'session_count', width: 72, onCell: () => ({ style: NUM_STYLE }) },
-    { title: '员工数', dataIndex: 'user_count', key: 'user_count', width: 72, onCell: () => ({ style: NUM_STYLE }) },
+    { title: '会话', dataIndex: 'session_count', key: 'session_count', width: 64, align: 'right', onCell: () => ({ style: NUM_STYLE }) },
+    { title: '员工', dataIndex: 'user_count', key: 'user_count', width: 64, align: 'right', onCell: () => ({ style: NUM_STYLE }) },
   ];
 
   const cardBodyStyle = {
@@ -248,7 +258,8 @@ export default function ModelsTools() {
             value={range}
             onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
             allowClear={false}
-            disabledDate={(d) => d.isAfter(dayjs(), 'day')}
+            disabledDate={disableFutureDate}
+            presets={rangePresets()}
           />
           <Text type="secondary">热力图与上方时间窗一致</Text>
         </div>
@@ -259,8 +270,8 @@ export default function ModelsTools() {
           <Skeleton active paragraph={{ rows: 8 }} />
         </Card>
       ) : (
-        <Row gutter={16} align="stretch">
-          <Col xs={24} md={14} style={{ display: 'flex' }}>
+        <Row gutter={[16, 16]} align="stretch">
+          <Col xs={24} xl={13} style={{ display: 'flex' }}>
             <Card
               size="small"
               style={{ flex: 1, width: '100%' }}
@@ -277,7 +288,7 @@ export default function ModelsTools() {
               ) : null}
             </Card>
           </Col>
-          <Col xs={24} md={10} style={{ display: 'flex' }}>
+          <Col xs={24} xl={11} style={{ display: 'flex' }}>
             <Card
               size="small"
               style={{ flex: 1, width: '100%' }}

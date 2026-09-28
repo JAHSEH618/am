@@ -11,8 +11,8 @@ import {
   ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
+import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
 import dayjs, { type Dayjs } from 'dayjs';
-import isoWeek from 'dayjs/plugin/isoWeek';
 import ReactECharts from '@/components/LazyECharts';
 import { fetchPeople, fetchPersonDetail, fetchPersonGitCommits, fetchPersonSlashCommands } from '../api/client';
 import type { CompositeGrade, NameValuePair, PeopleDetail, PeopleSummary, ProjectGitCommit, WowMetric } from '../api/types';
@@ -28,7 +28,6 @@ import { ink, semantic, indigo } from '../styles/tokens';
 import { HeroCard, MetricRow, type HeroTone } from '../components/HeroCard';
 import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
 
-dayjs.extend(isoWeek);
 
 /**
  * 员工数据页（v2.1 Phase 2）
@@ -41,14 +40,26 @@ dayjs.extend(isoWeek);
 const { Text } = Typography;
 const { RangePicker } = DatePicker;
 
-/** 数字列统一：右对齐 + 等宽数字（tnum），防止数据滚动时左右抖动；与 Dashboard 数值列同款。 */
-const NUMERIC_COL = { align: 'right' as const, onCell: () => ({ style: NUM_STYLE }) };
+/**
+ * 数字列统一：右对齐 + 等宽数字（tnum），防止数据滚动时左右抖动；与 Dashboard 数值列同款。
+ * 数值一律不折行——列宽不够时交给表格横向滚动（员工列 fixed），而不是把 "2.21 M" 拆成两行。
+ */
+const NUMERIC_CELL_STYLE = { ...NUM_STYLE, whiteSpace: 'nowrap' as const };
+const NUMERIC_COL = { align: 'right' as const, onCell: () => ({ style: NUMERIC_CELL_STYLE }) };
+
+/**
+ * 员工列表列宽：逐列显式给宽，合计 {@link PEOPLE_TABLE_SCROLL_X}。1440 宽屏下正好放下；更窄时横向滚动。
+ * 此前 7 列没给宽度、scroll.x 又小于实际需要，未定宽列被挤到 ~30px，表头与数值逐字折行。
+ */
+const PEOPLE_COL_W = {
+  name: 136, grade: 56, active: 120, asks: 96, qa: 76, sessions: 76, git: 84,
+  tokens: 120, slash: 108, retry: 56, firstResp: 80, model: 136,
+} as const;
+const PEOPLE_TABLE_SCROLL_X = Object.values(PEOPLE_COL_W).reduce((a, b) => a + b, 0);
 
 function defaultRange(): [Dayjs, Dayjs] {
-  // 默认窗口：本自然周（周一 ~ 周日），与分析报告口径一致。
-  const monday = dayjs().isoWeekday(1).startOf('day');
-  const sunday = monday.add(6, 'day');
-  return [monday, sunday];
+  // 默认窗口：本自然周至今（周一 ~ 今天），见 utils/timeWindow。
+  return weekToDate();
 }
 
 function parseRangeFromSearch(from: string | null, to: string | null): [Dayjs, Dayjs] | null {
@@ -170,11 +181,11 @@ export default function People() {
       dataIndex: 'user_display',
       key: 'user_display',
       fixed: 'left',
-      width: 180,
+      width: PEOPLE_COL_W.name,
       render: (v: string, row) => (
         <Space size={6}>
           <UserOutlined />
-          <Text ellipsis={{ tooltip: true }} style={{ maxWidth: 132 }}>
+          <Text ellipsis={{ tooltip: true }} style={{ maxWidth: PEOPLE_COL_W.name - 44 }}>
             {employeeName(v, row.user_code)}
           </Text>
         </Space>
@@ -188,7 +199,7 @@ export default function People() {
       ),
       dataIndex: 'composite_grade',
       key: 'composite_grade',
-      width: 104,
+      width: PEOPLE_COL_W.grade,
       align: 'center' as const,
       render: (v: CompositeGrade | null | undefined, row) =>
         v ? (
@@ -209,6 +220,7 @@ export default function People() {
       ),
       dataIndex: 'ai_active_seconds_union_avg',
       key: 'ai_active_seconds_union_avg',
+      width: PEOPLE_COL_W.active,
       ...NUMERIC_COL,
       sorter: (a, b) => a.ai_active_seconds_union_avg - b.ai_active_seconds_union_avg,
       render: (v: number) => formatDuration(v),
@@ -221,7 +233,7 @@ export default function People() {
       ),
       dataIndex: 'user_message_count',
       key: 'user_message_count',
-      width: 104,
+      width: PEOPLE_COL_W.asks,
       ...NUMERIC_COL,
       sorter: (a, b) => a.user_message_count - b.user_message_count,
     },
@@ -233,7 +245,7 @@ export default function People() {
       ),
       dataIndex: 'qa_ratio',
       key: 'qa_ratio',
-      width: 100,
+      width: PEOPLE_COL_W.qa,
       ...NUMERIC_COL,
       sorter: (a, b) => {
         const av = a.qa_ratio ?? -1;
@@ -253,6 +265,7 @@ export default function People() {
       title: '会话数',
       dataIndex: 'ai_session_count_total',
       key: 'ai_session_count_total',
+      width: PEOPLE_COL_W.sessions,
       ...NUMERIC_COL,
       sorter: (a, b) => a.ai_session_count_total - b.ai_session_count_total,
     },
@@ -264,7 +277,7 @@ export default function People() {
       ),
       dataIndex: 'git_commit_window_count',
       key: 'git_commit_window_count',
-      width: 96,
+      width: PEOPLE_COL_W.git,
       ...NUMERIC_COL,
       sorter: (a, b) => a.git_commit_window_count - b.git_commit_window_count,
       render: (v: number, row) => (
@@ -282,28 +295,27 @@ export default function People() {
       ),
     },
     {
-      title: '输入 Token',
-      dataIndex: 'total_input_tokens',
-      key: 'total_input_tokens',
-      ...NUMERIC_COL,
-      sorter: (a, b) => a.total_input_tokens - b.total_input_tokens,
-      render: (v: number) => formatTokens(v),
-    },
-    {
-      title: '输出 Token',
-      dataIndex: 'total_output_tokens',
-      key: 'total_output_tokens',
-      ...NUMERIC_COL,
-      sorter: (a, b) => a.total_output_tokens - b.total_output_tokens,
-      render: (v: number) => formatTokens(v),
-    },
-    {
-      title: 'Token 总量',
+      // 总量为主数字，输入 / 输出作次行小字：与项目透视、大盘 Top 表的"入 / 出"写法一致，三列并一列。
+      title: (
+        <Tooltip title="主数字为 Token 总量；下方小字为 输入 / 输出。">
+          <span>Token</span>
+        </Tooltip>
+      ),
       dataIndex: 'total_tokens',
       key: 'total_tokens',
+      width: PEOPLE_COL_W.tokens,
       ...NUMERIC_COL,
       sorter: (a, b) => a.total_tokens - b.total_tokens,
-      render: (v: number) => formatTokens(v),
+      render: (v: number, row) => (
+        <div style={{ lineHeight: 1.3 }}>
+          <div>{formatTokens(v)}</div>
+          {v > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>
+              {formatTokens(row.total_input_tokens)} / {formatTokens(row.total_output_tokens)}
+            </div>
+          )}
+        </div>
+      ),
     },
     {
       title: (
@@ -313,7 +325,7 @@ export default function People() {
       ),
       dataIndex: 'tool_call_count_total',
       key: 'tool_call_count_total',
-      width: 120,
+      width: PEOPLE_COL_W.slash,
       ...NUMERIC_COL,
       sorter: (a, b) => a.tool_call_count_total - b.tool_call_count_total,
       render: (v: number, row) => (
@@ -338,6 +350,7 @@ export default function People() {
       title: '卡壳',
       dataIndex: 'retry_count_total',
       key: 'retry_count_total',
+      width: PEOPLE_COL_W.retry,
       ...NUMERIC_COL,
       // 卡壳 = warning 语义；与时间线图的卡壳柱（semantic.warning）统一，不再用 volcano。
       render: (v: number) =>
@@ -360,6 +373,7 @@ export default function People() {
       title: '首响均值',
       dataIndex: 'first_response_avg_ms',
       key: 'first_response_avg_ms',
+      width: PEOPLE_COL_W.firstResp,
       ...NUMERIC_COL,
       render: (v: number) => (v > 0 ? `${(v / 1000).toFixed(1)} s` : EMPTY_DASH),
     },
@@ -367,11 +381,13 @@ export default function People() {
       title: 'Top 模型',
       dataIndex: 'top_model',
       key: 'top_model',
-      width: 150,
+      width: PEOPLE_COL_W.model,
       render: (v: string | null) =>
         v ? (
           <Tooltip title={v}>
-            <Tag>{modelLabel(v)}</Tag>
+            <Tag style={{ maxWidth: PEOPLE_COL_W.model - 16, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {modelLabel(v)}
+            </Tag>
           </Tooltip>
         ) : (
           EMPTY_DASH
@@ -394,13 +410,8 @@ export default function People() {
             value={range}
             onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
             allowClear={false}
-            disabledDate={(d) => d.isAfter(dayjs(), 'day')}
-            presets={[
-              { label: '近7天', value: [dayjs().subtract(6, 'day').startOf('day'), dayjs().startOf('day')] },
-              { label: '近30天', value: [dayjs().subtract(29, 'day').startOf('day'), dayjs().startOf('day')] },
-              { label: '本周', value: defaultRange() },
-              { label: '本月', value: [dayjs().startOf('month'), dayjs().startOf('day')] },
-            ]}
+            disabledDate={disableFutureDate}
+            presets={rangePresets()}
           />
         </div>
       </Card>
@@ -415,7 +426,7 @@ export default function People() {
             dataSource={list}
             locale={{ emptyText: '所选时间窗内暂无员工 AI 使用数据' }}
             pagination={{ pageSize: 20, showSizeChanger: false }}
-            scroll={{ x: 1180 }}
+            scroll={{ x: PEOPLE_TABLE_SCROLL_X }}
             onRow={(row) => {
               const selected = row.user_code === selectedUser;
               const base = clickableRowProps(() => setSelectedUser(row.user_code));
