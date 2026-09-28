@@ -8,7 +8,7 @@
 
 读取每位开发者机器上的本地 AI 工具会话，量化「AI 用得有多深、有多好、产出了什么」。
 
-![version](https://img.shields.io/badge/version-1.3.2-blue)
+![version](https://img.shields.io/badge/version-1.3.3-blue)
 ![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F?logo=springboot&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)
@@ -191,7 +191,7 @@ cd server/src/main/frontend && pnpm install && pnpm dev
 
 # 客户端
 cd agent && go test ./...
-VERSION=1.3.2 bash build-dist.sh   # 交叉编译四平台 → dist/install/
+VERSION=1.3.3 bash build-dist.sh   # 交叉编译四平台 → dist/install/
 ```
 
 > [!WARNING]
@@ -236,7 +236,7 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 │       └── monitors/     每个 AI 工具一个子包（cursor/claude/codex/.../zcode/gitlog）
 │
 ├── server/               Spring Boot 单体（前后端不分离，一个 jar）
-│   ├── build.gradle      artifact = aiwatch-server，version 1.3.2
+│   ├── build.gradle      artifact = aiwatch-server，version 1.3.3
 │   └── src/main/
 │       ├── java/com/am/server/   web · agent · aggregator · insight · system · domain
 │       ├── frontend/             React + Vite + TS + AntD（npm name = aiwatch-web）
@@ -268,7 +268,9 @@ curl -fsSL https://aiwatch.example.com/install/aiwatchd.sh | bash -s -- \
 
 ## 版本
 
-当前发布版本 **1.3.2**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+当前发布版本 **1.3.3**。本仓库由原 *ai-work-platform*（在线工时与成本核算）重定位为 **AIWatch**，去成本视角、聚焦 AI 使用观测；产品愿景见 [`docs/design/aiwatch-design-v2.0.md`](docs/design/aiwatch-design-v2.0.md)。包名 `com.am.server` 中的 `am` = *AI Monitoring*，非公司名。
+
+**v1.3.3**：服务端 `/agent/report` 打满 Hikari 连接池（`Connection is not available, request timed out after 30000ms`、服务起不来）与客户端常驻内存过高。服务端：新增上报舱壁 `AgentIngestBulkheadFilter`——同时处理的「重」上报不超过 `aiwatch.agent.ingest-max-concurrency`（默认 16，远小于 40 连接），超额在读 body、查库之前直接回 503 + `50301`，≤2KB 的心跳不占名额；`/report` 每次都跑的两条查询补上复合索引（`ai_session(agent_id,last_activity)`、`work_session(agent_id,status,start_time)`，启动时自动建）；ingest 对"没带新消息/新增量"的会话不再整表读出该会话全部事件的 `source_ref`，"是否有 source_ref"改为走覆盖索引的存在性查询；`source_ref` 启动回填跑完一遍即写标记，不再每次重启扫整张事件表；prod 打开 Hikari 泄漏检测（连接借出 >60s 打借出栈）。客户端：各 JSONL 采集器（claude/codex/openclaw/kimicode）解析前按文件 mtime 跳过 lookback 窗口外的历史会话（此前把磁盘上全部历史会话连同消息正文、图片解析后常驻内存）；修复子 agent 归并原地改写缓存对象——含 subagent 的会话每个 tick 把子会话 token/消息/增量再累加一遍，内存随运行时长上涨、会话 token 虚高（claude/codex/openclaw/cursor/kimicode）；qoder 单会话保留上限 20000→1000 条、工具轨迹 1000→20；未变化的 idle 会话不再每 tick 重复上报（15 分钟强制重发一次）；服务端回 503 时不再把整包写 outbox，outbox 每 tick 补发上限 200→20，避免服务一恢复就被全员补发洪峰再次打满；文件监听触发的补 tick 每个周期至多一次；Go 堆软上限 512MiB（`GOMEMLIMIT` 可覆盖）。**agent 有代码变更，需发版下发。**
 
 **v1.3.2**：修复 `git_commit` 自 2026-07-01 起整表不再进新行的丢数事故——`GitCommitFileRepository.deleteByCommitId` 声明了 `@Modifying(clearAutomatically = true)` 却没开 `flushAutomatically`，`ingestOne` 里刚 `save()` 出去、还挂在持久化上下文里的父行 INSERT 被随后的 `em.clear()` 一并丢弃：无异常、无回滚，日志照报 `inserted=N`，id 序列照取号（跑到 44 万），而子行 `git_commit_file` 照常落库，攒出 200 万孤儿行 / 8.8G，并让归因、渗透率、`/attribution` 全线空转。保留期清理要 `JOIN git_commit`，结构上永远选不中这批孤儿，故补一趟孤儿清扫（每拍上限 30 万行，摊平 ROW binlog 写放大）。另修两处：后台 LLM 审计的 FAILED 加 30 分钟冷却（此前 FAILED 与 NONE 同权、30s 一拍原样重打，网关 429 后一小时打出 3564 条告警），gitlog 游标键由 `repo_url` 改为 `repo_url + 工作副本路径`（同一远端的两个 clone 此前共用一格游标互相踢，每轮都整窗重发）。**agent 有代码变更，需发版下发。**
 
