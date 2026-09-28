@@ -94,6 +94,12 @@ type Reporter struct {
 	// uncappedTail 本 tick 因 cap 截断而未发完的 session 游标候选（key = provider:sessionID）。
 	uncappedTail map[string]MsgCursor
 
+	// 未变化空闲会话去重（见 unchanged.go）：sent = 上次成功上报的会话指纹；pendingSent / seenSessions
+	// 是本 tick 暂存，与 pending 游标同样只在上报成功后提交。
+	sent         map[string]sentSession
+	pendingSent  map[string]sentSession
+	seenSessions map[string]struct{}
+
 	// v1.0.19 设备心跳解耦：让"在线状态"不被任何慢 provider（如重度用户 cursor 全量扫描，单 tick 可达数分钟）
 	// 阻塞——单独一个 goroutine 按 heartbeatInterval 仅上报设备态刷新 last_seen，数据报文仍由 tickOnce 正常上报。
 	//
@@ -234,6 +240,9 @@ func (r *Reporter) Run(ctx context.Context) error {
 	ticker := time.NewTicker(r.nextInterval())
 	defer ticker.Stop()
 
+	// watchArmed：每个定时 tick 之间最多响应一次 watcher 触发。trae / codebuddy / qoder 的 hint 是整个
+	// IDE 配置目录，IDE 自己写日志 / 缓存就会推进 mtime；不设闸时这类机器只要开着 IDE 就每 5s 上报一次。
+	watchArmed := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -244,13 +253,15 @@ func (r *Reporter) Run(ctx context.Context) error {
 				logger.Warnf("report failed: %v", err)
 			}
 			lastTick = time.Now()
+			watchArmed = true
 			ticker.Reset(r.nextInterval())
 		case <-triggerCh:
-			// watcher 触发：限流到至少 minActiveReportInterval 一次，避免活跃期把快报节奏冲成轮询
-			// 风暴——真正价值是空闲→活跃的首次加速。距上次 tick 太近就丢弃本次信号。
-			if time.Since(lastTick) < minActiveReportInterval {
+			// watcher 的价值只在空闲→活跃的首次加速：已在活跃快报节奏时 ticker 本身就快，直接忽略；
+			// 空闲期每个基线间隔至多补一个 tick，且距上次 tick 不足 minActiveReportInterval 也丢弃。
+			if !watchArmed || r.lastActive.Load() || time.Since(lastTick) < minActiveReportInterval {
 				continue
 			}
+			watchArmed = false
 			if err := r.tickOnce(ctx); err != nil {
 				logger.Warnf("watch-triggered report failed: %v", err)
 			}
@@ -346,6 +357,14 @@ func (r *Reporter) ensureRegistered(ctx context.Context) error {
 	r.cfg = cfg2
 	r.creds.Store(&agentCreds{id: cfg2.AgentID, secret: cfg2.AgentSecret})
 	return nil
+}
+
+// handleServerBusy 处理服务端 503 / SERVER_BUSY：本次 body 不落 outbox（服务端什么都没入库、游标未推进，
+// 下个 tick 会带着同样的增量重报；落 outbox 只会在服务端恢复时叠出一波重复补发的洪峰），
+// 并把节奏退回空闲基线，避免在活跃快报节奏下每几秒重试一次。
+func (r *Reporter) handleServerBusy(err error) {
+	r.lastActive.Store(false)
+	logger.Infof("server busy, will retry at idle cadence without spooling to outbox (cursors not advanced): %v", err)
 }
 
 // handleReportError 在 server 返回 AGENT_NOT_FOUND 时，把本地 agent_id / secret 清空并落盘，
@@ -567,6 +586,7 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 同时把"本 tick 即将上报的最后一条 message"暂存到 r.pending，等本次发送成功后再 commit。
 	// backfillPending = 因 MaxMessagesPerSession cap 而未发完的余量（存量员工首次升级时 > 0）。
 	backfillPending := r.applyMsgCursors(monitors)
+	skippedUnchanged := r.dropUnchangedIdleSessions(monitors, time.Now())
 
 	state := &deviceStateDto{
 		OSType:       info.OSType,
@@ -609,11 +629,16 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 		body, encoding = rawBody, ""
 	}
 
-	// 1) 先 drain outbox 历史失败报文（按文件名时序）。drain 出错时把本次 body 也排队，下次再试。
+	// 1) 先 drain outbox 历史失败报文（按文件名时序）。drain 出错时把本次 body 也排队，下次再试；
+	//    但服务端明确回"忙"时不排队（见 handleServerBusy）。
 	if r.outbox != nil {
 		if drained, derr := r.outbox.Drain(ctx, r.sendOutboxBody); derr != nil {
 			if drained > 0 {
 				logger.Infof("outbox partial drained: sent=%d remaining_err=%v", drained, derr)
+			}
+			if apiclient.IsServerBusy(derr) {
+				r.handleServerBusy(derr)
+				return derr
 			}
 			if appendErr := r.outbox.Append(body); appendErr != nil {
 				logger.Warnf("outbox append after drain fail: %v", appendErr)
@@ -633,6 +658,10 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 			r.handleReportError(err)
 			return err
 		}
+		if apiclient.IsServerBusy(err) {
+			r.handleServerBusy(err)
+			return err
+		}
 		if r.outbox != nil {
 			if appendErr := r.outbox.Append(body); appendErr != nil {
 				logger.Warnf("outbox append after send fail: %v", appendErr)
@@ -649,6 +678,7 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 
 	// 3) 上报成功：把暂存的游标 commit 到内存 + 落盘
 	r.commitPendingCursors()
+	r.commitSentSessions()
 
 	// 自适应 cadence 信号：记录服务端本次判定的 active，供 Run 决定下个 tick 间隔。
 	// 仅成功路径更新——失败 / overlap-skip 的 tick 不改 cadence，避免瞬态网络抖动拖慢活跃上报。
@@ -672,12 +702,12 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 仅"有事件 / 有消息 / 有活跃 / 慢 tick"才打 INFO；纯 idle tick 走 Debug，避免在
 	// fast path 之后每 5 秒一行 INFO 把日志撑爆。Debug 包含完整 per-provider 拆解便于排障。
 	if summary.Events > 0 || summary.Messages > 0 || summary.Active {
-		logger.Infof("report ok: providers=%d sessions=%d events=%d messages=%d active=%v size=%d encoding=%s backfill_pending=%d total=%dms device=%dms collect=%dms",
-			len(monitors), summary.Sessions, summary.Events, summary.Messages, summary.Active,
+		logger.Infof("report ok: providers=%d sessions=%d skipped_unchanged=%d events=%d messages=%d active=%v size=%d encoding=%s backfill_pending=%d total=%dms device=%dms collect=%dms",
+			len(monitors), summary.Sessions, skippedUnchanged, summary.Events, summary.Messages, summary.Active,
 			len(body), encodingLabel(encoding), backfillPending, totalMs, deviceMs, collectMs)
 	} else {
-		logger.Debugf("report ok (idle): providers=%d sessions=%d size=%d encoding=%s backfill_pending=%d total=%dms device=%dms collect=%dms breakdown=[%s]",
-			len(monitors), summary.Sessions, len(body), encodingLabel(encoding), backfillPending, totalMs, deviceMs, collectMs, perProvider.String())
+		logger.Debugf("report ok (idle): providers=%d sessions=%d skipped_unchanged=%d size=%d encoding=%s backfill_pending=%d total=%dms device=%dms collect=%dms breakdown=[%s]",
+			len(monitors), summary.Sessions, skippedUnchanged, len(body), encodingLabel(encoding), backfillPending, totalMs, deviceMs, collectMs, perProvider.String())
 	}
 	if totalMs > 5000 {
 		logger.Infof("slow tick breakdown: %s", perProvider.String())

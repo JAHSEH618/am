@@ -39,7 +39,30 @@ const (
 	// 触发条件示例：DBA 误删 / 开发期重置数据库 / 设备被人工标 INACTIVE。
 	// client 收到这个码必须**清掉本地 agent_id+secret 并重新 register**，否则永远 fail。
 	CodeAgentNotFound = 10004
+	// CodeServerBusy 50301：服务端上报并发已满（随 HTTP 503 返回）。本次什么都没入库，
+	// 游标未推进，下个 tick 自然重报——不要把 body 落 outbox，否则恢复后补发洪峰会再次压垮服务端。
+	CodeServerBusy = 50301
 )
+
+// HTTPError 是非 2xx 的 HTTP 响应（不含 R 三段式业务错误）。
+type HTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("http %d: %s", e.StatusCode, e.Body)
+}
+
+// IsServerBusy 判断 err 是否为服务端限流 / 过载（503、429 或业务码 CodeServerBusy）。
+func IsServerBusy(err error) bool {
+	var he *HTTPError
+	if errors.As(err, &he) {
+		return he.StatusCode == http.StatusServiceUnavailable || he.StatusCode == http.StatusTooManyRequests
+	}
+	var se *ServerError
+	return errors.As(err, &se) && se.Code == CodeServerBusy
+}
 
 // ServerError 是 server 在 R 三段式 envelope 中返回的业务错误（HTTP 200 但 code != 0）。
 //
@@ -227,7 +250,7 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body []byte, he
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("http %d: %s", resp.StatusCode, truncate(string(respBody), 256))
+		return &HTTPError{StatusCode: resp.StatusCode, Body: truncate(string(respBody), 256)}
 	}
 	var env envelope
 	if err := json.Unmarshal(respBody, &env); err != nil {

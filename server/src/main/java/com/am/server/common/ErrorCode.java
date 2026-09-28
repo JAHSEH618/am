@@ -24,4 +24,7 @@ public final class ErrorCode {
     public static final int OPERATION_NOT_ALLOWED = 20003;
 
     public static final int INTERNAL_ERROR = 50000;
+
+    /** agent 上报并发已满（HTTP 503）：客户端不必落 outbox，下个 tick 重报即可。 */
+    public static final int SERVER_BUSY = 50301;
 }

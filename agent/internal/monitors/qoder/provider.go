@@ -33,8 +33,10 @@ import (
 const (
 	TypeCode          = "qoder"
 	maxJSONLLine      = 8 << 20
-	maxRecentMessages = 20000
-	maxRecentTools    = 1000
+	// 与其它 provider 对齐（原 20000 / 1000）：reporter 每 tick 每会话最多只发 1000 条，
+	// 多留的消息只是常驻内存；工具轨迹每 tick 全量上送，服务端要按条去重，1000 条纯属负载。
+	maxRecentMessages = 1000
+	maxRecentTools    = 20
 )
 
 type Provider struct {
@@ -271,11 +273,11 @@ func mergeRecord(ps *parsedSession, rec transcriptRecord) {
 	for _, tool := range tools {
 		ps.Tools = append(ps.Tools, monitor.Tool{Name: tool, Timestamp: monitor.LocalTime(ts)})
 	}
-	if len(ps.Messages) > maxRecentMessages {
-		ps.Messages = ps.Messages[len(ps.Messages)-maxRecentMessages:]
+	if len(ps.Messages) > maxRecentMessages*2 {
+		ps.Messages = append([]monitor.Message(nil), ps.Messages[len(ps.Messages)-maxRecentMessages:]...)
 	}
-	if len(ps.Tools) > maxRecentTools {
-		ps.Tools = ps.Tools[len(ps.Tools)-maxRecentTools:]
+	if len(ps.Tools) > maxRecentTools*2 {
+		ps.Tools = append([]monitor.Tool(nil), ps.Tools[len(ps.Tools)-maxRecentTools:]...)
 	}
 }
 
@@ -355,7 +357,7 @@ func (p *Provider) toMonitor(ps *parsedSession, now time.Time) monitor.Session {
 		StartedAt: monitor.LocalTime(ps.StartedAt), LastActivity: monitor.LocalTime(ps.LastActivity),
 		UserMessages: ps.UserMessages, AssistantMessages: ps.AssistantMessages,
 		SnapshotMessageCount: len(ps.Messages), InputTokens: ps.InputTokens, OutputTokens: ps.OutputTokens,
-		RecentMessages: ps.Messages, RecentTools: ps.Tools,
+		RecentMessages: ps.Messages, RecentTools: tailTools(ps.Tools, 10),
 		ActivityDeltas: common.TailActivityDeltas(ps.Deltas, maxRecentMessages),
 	}
 }
@@ -578,4 +580,11 @@ func marshalCompact(v any) string {
 	}
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+func tailTools(in []monitor.Tool, n int) []monitor.Tool {
+	if len(in) <= n {
+		return in
+	}
+	return in[len(in)-n:]
 }

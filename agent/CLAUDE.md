@@ -59,7 +59,18 @@ cadence. Each tick snapshots all policy-enabled providers **in parallel**
 - **Message cursors** (`cursors.go`): per `(provider, sessionID)` high-water marks persisted atomically to
   `state/cursors.json` (schema-versioned — a bump forces a full re-scan). Cursors only advance on a
   successful tick; a failed tick retransmits and the server dedups.
-- **Offline outbox** (`outbox.go`): failed report bodies are spooled to `state/outbox/` and replayed in order.
+- **Offline outbox** (`outbox.go`): failed report bodies are spooled to `state/outbox/` and replayed in order,
+  at most `outboxDrainPerTick` (20) per tick. **Server-busy is not spooled**: HTTP 503/429 or code 50301
+  (`apiclient.IsServerBusy`) means nothing was ingested and cursors did not advance, so the next tick resends the
+  same increments; the tick just drops to the idle cadence. Spooling busy bodies is what turned the 2026-09
+  pool-exhaustion outage into a restart-proof storm (every agent replaying hundreds of bodies on recovery).
+- **Unchanged idle sessions are skipped** (`unchanged.go`): a session with no new messages/deltas after cursor
+  slicing, `status == idle`, and the same scalar fingerprint as the last *successful* send is left out of the
+  body; it is force-resent every `unchangedResyncInterval` (15 min). Non-idle sessions are always sent — the
+  server's `active` reply and work-session active seconds depend on them.
+- **Watcher-triggered ticks** fire at most once per ticker period and never while already in fast cadence
+  (IDE config-dir hints for trae/codebuddy/qoder change constantly).
+- **Memory**: `cmdStart` sets a 512 MiB Go soft memory limit unless `GOMEMLIMIT` is set (`cmd/agent/memlimit.go`).
 - **Bootstrap mode**: on first run with an empty cursor store, all monitors widen to a 30d lookback to send
   history, then snap back to 48h once drained.
 - Git commits go out separately via `GitLogReporter` → `POST /api/v1/agent/report-commits`, with its own

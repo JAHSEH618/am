@@ -54,6 +54,21 @@ type parsedSession struct {
 	Model             string
 }
 
+// clone 返回可安全改写的副本（切片各自独立）。子 composer 归并会原地改写父会话，
+// 而父会话是 parsedSessionCache 跨 tick 复用的同一指针，必须先 clone 再归并。
+func (p *parsedSession) clone() *parsedSession {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.SubagentComposerIDs = append([]string(nil), p.SubagentComposerIDs...)
+	cp.RecentTools = append([]monitor.Tool(nil), p.RecentTools...)
+	cp.RecentMessages = append([]monitor.Message(nil), p.RecentMessages...)
+	cp.ActivityDeltas = append([]monitor.ActivityDelta(nil), p.ActivityDeltas...)
+	cp.AgentToolOrders = append([]int(nil), p.AgentToolOrders...)
+	return &cp
+}
+
 // buildToolText 把 toolFormer 的入参 + 结果 + 状态拼成对人类可读的 message 内容。
 //
 //	[args]      工具入参（优先 rawArgs，回退 params）

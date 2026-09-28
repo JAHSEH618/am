@@ -27,18 +27,45 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
     boolean existsByAiSessionIdAndEventTypeAndToolNameAndEventTime(
             Long aiSessionId, String eventType, String toolName, LocalDateTime eventTime);
 
-    /** 预载会话既有 source_ref(P3-3a):COALESCE 列 + JSON 兜底,过渡期(回填未完)也正确。仅返回有 ref 的行。 */
-    @Query(value = "SELECT COALESCE(source_ref, JSON_UNQUOTE(JSON_EXTRACT(extra_json, '$.source_ref'))) "
-            + "FROM ai_session_event WHERE ai_session_id = :sessionId "
-            + "AND (source_ref IS NOT NULL OR JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL)",
+    /**
+     * 预载会话既有 source_ref(P3-3a):列 + JSON 兜底,过渡期(回填未完)也正确。仅返回有 ref 的行。
+     *
+     * <p>拆成 UNION ALL 而不是 {@code COALESCE(...) WHERE (列 IS NOT NULL OR JSON ...)}:后者的 OR 让
+     * 每一行都得回表读 extra_json;前半段在 idx_session_sourceref 上即可覆盖,只有列为空的旧行才回表。
+     * 结果集与旧写法一致(列非空取列,列空取 JSON)。
+     */
+    @Query(value = "SELECT source_ref FROM ai_session_event "
+            + "WHERE ai_session_id = :sessionId AND source_ref IS NOT NULL "
+            + "UNION ALL "
+            + "SELECT JSON_UNQUOTE(JSON_EXTRACT(extra_json, '$.source_ref')) FROM ai_session_event "
+            + "WHERE ai_session_id = :sessionId AND source_ref IS NULL "
+            + "AND JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL",
             nativeQuery = true)
     List<String> findSourceRefsByAiSessionId(@Param("sessionId") Long sessionId);
 
-    /** 会话是否已有带 source_ref 的逐条增量(列或 JSON 兜底)。 */
-    @Query(value = "SELECT COUNT(*) FROM ai_session_event WHERE ai_session_id = :sessionId "
-            + "AND (source_ref IS NOT NULL OR JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL)",
+    /** 0/1:会话是否已有物化的 source_ref(idx_session_sourceref 覆盖,命中第一行即停)。 */
+    @Query(value = "SELECT COUNT(*) FROM (SELECT 1 FROM ai_session_event "
+            + "WHERE ai_session_id = :sessionId AND source_ref IS NOT NULL LIMIT 1) t",
             nativeQuery = true)
-    long countByAiSessionIdWithAnySourceRef(@Param("sessionId") Long sessionId);
+    long countFirstMaterializedSourceRef(@Param("sessionId") Long sessionId);
+
+    /** 0/1:过渡期兜底——列未回填、source_ref 只在 extra_json 里的旧行(只看该会话列为空的行)。 */
+    @Query(value = "SELECT COUNT(*) FROM (SELECT 1 FROM ai_session_event "
+            + "WHERE ai_session_id = :sessionId AND source_ref IS NULL "
+            + "AND JSON_EXTRACT(extra_json, '$.source_ref') IS NOT NULL LIMIT 1) t",
+            nativeQuery = true)
+    long countFirstLegacySourceRef(@Param("sessionId") Long sessionId);
+
+    /**
+     * 会话是否已有带 source_ref 的逐条增量(列或 JSON 兜底)。
+     *
+     * <p>每个 tick 对每个"无新消息 / 无新增量"的会话都会调一次(见 ingest 的 prefersPerItemDeltaPath)。
+     * 原实现是 {@code COUNT(*) ... WHERE (列 IS NOT NULL OR JSON_EXTRACT(...))}——把该会话全部事件回表数一遍;
+     * 这里只要"有没有",先走覆盖索引,绝大多数会话第一条就命中。
+     */
+    default boolean existsAnySourceRef(Long sessionId) {
+        return countFirstMaterializedSourceRef(sessionId) > 0 || countFirstLegacySourceRef(sessionId) > 0;
+    }
 
     Page<AiSessionEvent> findByAiSessionIdOrderByEventTimeDesc(Long aiSessionId, Pageable pageable);
 

@@ -27,6 +27,7 @@ func mergeSubagentSessions(sessions []*parsedSession) ([]*parsedSession, []strin
 	merged := common.CollapseChildSessions(sessions, common.SessionChildLinks[*parsedSession]{
 		ID:       func(ps *parsedSession) string { return ps.SessionID },
 		ParentID: func(ps *parsedSession) string { return ps.ParentComposerID },
+		Clone:    func(ps *parsedSession) *parsedSession { return ps.clone() },
 		MergeChildren: func(parent *parsedSession, children []*parsedSession) {
 			parentStarted := parent.StartedAt
 			spliceSubagentMessages(parent, children)

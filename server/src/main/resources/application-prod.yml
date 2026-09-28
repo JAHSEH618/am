@@ -17,6 +17,9 @@ spring:
       # 短暂等池比 100 条并发查询一起压 MySQL 好。
       maximum-pool-size: 40
       minimum-idle: 10
+      # 连接被借出超过 60s 就打一条带借出栈的 WARN（"Connection leak detection triggered"）。
+      # 池子再被打满时，这条日志直接告诉你是谁占着连接不还——比事后猜 30s 超时的受害者强。
+      leak-detection-threshold: 60000
   sql:
     init:
       mode: never

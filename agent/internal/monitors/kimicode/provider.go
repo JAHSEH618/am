@@ -66,7 +66,8 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 	roots := sessionRoots()
 	now := time.Now()
 
-	jobs, hits, seen := p.collectJobs(roots)
+	cutoff := now.Add(-p.lookback)
+	jobs, hits, seen := p.collectJobs(roots, cutoff)
 	results := common.RunParallelParse(jobs, p.parseOne)
 
 	files := make([]*parsedSession, 0, len(hits)+len(results))
@@ -83,7 +84,6 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 	merged := mergeBySession(files)
 	workdirs := loadWorkdirs(sessionIndexPaths())
 
-	cutoff := now.Add(-p.lookback)
 	sessions := make([]monitor.Session, 0, len(merged))
 	for _, ps := range merged {
 		if ps == nil || ps.SessionID == "" {
@@ -110,32 +110,46 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 }
 
 // collectJobs 在所有会话根下递归找 wire.jsonl（忽略 context.jsonl / session_index.jsonl）。
-func (p *Provider) collectJobs(roots []string) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
+// 同一会话的 main + subagent wire.jsonl 按整组判定是否在 cutoff 窗口内（见 common.FilterFreshGroups），
+// 窗口外的会话不解析、不缓存。
+func (p *Provider) collectJobs(roots []string, cutoff time.Time) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
 	seen := make(map[string]struct{})
 	var jobs []common.ParseJob[*parsedSession]
 	var hits []*parsedSession
 
+	var paths []string
 	for _, root := range roots {
 		_ = common.WalkJSONL(root, func(path string, _ fs.DirEntry) bool {
-			if filepath.Base(path) != "wire.jsonl" {
-				return true
+			if filepath.Base(path) == "wire.jsonl" {
+				paths = append(paths, path)
 			}
-			seen[path] = struct{}{}
-			cached, offset, mtime := p.cache.GetIncremental(path)
-			if cached != nil && offset == 0 {
-				hits = append(hits, cached)
-				return true
-			}
-			jobs = append(jobs, common.ParseJob[*parsedSession]{
-				Path:   path,
-				Cached: cached,
-				Offset: offset,
-				MTime:  mtime,
-			})
 			return true
 		})
 	}
+	for _, path := range common.FilterFreshGroups(paths, wireGroupKey, cutoff) {
+		seen[path] = struct{}{}
+		cached, offset, mtime := p.cache.GetIncremental(path)
+		if cached != nil && offset == 0 {
+			hits = append(hits, cached)
+			continue
+		}
+		jobs = append(jobs, common.ParseJob[*parsedSession]{
+			Path:   path,
+			Cached: cached,
+			Offset: offset,
+			MTime:  mtime,
+		})
+	}
 	return jobs, hits, seen
+}
+
+// wireGroupKey 把 <sessionId>/agents/<agent>/wire.jsonl 归到 <sessionId> 目录，其它布局按所在目录分组。
+func wireGroupKey(path string) string {
+	agentDir := filepath.Dir(path)
+	if filepath.Base(filepath.Dir(agentDir)) == "agents" {
+		return filepath.Dir(filepath.Dir(agentDir))
+	}
+	return agentDir
 }
 
 func (p *Provider) parseOne(path string, offset int64, cached *parsedSession) (*parsedSession, int64, error) {
@@ -149,6 +163,9 @@ func (p *Provider) parseOne(path string, offset int64, cached *parsedSession) (*
 // main 提供身份字段，其余 token/消息/工具累加。
 func mergeBySession(files []*parsedSession) []*parsedSession {
 	groups := make(map[string]*parsedSession)
+	// owned 标记 groups 里的对象是否已是本次归并私有的副本。files 里的指针来自 FileCache、
+	// 跨 tick 复用：直接 mergeFrom 会让缓存对象每个 tick 再累加一遍子文件的 token/消息/增量。
+	owned := make(map[string]bool)
 	order := make([]string, 0, len(files))
 	for _, f := range files {
 		if f == nil || f.SessionID == "" {
@@ -160,13 +177,19 @@ func mergeBySession(files []*parsedSession) []*parsedSession {
 			order = append(order, f.SessionID)
 			continue
 		}
+		if !owned[f.SessionID] {
+			base = base.clone()
+			owned[f.SessionID] = true
+		}
 		// main 优先作为身份基底；若先来的是 subagent、后来的是 main，则换基底。
 		if base.AgentName != "main" && f.AgentName == "main" {
-			f.mergeFrom(base)
-			groups[f.SessionID] = f
+			main := f.clone()
+			main.mergeFrom(base)
+			base = main
 		} else {
 			base.mergeFrom(f)
 		}
+		groups[f.SessionID] = base
 	}
 	out := make([]*parsedSession, 0, len(order))
 	for _, sid := range order {

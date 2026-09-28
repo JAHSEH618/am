@@ -42,6 +42,13 @@ public class PerformanceIndexSchemaPatches {
         // patch 保留期清理按 commit_time 切窗口。
         ensureIndex(dataSource, "git_commit", "idx_commit_time",
                 "CREATE INDEX idx_commit_time ON git_commit (commit_time)");
+        // 以下两条都在每一次 /agent/report（含 60s 一次的设备心跳）里执行（WorkSessionService.advance）。
+        // work_session 原先没有任何 agent_id 索引，只能靠 idx_status 扫全部 OPEN 行再排序；
+        // ai_session 只有单列 idx_agent_id，重度用户上千个会话每次都要回表 + filesort 取最新一条。
+        ensureIndex(dataSource, "work_session", "idx_agent_status_start",
+                "CREATE INDEX idx_agent_status_start ON work_session (agent_id, status, start_time)");
+        ensureIndex(dataSource, "ai_session", "idx_agent_last",
+                "CREATE INDEX idx_agent_last ON ai_session (agent_id, last_activity)");
     }
 
     private static void ensureIndex(DataSource dataSource, String table, String indexName, String ddl) {

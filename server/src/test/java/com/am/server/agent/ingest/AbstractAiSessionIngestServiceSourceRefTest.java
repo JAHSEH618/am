@@ -72,7 +72,7 @@ class AbstractAiSessionIngestServiceSourceRefTest {
     void prefersPerItemDeltaPathUsesMaterializedCount() {
         com.am.server.agent.api.dto.MonitorSessionDto dto =
                 new com.am.server.agent.api.dto.MonitorSessionDto();   // 无 activityDeltas / recentMessages
-        when(eventRepository.countByAiSessionIdWithAnySourceRef(7L)).thenReturn(1L);
+        when(eventRepository.existsAnySourceRef(7L)).thenReturn(true);
 
         assertThat(ingest.prefersPerItemDeltaPath(dto, 7L)).isTrue();
     }

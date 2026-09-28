@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -107,7 +108,8 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 		return p.empty(now), nil
 	}
 
-	jobs, hits, seen := p.collectJobs(root)
+	cutoff := now.Add(-p.lookback)
+	jobs, hits, seen := p.collectJobs(root, cutoff)
 	results := common.RunParallelParse(jobs, p.parseOne)
 
 	out := make([]*parsedSession, 0, len(hits)+len(results))
@@ -123,7 +125,6 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 
 	out = mergeSubagentSessions(out)
 
-	cutoff := now.Add(-p.lookback)
 	sessions := make([]monitor.Session, 0, len(out))
 	for _, ps := range out {
 		if ps == nil || ps.SessionID == "" {
@@ -158,12 +159,15 @@ func (p *Provider) empty(now time.Time) monitor.Snapshot {
 
 // collectJobs 扫 ~/.claude/projects/<encoded>/*.jsonl 以及 <encoded>/<session>/subagents/*.jsonl。
 //
+// 只处理 mtime 落在 cutoff 之后的会话组（见 common.FilterFreshGroups）：窗口外的历史会话既不解析
+// 也不进 seen，下面的 cache.Prune 会把它们从缓存里清掉。
+//
 // 返回三组数据：
 //
 //	jobs   缓存 miss / 文件长大了 → 需要本次重新解析
 //	hits   完全命中（mtime 没变）→ 直接复用缓存里的 parsedSession
-//	seen   本次见到的所有 jsonl 路径 → 用于 cache.Prune
-func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
+//	seen   本次保留的所有 jsonl 路径 → 用于 cache.Prune
+func (p *Provider) collectJobs(root string, cutoff time.Time) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
 	seen := make(map[string]struct{})
 	var jobs []common.ParseJob[*parsedSession]
 	var hits []*parsedSession
@@ -172,12 +176,15 @@ func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], 
 	if err != nil {
 		return jobs, hits, seen
 	}
+	var paths []string
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		dir := filepath.Join(root, e.Name())
-		p.collectJSONLDir(dir, &jobs, &hits, seen)
+		if files, err := filepath.Glob(filepath.Join(dir, "*.jsonl")); err == nil {
+			paths = append(paths, files...)
+		}
 
 		subdirs, err := os.ReadDir(dir)
 		if err != nil {
@@ -188,27 +195,32 @@ func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], 
 				continue
 			}
 			sessionDir := filepath.Join(dir, sd.Name())
-			p.collectJSONLDir(sessionDir, &jobs, &hits, seen)
-			subFiles, err := filepath.Glob(filepath.Join(sessionDir, "subagents", "*.jsonl"))
-			if err != nil {
-				continue
+			if files, err := filepath.Glob(filepath.Join(sessionDir, "*.jsonl")); err == nil {
+				paths = append(paths, files...)
 			}
-			for _, f := range subFiles {
-				p.collectJSONLFile(f, &jobs, &hits, seen)
+			if subFiles, err := filepath.Glob(filepath.Join(sessionDir, "subagents", "*.jsonl")); err == nil {
+				paths = append(paths, subFiles...)
 			}
 		}
+	}
+	for _, f := range common.FilterFreshGroups(paths, func(path string) string { return sessionGroupKey(root, path) }, cutoff) {
+		p.collectJSONLFile(f, &jobs, &hits, seen)
 	}
 	return jobs, hits, seen
 }
 
-func (p *Provider) collectJSONLDir(dir string, jobs *[]common.ParseJob[*parsedSession], hits *[]*parsedSession, seen map[string]struct{}) {
-	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+// sessionGroupKey 把 <proj>/<sid>.jsonl、<proj>/<sid>/*.jsonl、<proj>/<sid>/subagents/*.jsonl
+// 都映射到 "<proj>/<sid>"，让主会话与其 subagent 文件按整组判定是否在窗口内。
+func sessionGroupKey(root, path string) string {
+	rel, err := filepath.Rel(root, path)
 	if err != nil {
-		return
+		return path
 	}
-	for _, f := range files {
-		p.collectJSONLFile(f, jobs, hits, seen)
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) < 2 {
+		return path
 	}
+	return parts[0] + "/" + strings.TrimSuffix(parts[1], ".jsonl")
 }
 
 func (p *Provider) collectJSONLFile(path string, jobs *[]common.ParseJob[*parsedSession], hits *[]*parsedSession, seen map[string]struct{}) {
