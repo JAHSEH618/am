@@ -94,6 +94,10 @@ aiwatch:
     activity-window-seconds: 300
     # 单次 /report 推进 work_session 时长上限（与 report_interval 一致）。
     per-report-cap-seconds: 120
+    # 同时处理的「重」agent 上报上限（≤2KB 的心跳小包不占名额），超出直接 503、客户端下个 tick 重报。
+    # 必须明显小于 Hikari 池（prod 40），给控制台 / 定时任务 / 心跳留连接。见 AgentIngestBulkheadFilter。
+    ingest-max-concurrency: 16
+    ingest-acquire-timeout-ms: 500
   capture:
     max-text-bytes-per-part: 524288
     max-blob-bytes-per-part: 1048576

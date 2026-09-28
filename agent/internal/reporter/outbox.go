@@ -47,6 +47,13 @@ type Outbox struct {
 	maxDrainPerCall int
 }
 
+// outboxDrainPerTick 单个 tick 最多补发的 outbox 文件数。
+//
+// 原为 200：服务端一恢复，全员 agent 每 tick 各自串行补发上百个整包，正好在服务端最脆弱的时候
+// 把连接池再次打满（2026-09 生产事故里服务起不来的放大器）。outbox 里的包与下一个 tick 的新包
+// 高度重复（游标未推进时新包本就带着同样的增量），慢慢补不丢数据。
+const outboxDrainPerTick = 20
+
 // LoadOutbox 创建（或挂载已存在的）outbox 目录。
 func LoadOutbox() (*Outbox, error) {
 	base, err := stateDir()
@@ -57,7 +64,7 @@ func LoadOutbox() (*Outbox, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	o := &Outbox{dir: dir, maxFiles: 2000, maxDrainPerCall: 200}
+	o := &Outbox{dir: dir, maxFiles: 2000, maxDrainPerCall: outboxDrainPerTick}
 	o.pending.Store(-1)
 	return o, nil
 }

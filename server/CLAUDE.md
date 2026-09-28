@@ -54,19 +54,30 @@ Capability-based packages under `com.am.server`:
 
 ## Agent ingest pipeline
 
-`POST /api/v1/agent/report` → `AgentSignatureFilter` (verifies `X-Agent-*` HMAC headers: ±300 s timestamp
+`POST /api/v1/agent/report` → `AgentIngestBulkheadFilter` (caps concurrent heavy reports at
+`aiwatch.agent.ingest-max-concurrency`, default 16 — well under the 40-connection Hikari pool — and answers
+HTTP 503 + `ErrorCode.SERVER_BUSY` (50301) *before* the body is read or the DB touched; bodies ≤2 KB such as
+device heartbeats bypass it) → `AgentSignatureFilter` (verifies `X-Agent-*` HMAC headers: ±300 s timestamp
 window, nonce dedup via `agent_nonce`, device lookup, constant-time HMAC compare; `/agent/register` is the
 only exemption) → `AgentReportService` routes by `targetType` to a provider ingestor in `agent/ingest`
 (`AbstractAiSessionIngestService` + Cursor/Claude/Codex/Hermes/OpenClaw/OpenHarness subclasses). Ingest
 **upserts** `ai_session` (unique on `target_type + external_session_id`), appends `ai_session_event`,
 dedups `ai_session_message` on `(ai_session_id, external_message_id)`, then publishes an SSE
 `session_changed` event and **enqueues a debounced `daily_summary` refresh**. Git commits arrive separately
-via `POST /api/v1/agent/report-commits`.
+via `POST /api/v1/agent/report-commits` (same bulkhead).
 
 > That endpoint ingests **per commit** and swallows single-commit failures so the rest of the batch lands —
 > so its `IngestSummary.failed` count is a load-bearing contract, not a stat: the agent only advances its
 > gitlog cursor when `failed == 0`, otherwise those commits fall outside the next incremental window and are
 > lost for good. Never drop the field or return 0 unconditionally.
+
+> Ingest cost is *per session per tick per agent*, so it dominates DB load. Sessions that carry no new
+> messages/deltas must stay cheap: the session's full `source_ref` set is only loaded when the report actually
+> carries per-item payload, and "does this session have source refs" is an index-only existence check
+> (`AiSessionEventRepository#existsAnySourceRef`). `WorkSessionService.advance` runs on every report
+> including heartbeats and relies on `ai_session(agent_id,last_activity)` / `work_session(agent_id,status,
+> start_time)` (`PerformanceIndexSchemaPatches`). Prod has Hikari `leak-detection-threshold: 60000` — if the
+> pool saturates again, grep the log for `Connection leak detection triggered` to see who holds connections.
 
 ## Aggregation & scheduling
 

@@ -191,7 +191,9 @@ CREATE TABLE IF NOT EXISTS work_session
     KEY idx_repo_start (repo_url, start_time),
     KEY idx_status (status),
     -- dashboard /overview 的 aggregateTodaySeconds 按 updated_time 切今日窗口；无此索引则每次请求全表扫。
-    KEY idx_updated_time (updated_time)
+    KEY idx_updated_time (updated_time),
+    -- 每次 /agent/report 取该 agent 当前 OPEN 的 work_session（WorkSessionService.advance）。
+    KEY idx_agent_status_start (agent_id, status, start_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '工作会话';
 
 -- 员工日汇总：(user_code, work_date) 唯一
@@ -362,6 +364,7 @@ CREATE TABLE IF NOT EXISTS ai_session
     KEY idx_started (started_at),
     KEY idx_last_activity (last_activity),
     KEY idx_agent_id (agent_id),
+    KEY idx_agent_last (agent_id, last_activity),
     KEY idx_insight_audit (insight_audit_status, id),
     KEY idx_target_last_invalid (target_type, last_activity, invalid_reason),
     KEY idx_target_status (target_type, status),

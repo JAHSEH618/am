@@ -12,6 +12,7 @@ func mergeSubagentSessions(sessions []*parsedSession) []*parsedSession {
 	return common.CollapseChildSessions(sessions, common.SessionChildLinks[*parsedSession]{
 		ID:       func(ps *parsedSession) string { return ps.SessionID },
 		ParentID: func(ps *parsedSession) string { return ps.ParentSessionID },
+		Clone:    func(ps *parsedSession) *parsedSession { return ps.clone() },
 		MergeChildren: func(parent *parsedSession, children []*parsedSession) {
 			stats := statsFromParsed(parent)
 			for _, child := range children {

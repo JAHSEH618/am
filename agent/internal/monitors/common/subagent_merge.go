@@ -23,6 +23,11 @@ type SessionChildLinks[PS any] struct {
 	ParentID           func(PS) string
 	MergeChildren      func(parent PS, children []PS)
 	NewSyntheticParent func(rootID string, template PS) PS
+	// Clone 返回可安全改写的父会话副本。MergeChildren 会原地改写 parent，而 parent 通常是
+	// provider 跨 tick 缓存（FileCache / parsedSessionCache）里的同一个指针：不先 clone，每个 tick
+	// 都会把子会话的 token 再加一遍、消息/增量再拼一遍，缓存对象随 tick 无限膨胀、上报 token 虚高。
+	// 为 nil 时退化为原地改写（仅供调用方自己保证 parent 不是缓存对象的场景）。
+	Clone func(PS) PS
 }
 
 // CollapseChildSessions 把带 parent id 的子会话归并到根父会话，只返回应上报的根会话。
@@ -86,6 +91,9 @@ func CollapseChildSessions[PS any](sessions []PS, links SessionChildLinks[PS], o
 		if len(children) == 0 {
 			out = append(out, parent)
 			continue
+		}
+		if hasParent && links.Clone != nil {
+			parent = links.Clone(parent)
 		}
 		links.MergeChildren(parent, children)
 		out = append(out, parent)

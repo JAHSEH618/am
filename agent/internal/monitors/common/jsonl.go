@@ -92,6 +92,43 @@ func (c *FileCache[V]) Prune(seen map[string]struct{}) {
 	c.mu.Unlock()
 }
 
+// FilterFreshGroups 在解析之前按文件 mtime 丢掉 lookback 窗口外的历史会话文件，返回应继续处理的路径（保持输入顺序）。
+//
+// 依据：会话文件只追加写，mtime ≥ 文件里最后一条记录的时间；mtime 早于 cutoff 的会话，其
+// LastActivity 也早于 cutoff，解析完同样会被 Snapshot 的窗口过滤掉。提前跳过既省 IO/CPU，也让
+// FileCache 只缓存窗口内的会话——之前每个 provider 会把磁盘上全部历史会话（每个最多上千条消息正文、
+// 含图片）解析后常驻内存，重度用户的 aiwatchd 因此动辄数百 MB。
+//
+// groupKey 把主会话文件与其子 agent 文件映射到同一个键：组内任一文件在窗口内就整组保留，
+// 避免"续聊的父会话在窗口内、旧 subagent 文件不在"时父会话 token 合计缩水。groupKey 为 nil 时逐文件判定。
+// cutoff 为零值时不过滤；stat 失败的文件保留（交给解析器自行处理）。
+func FilterFreshGroups(paths []string, groupKey func(string) string, cutoff time.Time) []string {
+	if cutoff.IsZero() || len(paths) == 0 {
+		return paths
+	}
+	if groupKey == nil {
+		groupKey = func(p string) string { return p }
+	}
+	fresh := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		k := groupKey(p)
+		if fresh[k] {
+			continue
+		}
+		info, err := os.Stat(p)
+		if err != nil || !info.ModTime().Before(cutoff) {
+			fresh[k] = true
+		}
+	}
+	out := paths[:0:0]
+	for _, p := range paths {
+		if fresh[groupKey(p)] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // ScanLine 是流式 JSONL 行扫描的回调签名。返回 false 终止扫描。
 //
 //	line  当前行的字节切片（仅在回调内有效，调用方需要持久化时必须 copy）

@@ -50,4 +50,20 @@ public class AgentProperties {
      * <p>默认 8s（旧 15s）：稳态下每条事件最坏延迟 15s→8s，更贴近"实时"。客户端硬下限 5s。
      */
     private long activeReportIntervalMs = 8_000L;
+
+    /**
+     * 同时处理中的「重」agent 上报（{@code /report}、{@code /report-commits} 且 body 大于轻量阈值）上限，
+     * 见 {@link com.am.server.agent.security.AgentIngestBulkheadFilter}。
+     *
+     * <p>必须明显小于 Hikari 池（prod 40）：上报是唯一由客户端数量决定并发的入口，不设上限时
+     * 全员同时上报（尤其服务重启后各 agent 的 outbox 一起补发）会占满全部连接，控制台、定时任务、
+     * 连 agent 自己的验签查询都拿不到连接 → 30s 超时 → 客户端再重试，自我强化。
+     */
+    private int ingestMaxConcurrency = 16;
+
+    /**
+     * 等待上报并发名额的最长时间（毫秒）；等不到直接回 503，客户端下个 tick 再报（游标未推进，不丢数据）。
+     * 须低于 ApiTimingFilter 的 1000ms 慢请求阈值，否则满载时每个被拒请求都会刷一条 slow api WARN。
+     */
+    private long ingestAcquireTimeoutMs = 500L;
 }

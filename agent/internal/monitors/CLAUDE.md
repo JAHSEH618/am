@@ -58,7 +58,11 @@ from these (those event names are a server-side concept, not emitted here).
 ## Shared semantics — `common/`
 
 Reuse these before hand-rolling anything; they encode contracts the server depends on:
-- `jsonl.go` — `FileCache[V]`, `ScanJSONL`, `RunParallelParse` (incremental JSONL ingestion).
+- `jsonl.go` — `FileCache[V]`, `ScanJSONL`, `RunParallelParse` (incremental JSONL ingestion), and
+  `FilterFreshGroups` — **apply the lookback before parsing**: drop session files whose mtime is older than
+  `now - lookback` (grouping a main session with its subagent files) so they are neither parsed nor kept in the
+  `FileCache`. Filtering only after parsing (the pre-1.3.3 behavior) keeps every historical session's messages
+  resident for the life of the daemon.
 - `status.go` — `ResolveActivity` collapses raw provider state + recent tools into the **10 canonical
   statuses** (`idle, waiting, thinking, compacting, reading, writing, running, searching, browsing,
   spawning`); `NormalizeToolName` maps tool names to canonical (Read/Write/Bash/…). Timeout windows
@@ -66,7 +70,10 @@ Reuse these before hand-rolling anything; they encode contracts the server depen
 - `extid.go` — `SyntheticMessageID` / `SyntheticMessageIDByTime` build dedup keys when the source has
   no native message id (hermes, openharness). **Stability is critical**: the server dedups on
   `(ai_session_id, external_message_id)`, so an unstable key causes duplicates or dropped messages.
-- `subagent_merge.go` — collapse child sessions into the parent (only claude emits them today).
+- `subagent_merge.go` — collapse child sessions into the parent (claude/codex/openclaw/cursor). **Always pass
+  `Clone`**: `MergeChildren` rewrites the parent in place, and the parent is the provider's cross-tick cached
+  pointer — without a clone every tick re-adds the children's tokens/messages/deltas (unbounded memory growth
+  and inflated session tokens; fixed in 1.3.3). kimicode's own `mergeBySession` clones for the same reason.
 - `text.go` — `EstimateTokens` (≈chars/4) for sources without real token counts; `Truncate` (UTF-8 safe).
 - `worktree.go`, `activity_delta.go`.
 

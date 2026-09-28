@@ -459,7 +459,11 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         evaluateInvalidReason(session);
         sessionRepository.save(session);
 
-        Set<String> sourceRefsInTxn = isNew
+        // 已有 source_ref 集合只被两个逐条增量写入器用来去重；本次既没带 activity_deltas 也没带
+        // recent_messages 时两者都直接返回 0，不必把该会话全部事件的 ref 读进内存（长会话上万行，
+        // 而这正是每个 tick 里占绝大多数的"没变化的会话"）。
+        boolean hasPerItemPayload = hasItems(incoming.getActivityDeltas()) || hasItems(incoming.getRecentMessages());
+        Set<String> sourceRefsInTxn = isNew || !hasPerItemPayload
                 ? new HashSet<>()
                 : new HashSet<>(eventRepository.findSourceRefsByAiSessionId(session.getId()));
         int deltaEvents = writeActivityDeltasFromClient(session, incoming, sseEvents, sourceRefsInTxn);
@@ -708,7 +712,11 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (incoming.getRecentMessages() != null && !incoming.getRecentMessages().isEmpty()) {
             return true;
         }
-        return sessionId != null && eventRepository.countByAiSessionIdWithAnySourceRef(sessionId) > 0;
+        return sessionId != null && eventRepository.existsAnySourceRef(sessionId);
+    }
+
+    private static boolean hasItems(java.util.Collection<?> c) {
+        return c != null && !c.isEmpty();
     }
 
     /** 快照累计 fallback 只允许正向消息增量；计数回退是解析 artifact，不应进 event 流。 */

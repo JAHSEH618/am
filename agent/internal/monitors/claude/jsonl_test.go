@@ -184,3 +184,112 @@ func TestProvider_Claude_SubagentMerge(t *testing.T) {
 		t.Fatalf("SessionID=%q want parent-session", snap.Sessions[0].SessionID)
 	}
 }
+
+// 父会话 + subagent：连续两个 tick 的合计必须一致。旧实现把子会话 token 写回缓存里的父会话指针，
+// 缓存命中的 tick 会再加一遍，token 与消息随 tick 单调膨胀（也是 aiwatchd 内存上涨的来源之一）。
+func TestProvider_Claude_SubagentMergeStableAcrossTicks(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AM_CLAUDE_DIR", dir)
+
+	projDir := filepath.Join(dir, "projects", "-tmp-proj")
+	subDir := filepath.Join(projDir, "parent-session", "subagents")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parentBody := strings.ReplaceAll(fixtureJSONL, `"sessionId":"s"`, `"sessionId":"parent-session"`)
+	if err := os.WriteFile(filepath.Join(projDir, "parent-session.jsonl"), []byte(parentBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	subBody := strings.ReplaceAll(fixtureJSONL, `"sessionId":"s"`, `"sessionId":"parent-session","isSidechain":true`)
+	subBody = strings.ReplaceAll(subBody, `"uuid":"`, `"uuid":"sub-`)
+	if err := os.WriteFile(filepath.Join(subDir, "agent-a.jsonl"), []byte(subBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New("/tmp/proj")
+	p.SetLookback(365 * 24 * time.Hour)
+	var first, second int64
+	var firstMsgs, secondMsgs int
+	for i := 0; i < 2; i++ {
+		snap, err := p.Snapshot(t.Context())
+		if err != nil {
+			t.Fatalf("Snapshot: %v", err)
+		}
+		if len(snap.Sessions) != 1 {
+			t.Fatalf("tick %d: want 1 merged session, got %d", i, len(snap.Sessions))
+		}
+		if i == 0 {
+			first, firstMsgs = snap.Sessions[0].InputTokens, len(snap.Sessions[0].RecentMessages)
+		} else {
+			second, secondMsgs = snap.Sessions[0].InputTokens, len(snap.Sessions[0].RecentMessages)
+		}
+	}
+	if first != 400 {
+		t.Fatalf("merged input tokens = %d want 400 (parent 200 + child 200)", first)
+	}
+	if second != first || secondMsgs != firstMsgs {
+		t.Fatalf("second tick drifted: tokens %d→%d msgs %d→%d", first, second, firstMsgs, secondMsgs)
+	}
+}
+
+// lookback 窗口外的会话文件在解析前就被跳过、不进缓存；但主会话在窗口内时，窗口外的旧 subagent
+// 文件随整组保留（否则续聊会话的 token 合计会缩水）。
+func TestProvider_SkipsFilesOutsideLookback(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AM_CLAUDE_DIR", dir)
+
+	projDir := filepath.Join(dir, "projects", "-tmp-proj")
+	subDir := filepath.Join(projDir, "live", "subagents")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	recent := strings.ReplaceAll(fixtureJSONL, "2026-05-07T10:00", now.UTC().Add(-time.Hour).Format("2006-01-02T15:04"))
+	old := filepath.Join(projDir, "old.jsonl")
+	live := filepath.Join(projDir, "live.jsonl")
+	oldSub := filepath.Join(subDir, "agent-a.jsonl")
+	for path, body := range map[string]string{
+		old:    strings.ReplaceAll(recent, `"sessionId":"s"`, `"sessionId":"old"`),
+		live:   strings.ReplaceAll(recent, `"sessionId":"s"`, `"sessionId":"live"`),
+		oldSub: strings.ReplaceAll(strings.ReplaceAll(recent, `"sessionId":"s"`, `"sessionId":"live","isSidechain":true`), `"uuid":"`, `"uuid":"sub-`),
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale := now.Add(-10 * 24 * time.Hour)
+	for _, path := range []string{old, oldSub} {
+		if err := os.Chtimes(path, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := New("/tmp/proj")
+	snap, err := p.Snapshot(t.Context())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if len(snap.Sessions) != 1 || snap.Sessions[0].SessionID != "live" {
+		t.Fatalf("want only the live session, got %+v", snap.Sessions)
+	}
+	if got := snap.Sessions[0].InputTokens; got != 400 {
+		t.Fatalf("live tokens = %d want 400 (old subagent file kept with its group)", got)
+	}
+	if v, _, _ := p.cache.GetIncremental(old); v != nil {
+		t.Fatalf("file outside lookback must not be cached")
+	}
+}
+
+func TestSessionGroupKey(t *testing.T) {
+	root := filepath.Join("/r", "projects")
+	cases := map[string]string{
+		filepath.Join(root, "p", "sid.jsonl"):                  "p/sid",
+		filepath.Join(root, "p", "sid", "x.jsonl"):             "p/sid",
+		filepath.Join(root, "p", "sid", "subagents", "a.jsonl"): "p/sid",
+	}
+	for path, want := range cases {
+		if got := sessionGroupKey(root, path); got != want {
+			t.Errorf("sessionGroupKey(%s) = %q want %q", path, got, want)
+		}
+	}
+}

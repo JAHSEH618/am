@@ -94,6 +94,11 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
 - **HMAC 决定了请求体必须全量进内存**（`CachedBodyHttpServletRequest`，gzip 请求还要再持一份解压副本），
   所以"并发数 × 单请求体积"直接吃堆。容器 `-Xmx2g`，Tomcat 因此限到 50 线程、Hikari 池 40——
   调大任一项前先算这道乘法。
+- **`/agent/report` 有舱壁，别绕开**（1.3.3，`AgentIngestBulkheadFilter`）：2026-09 生产事故里 50 个 Tomcat 线程
+  全在跑上报，40 条连接被占满，连验签的 `findByAgentId` 都等 30s 超时，客户端失败后整包进 outbox、服务一恢复
+  全员补发又打满——服务起不来。现在重上报并发 ≤ `aiwatch.agent.ingest-max-concurrency`（16），超额在读 body
+  前回 503 + `50301`（≤2KB 心跳不占名额），1.3.3+ agent 见 503 不落 outbox。上报路径上每个会话一个事务、
+  每 tick 全员 × 窗口内会话数——**在 ingest 里加任何按会话的查询前，先确认它走索引且不读全量事件**。
 - **Admin console lives at `/console`, not `/`** (Vite `base:/console/` + Router `basename`). Root `/`
   serves a standalone public install landing (`resources/landing/install.html` via `LandingController`) that
   exposes no admin SPA/routes — so employees fetching the installer can't browse the backend. `WebConfig`

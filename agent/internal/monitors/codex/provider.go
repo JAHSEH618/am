@@ -101,7 +101,8 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 		return p.empty(), nil
 	}
 
-	jobs, hits, seen := p.collectJobs(root)
+	cutoff := now.Add(-p.lookback)
+	jobs, hits, seen := p.collectJobs(root, cutoff)
 	results := common.RunParallelParse(jobs, p.parseOne)
 	names := loadSessionNames(sessionIndexPath())
 
@@ -118,7 +119,6 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 
 	out = mergeSubagentSessions(out)
 
-	cutoff := now.Add(-p.lookback)
 	sessions := make([]monitor.Session, 0, len(out))
 	for _, ps := range out {
 		if ps == nil || ps.SessionID == "" {
@@ -153,17 +153,24 @@ func (p *Provider) empty() monitor.Snapshot {
 	}
 }
 
-func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
+// collectJobs 只处理 mtime 在 cutoff 之后的 rollout 文件（见 common.FilterFreshGroups）：
+// 窗口外的历史会话不解析、不进 seen，cache.Prune 随即把它们清出内存。
+func (p *Provider) collectJobs(root string, cutoff time.Time) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
 	seen := make(map[string]struct{})
 	var jobs []common.ParseJob[*parsedSession]
 	var hits []*parsedSession
 
+	var paths []string
 	_ = common.WalkJSONL(root, func(path string, _ fs.DirEntry) bool {
+		paths = append(paths, path)
+		return true
+	})
+	for _, path := range common.FilterFreshGroups(paths, nil, cutoff) {
 		seen[path] = struct{}{}
 		cached, offset, mtime := p.cache.GetIncremental(path)
 		if cached != nil && offset == 0 {
 			hits = append(hits, cached)
-			return true
+			continue
 		}
 		jobs = append(jobs, common.ParseJob[*parsedSession]{
 			Path:   path,
@@ -171,8 +178,7 @@ func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], 
 			Offset: offset,
 			MTime:  mtime,
 		})
-		return true
-	})
+	}
 	return jobs, hits, seen
 }
 

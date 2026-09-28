@@ -99,7 +99,9 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 		return p.empty(), nil
 	}
 
-	jobs, hits, seen := p.collectJobs(root)
+	now := time.Now()
+	cutoff := now.Add(-p.lookback)
+	jobs, hits, seen := p.collectJobs(root, cutoff)
 	cfg := loadConfig()
 	results := common.RunParallelParse(jobs, p.parseOne)
 
@@ -116,8 +118,6 @@ func (p *Provider) Snapshot(ctx context.Context) (monitor.Snapshot, error) {
 
 	out = mergeSubagentSessions(out)
 
-	now := time.Now()
-	cutoff := now.Add(-p.lookback)
 	sessions := make([]monitor.Session, 0, len(out))
 	for _, ps := range out {
 		if ps == nil || ps.SessionID == "" {
@@ -151,8 +151,10 @@ func (p *Provider) empty() monitor.Snapshot {
 //
 //	jobs   缓存 miss / 文件长大了 → 需要本次重新解析
 //	hits   完全命中 → 直接复用缓存
-//	seen   本次见到的所有 jsonl 路径 → 给 cache.Prune 用
-func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
+//	seen   本次保留的所有 jsonl 路径 → 给 cache.Prune 用
+//
+// mtime 早于 cutoff 的会话文件直接跳过（见 common.FilterFreshGroups），不解析也不缓存。
+func (p *Provider) collectJobs(root string, cutoff time.Time) ([]common.ParseJob[*parsedSession], []*parsedSession, map[string]struct{}) {
 	seen := make(map[string]struct{})
 	var jobs []common.ParseJob[*parsedSession]
 	var hits []*parsedSession
@@ -170,11 +172,14 @@ func (p *Provider) collectJobs(root string) ([]common.ParseJob[*parsedSession], 
 		if err != nil {
 			continue
 		}
+		var paths []string
 		for _, e := range entries {
 			if e.IsDir() || !isLiveSessionFile(e.Name()) {
 				continue
 			}
-			path := filepath.Join(sessionsDir, e.Name())
+			paths = append(paths, filepath.Join(sessionsDir, e.Name()))
+		}
+		for _, path := range common.FilterFreshGroups(paths, nil, cutoff) {
 			seen[path] = struct{}{}
 			cached, offset, mtime := p.cache.GetIncremental(path)
 			if cached != nil && offset == 0 {

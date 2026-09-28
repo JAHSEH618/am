@@ -239,6 +239,8 @@ func cmdStart() error {
 		return nil
 	}
 
+	applyMemoryLimit()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
