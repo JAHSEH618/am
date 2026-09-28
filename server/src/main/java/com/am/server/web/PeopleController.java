@@ -10,6 +10,8 @@ import com.am.server.domain.git.GitCommit;
 import com.am.server.domain.git.GitCommitRepository;
 import com.am.server.domain.summary.DailySummary;
 import com.am.server.domain.summary.DailySummaryRepository;
+import com.am.server.insight.domain.AnalysisReportRepository;
+import com.am.server.insight.domain.AnalysisReportUserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.am.server.service.EmployeeDisplayService;
 import com.am.server.system.ActiveTargetTypesProvider;
@@ -18,6 +20,7 @@ import com.am.server.web.dto.PeopleSummaryDto;
 import com.am.server.web.dto.ProjectGitCommitRowDto;
 import com.am.server.web.support.GitCommitRowMapper;
 import com.am.server.web.support.SlashCommandStatSupport;
+import com.am.server.web.support.TtlSingleFlightCache;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -35,6 +38,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -42,6 +46,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * 员工数据（v2.1 Phase 2）
@@ -85,8 +90,8 @@ public class PeopleController {
     private final GitCommitRepository gitCommitRepository;
     private final ObjectMapper objectMapper;
     private final SlashCommandStatSupport slashCommandStatSupport;
-    private final com.am.server.insight.domain.AnalysisReportRepository analysisReportRepository;
-    private final com.am.server.insight.domain.AnalysisReportUserRepository analysisReportUserRepository;
+    private final AnalysisReportRepository analysisReportRepository;
+    private final AnalysisReportUserRepository analysisReportUserRepository;
 
     /** 员工数据访问触发的 today 聚合 TTL：60s 内不重复算同一天 */
     private static final Duration ENSURE_FRESH_TTL = Duration.ofSeconds(60);
@@ -106,6 +111,16 @@ public class PeopleController {
 
     /** 窗内消息统计的零值：{@code [userMsgCount, assistantMsgCount, slashCount]}。 */
     private static final long[] EMPTY_MESSAGE_STATS = new long[]{0L, 0L, 0L};
+
+    /**
+     * 列表的窗内消息统计（问答比 / Slash 合计）是整窗 ai_session_message 扫描，同一窗口会被多个标签页、
+     * 切窗重试反复算。45s TTL + single-flight，与项目透视快照同口径；key = (from, to, activeTypes)。
+     * 列表 AI 指标本身出自 ensureFreshAsync 异步收口的 daily_summary，页面本就容忍分钟级延迟。
+     * <p>缓存的 map 只读：调用方只取值，不得改写其中的 long[]。
+     */
+    private static final Duration WINDOW_CACHE_TTL = Duration.ofSeconds(45);
+    private final TtlSingleFlightCache<String, Map<String, long[]>> messageStatsCache =
+            new TtlSingleFlightCache<>(WINDOW_CACHE_TTL);
 
     /**
      * 安装客户端弹框前置校验：
@@ -517,21 +532,24 @@ public class PeopleController {
         return d;
     }
 
-    /** 批量回填最近 completed 报告的等级徽章；无报告时全部保持 null。 */
+    /**
+     * 批量回填最近 completed 报告的等级徽章；无报告时全部保持 null。
+     * <p>只投影用到的列：报告取 id + 窗口，员工行取 grade / score / confidence——
+     * 整行实体各带十来个 JSON 大字段，列表一次几百人。
+     */
     private void attachGrades(List<PeopleSummaryDto> dtos) {
         if (dtos.isEmpty()) {
             return;
         }
-        var reportOpt = analysisReportRepository
-                .findFirstByStatusOrderByWindowToDescIdDesc("completed");
-        if (reportOpt.isEmpty()) {
+        var reports = analysisReportRepository.findReportWindowsByStatus("completed", PageRequest.of(0, 1));
+        if (reports.isEmpty()) {
             return;
         }
-        var report = reportOpt.get();
+        var report = reports.get(0);
         String window = report.getWindowFrom() + " ~ " + report.getWindowTo();
         var codes = dtos.stream().map(PeopleSummaryDto::getUserCode).toList();
-        Map<String, com.am.server.insight.domain.AnalysisReportUser> byCode = new HashMap<>();
-        for (var u : analysisReportUserRepository.findByReportIdAndUserCodeIn(report.getId(), codes)) {
+        Map<String, AnalysisReportUserRepository.GradeBadge> byCode = new HashMap<>();
+        for (var u : analysisReportUserRepository.findGradeBadgesByReportIdAndUserCodeIn(report.getId(), codes)) {
             byCode.put(u.getUserCode(), u);
         }
         for (PeopleSummaryDto d : dtos) {
@@ -712,22 +730,25 @@ public class PeopleController {
      * 窗口 [from, to) 内各员工的 user / assistant 消息条数与 Slash 调用数（一次聚合查询）。
      * <p>v2.10：只统计 active target_type 的消息。activeTypes 为空意味着所有 agent
      * 都被关闭，直接返回空 map（问答比统一为 null、Slash 计 0）。
-     * <p>值为 {@code [userMsgCount, assistantMsgCount, slashCount]}。
+     * <p>值为 {@code [userMsgCount, assistantMsgCount, slashCount]}；结果经 {@link #messageStatsCache} 共享，只读。
      */
     private Map<String, long[]> loadWindowMessageStatsBulk(LocalDateTime from, LocalDateTime to,
                                                            Collection<String> activeTypes) {
-        Map<String, long[]> out = new HashMap<>();
         if (activeTypes.isEmpty()) {
-            return out;
+            return Map.of();
         }
-        for (Object[] row : messageRepository
-                .aggregatePeopleMessageStatsByUserInWindow(from, to, activeTypes)) {
-            if (row.length < 4 || row[0] == null) {
-                continue;
+        String key = from + "|" + to + "|" + activeTypes.stream().sorted().collect(Collectors.joining(","));
+        return messageStatsCache.get(key, () -> {
+            Map<String, long[]> out = new HashMap<>();
+            for (Object[] row : messageRepository
+                    .aggregatePeopleMessageStatsByUserInWindow(from, to, activeTypes)) {
+                if (row.length < 4 || row[0] == null) {
+                    continue;
+                }
+                out.put(row[0].toString(), new long[]{toLong(row[1]), toLong(row[2]), toLong(row[3])});
             }
-            out.put(row[0].toString(), new long[]{toLong(row[1]), toLong(row[2]), toLong(row[3])});
-        }
-        return out;
+            return Collections.unmodifiableMap(out);
+        });
     }
 
     /** {@code git_commit.commit_time ∈ [from,to)} 按员工聚合条数 */
