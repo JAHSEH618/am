@@ -214,11 +214,13 @@ export default function Dashboard() {
   const onSessionChanged = useCallback((data: string) => {
     try {
       const s: AiSession = JSON.parse(data);
-      setOnline((prev) =>
-        prev.map((row) => {
+      setOnline((prev) => {
+        let changed = false;
+        const next = prev.map((row) => {
           if (row.device_online === false) return row;
           if (row.agent_id !== s.agent_id) return row;
           if (row.target_type != null && row.target_type !== s.target_type) return row;
+          changed = true;
           return {
             ...row,
             target_type: row.target_type ?? s.target_type,
@@ -230,8 +232,10 @@ export default function Dashboard() {
             stale_since_seconds: 0,
             active: s.status !== 'idle' && s.status != null,
           };
-        }),
-      );
+        });
+        // 无匹配行时返回原引用：整页（含注册员工大表）不必为一条无关事件重渲。
+        return changed ? next : prev;
+      });
       scheduleDashboardRefresh();
     } catch {
       // 解析失败忽略；下一次 polling 会兜底纠偏

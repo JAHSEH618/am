@@ -4,8 +4,8 @@ import type { ComponentProps } from 'react';
 /**
  * 懒加载版 ECharts。
  *
- * <p>echarts 打出来是 1MB+ 的独立 chunk。只要有一个**非懒加载路由**静态 import 了
- * `echarts-for-react`，Vite 就会把该 chunk 变成入口的静态依赖，在 index.html 里挂上
+ * <p>echarts 打出来是 ~500 KB 的独立 chunk（已按需注册，见 `lib/echarts.ts`）。只要有一个
+ * **非懒加载路由**静态 import 了 `components/ECharts`，Vite 就会把该 chunk 变成入口的静态依赖，在 index.html 里挂上
  * `<link rel="modulepreload">` —— 于是首屏渲染前必须先下完它。Dashboard 和 People
  * 都是非懒加载路由（见 App.tsx），正是它们把 echarts 拖进了关键路径。
  *
@@ -16,7 +16,7 @@ import type { ComponentProps } from 'react';
  * <p>注意：`React.lazy` 下 ref 转发不可靠，需要 `getEchartsInstance()` 的地方
  * （如 Analysis/UserDetail）请继续直接 import。
  */
-const ReactECharts = lazy(() => import('echarts-for-react'));
+const ReactECharts = lazy(() => import('./ECharts'));
 
 type Props = ComponentProps<typeof ReactECharts>;
 

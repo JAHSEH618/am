@@ -26,6 +26,11 @@ const { Text } = Typography;
 const ONLINE_POLL_CONNECTED_MS = 30_000;
 const ONLINE_POLL_FALLBACK_MS = 5_000;
 const MAX_EVENTS = 100;
+/**
+ * 会话快照只为给事件流里的行补展示信息，按「最近变更」保留有限条即可。
+ * 不设上限时页面开一整天会攒下当天所有会话，且每条事件都要整表拷贝一次。
+ */
+const MAX_SESSIONS = 500;
 
 interface FlowEvent extends AiSessionEvent {
   receivedAt: string;
@@ -35,7 +40,7 @@ export default function Realtime() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<OnlineAgent[]>([]);
   const [events, setEvents] = useState<FlowEvent[]>([]);
-  const [sessionsById, setSessionsById] = useState<Record<number, AiSession>>({});
+  const [sessionsById, setSessionsById] = useState<Map<number, AiSession>>(() => new Map());
   // 首屏占位：在线表第一次 fetchOnline 落地前别让左卡闪「暂无在线 Agent」。
   const [loading, setLoading] = useState(true);
 
@@ -65,7 +70,17 @@ export default function Realtime() {
   const onSessionChanged = useCallback((data: string) => {
     try {
       const s: AiSession = JSON.parse(data);
-      setSessionsById((prev) => ({ ...prev, [s.id]: s }));
+      setSessionsById((prev) => {
+        // Map 保留插入顺序：先删再插把它挪到队尾，超限时从队头（最久未变更）淘汰。
+        const next = new Map(prev);
+        next.delete(s.id);
+        next.set(s.id, s);
+        if (next.size > MAX_SESSIONS) {
+          const oldest = next.keys().next();
+          if (!oldest.done) next.delete(oldest.value);
+        }
+        return next;
+      });
       setAgents((prev) => {
         let changed = false;
         const next = prev.map((a) => {
@@ -217,7 +232,7 @@ export default function Realtime() {
               rowKey={(e) => `${e.id}-${e.receivedAt}`}
               locale={{ emptyText: '等待事件中...（启动 agent 后会自动流入）' }}
               renderItem={(e) => {
-                const sess = sessionsById[e.ai_session_id];
+                const sess = sessionsById.get(e.ai_session_id);
                 return (
                   <List.Item {...clickableRowProps(() => navigate(`/sessions/${e.ai_session_id}`))}>
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>

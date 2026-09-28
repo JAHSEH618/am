@@ -3,7 +3,7 @@ import { Card, Col, DatePicker, Row, Skeleton, Space, Table, Tooltip, Typography
 import type { ColumnsType } from 'antd/es/table';
 import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
 import type { Dayjs } from 'dayjs';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import { fetchModelDistribution, fetchModelHeatmap } from '../api/client';
 import type { ModelDistribution, ModelHeatmap } from '../api/types';
 import { formatTokens } from '../utils/format';

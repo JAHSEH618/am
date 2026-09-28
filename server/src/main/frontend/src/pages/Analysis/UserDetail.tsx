@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Card, Col, Empty, List, Progress, Row, Skeleton, Statistic, Tabs, Tag, Tooltip, Typography, message } from 'antd';
 import { FilePdfOutlined } from '@ant-design/icons';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import type { EChartsOption } from 'echarts-for-react';
 import { Link } from 'react-router-dom';
 import { fetchPersonDetail } from '../../api/client';

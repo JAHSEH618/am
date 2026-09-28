@@ -4,7 +4,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { InfoCircleOutlined, ProjectOutlined } from '@ant-design/icons';
 import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
 import type { Dayjs } from 'dayjs';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjectDetail, fetchProjects, fetchProjectGitCommits } from '../api/client';
 import type { NameValuePair, ProjectContributor, ProjectDetail, ProjectGitCommit, ProjectSummary } from '../api/types';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, Select, Space, Spin, Table, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import {
   fetchCapabilityMatrix,
   fetchCapabilityRanking,
