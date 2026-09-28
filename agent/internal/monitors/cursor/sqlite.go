@@ -49,6 +49,45 @@ func walStats(dbPath string) (time.Time, int64) {
 	return info.ModTime(), info.Size()
 }
 
+// bubbleId 键前缀的半开区间。cursorDiskKV.key 上只有 BINARY 排序的 autoindex，SQLite 只在
+// NOCASE 索引上把 LIKE 'x%' 改写成索引区间，所以旧写法 key LIKE 'bubbleId:%' 一律 SCAN 整表
+// （1GB 库单会话取 bubble 实测 300ms，区间走索引 4-7ms）。';' 是 ':' 的下一个字节，
+// [prefix, prefix 末字节+1) 恰好覆盖且只覆盖以 prefix 开头的键。
+//
+// 与 LIKE 的差别：LIKE 对 ASCII 大小写不敏感、sid 里的 '_'/'%' 是通配符，区间是精确前缀匹配。
+// Cursor 的键与 sid 都由同一个 composerId 字符串原样拼出（sid 取自 substr(key,10,36) 或
+// composerData 精确键命中后的 subagentComposerIds，均为 UUID），实际命中行完全相同。
+const (
+	bubbleKeyLo = "bubbleId:"
+	bubbleKeyHi = "bubbleId;"
+)
+
+// sessionBubbleKeyRange 返回单个会话全部 bubble 键的半开区间 [lo, hi)。
+func sessionBubbleKeyRange(sid string) (lo, hi string) {
+	return bubbleKeyLo + sid + ":", bubbleKeyLo + sid + ";"
+}
+
+// recentSessionsSQL：cutoff 之后有活动的会话，key 走区间（索引）而非 LIKE（全表扫）。
+const recentSessionsSQL = `
+		SELECT substr(key, 10, 36) AS sid,
+		       MAX(json_extract(value, '$.createdAt')) AS last_at
+		FROM cursorDiskKV
+		WHERE key >= '` + bubbleKeyLo + `' AND key < '` + bubbleKeyHi + `'
+		  AND json_extract(value, '$.createdAt') > ?
+		GROUP BY substr(key, 10, 36)
+	`
+
+// bubblesAfterSQL：增量扫描。这里刻意保留 LIKE：驱动行由 rowid > ? 走 rowid B 树决定，LIKE 只是
+// 对少量新行的后置过滤；若改成 key 区间，规划器会改走 key 索引把全部 bubble 扫一遍（EXPLAIN 实测），
+// 反而退化。
+const bubblesAfterSQL = `
+		SELECT rowid,
+		       substr(key, 10, 36) AS sid,
+		       json_extract(value, '$.createdAt') AS created_at
+		FROM cursorDiskKV
+		WHERE rowid > ? AND key LIKE 'bubbleId:%'
+	`
+
 // sessionRef 是 queryRecentSessions 的输出元素：(会话 ID, 该会话最后一条 bubble 的时间)。
 //
 // <p>v2.8 起替代旧的"全量 queryComposers + 392 次 getExactBubbleTimestamp 点查"扫描模式。
@@ -76,14 +115,7 @@ type sessionRef struct {
 // bubble.createdAt 大约 1.4% 缺失，缺的 row json_extract NULL 比较为 NULL 自动被丢弃。
 func queryRecentSessions(ctx context.Context, db *sql.DB, cutoff time.Time) ([]sessionRef, error) {
 	cutoffStr := cutoff.UTC().Format("2006-01-02T15:04:05.000Z")
-	rows, err := db.QueryContext(ctx, `
-		SELECT substr(key, 10, 36) AS sid,
-		       MAX(json_extract(value, '$.createdAt')) AS last_at
-		FROM cursorDiskKV
-		WHERE key LIKE 'bubbleId:%'
-		  AND json_extract(value, '$.createdAt') > ?
-		GROUP BY substr(key, 10, 36)
-	`, cutoffStr)
+	rows, err := db.QueryContext(ctx, recentSessionsSQL, cutoffStr)
 	if err != nil {
 		return nil, err
 	}
@@ -130,13 +162,7 @@ type bubbleRow struct {
 // <p>性能：rowid > ? 走 rowid B 树范围扫，只触达自上次扫描以来新增的行（通常个位数），
 // 配合 key LIKE 'bubbleId:%' 过滤，整体毫秒级——取代每 tick 对全部 bubble 的全表 json_extract。
 func queryBubblesAfter(ctx context.Context, db *sql.DB, afterRowid int64) ([]bubbleRow, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT rowid,
-		       substr(key, 10, 36) AS sid,
-		       json_extract(value, '$.createdAt') AS created_at
-		FROM cursorDiskKV
-		WHERE rowid > ? AND key LIKE 'bubbleId:%'
-	`, afterRowid)
+	rows, err := db.QueryContext(ctx, bubblesAfterSQL, afterRowid)
 	if err != nil {
 		return nil, err
 	}
