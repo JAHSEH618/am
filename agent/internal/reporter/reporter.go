@@ -231,7 +231,13 @@ func (r *Reporter) Run(ctx context.Context) error {
 	// 文件级活动监听：空闲基线节奏下，hint 路径 mtime 一推进就补一个 tick，把冷启动延迟压到
 	// ~一个轮询周期。没有任何 provider 暴露 hint 时 newActivityWatcher 返回 nil，不启动。
 	triggerCh := make(chan struct{}, 1)
-	if w := newActivityWatcher(r.registry, triggerCh); w != nil {
+	// watchArmed：每个定时 tick 之间最多响应一次 watcher 触发。trae / codebuddy / qoder 的 hint 是整个
+	// IDE 配置目录，IDE 自己写日志 / 缓存就会推进 mtime；不设闸时这类机器只要开着 IDE 就每 5s 上报一次。
+	// atomic：watcher goroutine 据它与 lastActive 判断"触发必被丢弃"，此时连扫描都跳过。
+	var watchArmed atomic.Bool
+	watchArmed.Store(true)
+	watchPaused := func() bool { return r.lastActive.Load() || !watchArmed.Load() }
+	if w := newActivityWatcher(r.registry, triggerCh, watchPaused); w != nil {
 		go w.run(ctx)
 	}
 
@@ -240,9 +246,6 @@ func (r *Reporter) Run(ctx context.Context) error {
 	ticker := time.NewTicker(r.nextInterval())
 	defer ticker.Stop()
 
-	// watchArmed：每个定时 tick 之间最多响应一次 watcher 触发。trae / codebuddy / qoder 的 hint 是整个
-	// IDE 配置目录，IDE 自己写日志 / 缓存就会推进 mtime；不设闸时这类机器只要开着 IDE 就每 5s 上报一次。
-	watchArmed := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -253,15 +256,15 @@ func (r *Reporter) Run(ctx context.Context) error {
 				logger.Warnf("report failed: %v", err)
 			}
 			lastTick = time.Now()
-			watchArmed = true
+			watchArmed.Store(true)
 			ticker.Reset(r.nextInterval())
 		case <-triggerCh:
 			// watcher 的价值只在空闲→活跃的首次加速：已在活跃快报节奏时 ticker 本身就快，直接忽略；
 			// 空闲期每个基线间隔至多补一个 tick，且距上次 tick 不足 minActiveReportInterval 也丢弃。
-			if !watchArmed || r.lastActive.Load() || time.Since(lastTick) < minActiveReportInterval {
+			if !watchArmed.Load() || r.lastActive.Load() || time.Since(lastTick) < minActiveReportInterval {
 				continue
 			}
-			watchArmed = false
+			watchArmed.Store(false)
 			if err := r.tickOnce(ctx); err != nil {
 				logger.Warnf("watch-triggered report failed: %v", err)
 			}
