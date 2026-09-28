@@ -43,7 +43,8 @@ const maxPathStatsPerCommit = DefaultMaxFilesPerCommit
 // 单路径最大字节长度（截断后入库 / 上报）。
 const maxPathStatPathLen = 512
 
-// scanRepo 在一个 repo 目录上跑 git log 并解析提交。
+// scanRepo 在一个 repo 目录上跑 git log 并解析提交（不做 enrichCommit：调用方先按作者邮箱过滤，
+// 只对保留下来的提交做富化——每条富化要 fork 4 次 git，含 git show -U999999 读整份 diff）。
 // sinceHash 不为空时只取 sinceHash..HEAD 的新提交（增量）；否则取过去 lookbackDuration 的提交。
 //
 // 数据格式约定：使用 "%x1f" (US/0x1f) 作字段分隔，"%x1e" (RS/0x1e) 作记录结束，
@@ -89,9 +90,6 @@ func scanRepo(repoDir, repoURL, sinceHash string, lim Limits) ([]Commit, string,
 
 	branch := currentBranch(repoDir)
 	commits := parseLog(string(out), repoURL, branch, maxPaths)
-	for i := range commits {
-		enrichCommit(repoDir, &commits[i], lim)
-	}
 	var head string
 	if len(commits) > 0 {
 		head = commits[0].CommitHash
