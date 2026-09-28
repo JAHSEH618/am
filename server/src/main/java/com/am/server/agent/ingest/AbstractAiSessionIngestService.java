@@ -297,7 +297,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
 
         UpsertOutcome outcome = upsertSession(incoming, ctx, snapshotCapturedAt, sseEvents);
         int messagesWritten = writeMessages(outcome.session, incoming, ctx, reconciledSessions);
-        SessionMessageCountSupport.reconcileSessionEntity(outcome.session, messageRepository);
+        // 本拍没写消息时直接恢复上一拍对齐后的计数，不再每拍把 message 表数两遍（见 reconcileAfterIngest）
+        SessionMessageCountSupport.reconcileAfterIngest(outcome.session, messageRepository,
+                outcome.storedBeforeWrite, messagesWritten, outcome.countersBeforeUpsert);
         sessionRepository.save(outcome.session);
         Set<String> suppressedChildComposerIds = childComposerIdsFromMessages(outcome.session, incoming);
         sseSessions.put(outcome.session.getId(), outcome.session);
@@ -427,6 +429,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         long previousInput = nz(session.getInputTokens());
         long previousOutput = nz(session.getOutputTokens());
         int previousMessages = nz(session.getTotalMessages());
+        SessionMessageCountSupport.SessionCounters countersBeforeUpsert =
+                isNew ? null : SessionMessageCountSupport.SessionCounters.of(session);
 
         session.setCwd(incoming.getCwd());
         session.setCwdHash(incoming.getCwdHash());
@@ -581,7 +585,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 }
             }
         }
-        return new UpsertOutcome(session, eventsWritten);
+        return new UpsertOutcome(session, eventsWritten, storedBeforeWrite, countersBeforeUpsert);
     }
 
     /**
@@ -1014,10 +1018,17 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     private static class UpsertOutcome {
         final AiSession session;
         final int eventsWritten;
+        /** 本拍写入消息前该会话已入库的 message 行数（新会话 0）。 */
+        final int storedBeforeWrite;
+        /** Agent 快照覆写前的会话计数（新会话 null）。 */
+        final SessionMessageCountSupport.SessionCounters countersBeforeUpsert;
 
-        UpsertOutcome(AiSession session, int eventsWritten) {
+        UpsertOutcome(AiSession session, int eventsWritten, int storedBeforeWrite,
+                      SessionMessageCountSupport.SessionCounters countersBeforeUpsert) {
             this.session = session;
             this.eventsWritten = eventsWritten;
+            this.storedBeforeWrite = storedBeforeWrite;
+            this.countersBeforeUpsert = countersBeforeUpsert;
         }
     }
 }
