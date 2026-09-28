@@ -99,6 +99,35 @@ public class DashboardController {
     private static String insightAuditKey(List<String> types, int threshold) {
         return types.stream().sorted().collect(java.util.stream.Collectors.joining(",")) + "|" + threshold;
     }
+
+    /**
+     * overview / online / Top 榜单同样是每个标签页 10s 轮询一次，ingest 推 SSE 后 overview + online 还会
+     * 防抖补拉——N 个标签页就是同一份"今日"整窗聚合每拍算 N 遍。按各自的变化节奏给短 TTL + single-flight，
+     * 多标签页 / 多人同时看时共享一份：
+     * <ul>
+     *   <li>online 3s：SSE 补拉要尽快看到状态变化，只挡住同一拍里各标签页的重复计算；</li>
+     *   <li>overview 5s：hero 计数，同样被 SSE 补拉；</li>
+     *   <li>Top 项目 / 员工 10s：只跟 10s 轮询走，不参与 SSE 补拉；</li>
+     *   <li>AI 渗透率 60s：近 N 天提交归因，分钟级才会动（overview 首屏内嵌的 30 天值也走这里）。</li>
+     * </ul>
+     * key 带上所有影响结果的入参（activeTypes / limit / 当天日期 / 渗透率窗口）。缓存值就是响应体本身，
+     * 放进去之后不再改写——按请求变化的字段（展示名、距今秒数等）都在 loader 里一次算完。
+     */
+    private final TtlSingleFlightCache<String, DashboardOverviewDto> overviewCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(5));
+    private final TtlSingleFlightCache<String, List<OnlineAgentDto>> onlineCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(3));
+    private final TtlSingleFlightCache<String, List<TopItemDto>> topProjectsCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(10));
+    private final TtlSingleFlightCache<String, List<TopItemDto>> topEmployeesCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(10));
+    private final TtlSingleFlightCache<String, Integer> penetrationCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(60));
+
+    private static String typesKey(Collection<String> types) {
+        return types.stream().sorted().collect(java.util.stream.Collectors.joining(","));
+    }
+
     private final AgentProperties agentProperties;
     private final AiPenetrationService aiPenetrationService;
     private final DailySummaryRepository dailySummaryRepository;
@@ -109,15 +138,21 @@ public class DashboardController {
 
     @GetMapping("/overview")
     public R<DashboardOverviewDto> overview() {
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime onlineCutoff = now.minusSeconds(agentProperties.getOnlineWindowSeconds());
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-
-        DashboardOverviewDto out = new DashboardOverviewDto();
         // v2.10：所有 ai_session* 维度的聚合 / 计数都按 active target_type 白名单过滤，
         // 禁用的 agent 不进入"今日 token / 活跃会话 / 工具调用"等指标。
         // 设备 / work_session / git_commit 不受白名单影响（与 agent 类型无关，沿用原口径）。
         Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
+        LocalDate today = LocalDate.now();
+        return R.ok(overviewCache.get(today + "|" + typesKey(activeTypes),
+                () -> loadOverview(today, activeTypes)));
+    }
+
+    private DashboardOverviewDto loadOverview(LocalDate today, Collection<String> activeTypes) {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime onlineCutoff = now.minusSeconds(agentProperties.getOnlineWindowSeconds());
+        LocalDateTime todayStart = today.atStartOfDay();
+
+        DashboardOverviewDto out = new DashboardOverviewDto();
 
         // 在线 agent：device 心跳在 online-window 内；离线 = 同 status 全量 − 在线
         long activeDeviceTotal = deviceRepository.countByStatus(AgentDevice.STATUS_ACTIVE);
@@ -166,13 +201,13 @@ public class DashboardController {
         // Math.max 把"今日早些时候跑过、现在已空闲"的会话计入"活跃"，导致仪表盘虚高）
         out.setTodayAiSessions((int) todaySessions);
         // AI 渗透率（北极星）：首屏直出默认 30 天口径；前端切换窗口走 /dashboard/ai-penetration。
-        out.setAiPenetrationPercent(aiPenetrationService.compute(PenetrationWindow.D30));
+        out.setAiPenetrationPercent(penetrationPercent(PenetrationWindow.D30));
 
         out.setTodayToolCalls(todayToolCalls);
 
         out.setLatestAgentVersion(installManifestService.readPublishedClientVersion().orElse(null));
 
-        return R.ok(out);
+        return out;
     }
 
     /**
@@ -183,7 +218,12 @@ public class DashboardController {
     @GetMapping("/ai-penetration")
     public R<AiPenetrationDto> aiPenetration(@RequestParam(defaultValue = "30d") String window) {
         PenetrationWindow w = PenetrationWindow.parse(window);
-        return R.ok(new AiPenetrationDto(aiPenetrationService.compute(w), window));
+        return R.ok(new AiPenetrationDto(penetrationPercent(w), window));
+    }
+
+    /** 按解析后的窗口缓存（未知入参都回落 30d，共用一份）；带上日期，"今日"跨零点不串到昨天。 */
+    private int penetrationPercent(PenetrationWindow w) {
+        return penetrationCache.get(w + "|" + LocalDate.now(), () -> aiPenetrationService.compute(w));
     }
 
     /**
@@ -256,6 +296,12 @@ public class DashboardController {
      */
     @GetMapping("/online")
     public R<List<OnlineAgentDto>> online() {
+        // v2.10：会话集合按 active target_type 过滤；禁用的 agent 即使有非空闲会话也不再出现在实时活跃表里。
+        Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
+        return R.ok(onlineCache.get(typesKey(activeTypes), () -> loadOnline(activeTypes)));
+    }
+
+    private List<OnlineAgentDto> loadOnline(Collection<String> activeTypes) {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime onlineCutoff = now.minusSeconds(agentProperties.getOnlineWindowSeconds());
 
@@ -266,8 +312,6 @@ public class DashboardController {
         //   - device 必须心跳在 onlineCutoff 内（见 aiwatch.agent.online-window-seconds）
         //   - 但会话维度只看 status，不再要求 last_activity 在某窗口内
         // 同一 (agent, target) 多条 active 会话取 lastActivity 最新一条，避免一台机器多 cursor 窗口同时跑时炸表。
-        // v2.10：会话集合按 active target_type 过滤；禁用的 agent 即使有非空闲会话也不再出现在实时活跃表里。
-        Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
         Map<String, Map<String, AiSession>> sessionsByAgentByTarget = new HashMap<>();
         if (!activeTypes.isEmpty()) {
             for (Object[] row : aiSessionRepository.findNonIdleSessionSummariesByTargetTypeIn(activeTypes)) {
@@ -362,7 +406,7 @@ public class DashboardController {
             return a.getAgentId().compareTo(b.getAgentId());
         });
         rows.addAll(offlineRows);
-        return R.ok(rows);
+        return List.copyOf(rows);
     }
 
     private static AiSession sessionFromSummaryRow(Object[] row) {
@@ -463,12 +507,18 @@ public class DashboardController {
 
     @GetMapping("/top-projects")
     public R<List<TopItemDto>> topProjects(@RequestParam(defaultValue = "10") int limit) {
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        LocalDateTime now = LocalDateTime.now();
         Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
         if (activeTypes.isEmpty()) {
             return R.ok(new ArrayList<>());
         }
+        LocalDate today = LocalDate.now();
+        return R.ok(topProjectsCache.get(today + "|" + limit + "|" + typesKey(activeTypes),
+                () -> loadTopProjects(today, limit, activeTypes)));
+    }
+
+    private List<TopItemDto> loadTopProjects(LocalDate today, int limit, Collection<String> activeTypes) {
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDateTime now = LocalDateTime.now();
         // 主聚合：按 event_time 切片 [projectName, totalTokens, messageCount, sessionCount, userCount]
         // 决定排序与"今日"口径，不会因长会话把历史 token 误算进当日。
         List<TopItemDto> base = toTopItemsFromEventAgg(
@@ -481,17 +531,23 @@ public class DashboardController {
         Map<String, long[]> ioSplit = toIoTokenSplitMap(
                 aiSessionRepository.aggregateInputOutputTokensByProjectAndTargetTypeIn(todayStart, now, activeTypes));
         applyIoTokenSplit(base, ioSplit);
-        return R.ok(base);
+        return List.copyOf(base);
     }
 
     @GetMapping("/top-employees")
     public R<List<TopItemDto>> topEmployees(@RequestParam(defaultValue = "10") int limit) {
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
-        LocalDateTime now = LocalDateTime.now();
         Collection<String> activeTypes = activeTargetTypesProvider.getActiveTypes();
         if (activeTypes.isEmpty()) {
             return R.ok(new ArrayList<>());
         }
+        LocalDate today = LocalDate.now();
+        return R.ok(topEmployeesCache.get(today + "|" + limit + "|" + typesKey(activeTypes),
+                () -> loadTopEmployees(today, limit, activeTypes)));
+    }
+
+    private List<TopItemDto> loadTopEmployees(LocalDate today, int limit, Collection<String> activeTypes) {
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDateTime now = LocalDateTime.now();
         // 员工维度同上：[userCode, totalTokens, messageCount, sessionCount, projectCount]
         // displayLabel = "姓名|工号"（无姓名退化为工号），统一通过 EmployeeDisplayService 拿
         List<TopItemDto> base = toTopItemsFromEventAgg(
@@ -503,7 +559,7 @@ public class DashboardController {
         Map<String, long[]> ioSplit = toIoTokenSplitMap(
                 aiSessionRepository.aggregateInputOutputTokensByUserAndTargetTypeIn(todayStart, now, activeTypes));
         applyIoTokenSplit(base, ioSplit);
-        return R.ok(base);
+        return List.copyOf(base);
     }
 
     /**
