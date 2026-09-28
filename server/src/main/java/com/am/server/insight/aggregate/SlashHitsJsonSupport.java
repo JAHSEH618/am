@@ -120,6 +120,12 @@ public final class SlashHitsJsonSupport {
         return new ExtractedRecompute(json, counts[0], counts[1], changed);
     }
 
+    /**
+     * 按解析后的 JSON 树比较，而不是比文本：MySQL JSON 列回读是规范化形态（键序重排 + {@code ": "} 间隔），
+     * Jackson 写出的是紧凑形态，逐字比较永远不等——每次 reconcile 都会把每条带命中的 user 消息标脏，
+     * Hibernate 随即发整行 UPDATE（连 content_text / content_parts_json 一起重写）。
+     * 对象节点比较与键序无关、数组保序，与 {@link #recomputeExtracted} 的判据同口径；解析失败退回文本比较。
+     */
     private static boolean jsonEquivalent(String a, String b) {
         if (a == null || a.isBlank() || "null".equalsIgnoreCase(a.trim())) {
             return b == null || b.isBlank() || "null".equalsIgnoreCase(String.valueOf(b).trim());
@@ -127,7 +133,11 @@ public final class SlashHitsJsonSupport {
         if (b == null || b.isBlank() || "null".equalsIgnoreCase(b.trim())) {
             return false;
         }
-        return a.trim().equals(b.trim());
+        try {
+            return MAPPER.readTree(a).equals(MAPPER.readTree(b));
+        } catch (JsonProcessingException e) {
+            return a.trim().equals(b.trim());
+        }
     }
 
     /**
