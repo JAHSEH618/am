@@ -112,6 +112,9 @@ public class DashboardController {
      * </ul>
      * key 带上所有影响结果的入参（activeTypes / limit / 当天日期 / 渗透率窗口）。缓存值就是响应体本身，
      * 放进去之后不再改写——按请求变化的字段（展示名、距今秒数等）都在 loader 里一次算完。
+     * <p><b>改 overview / online 的 TTL 要同步前端</b>：Dashboard.tsx {@code SSE_REFRESH_DELAY_MS}、
+     * Realtime.tsx {@code ONLINE_SSE_REFRESH_DELAY_MS} 必须 ≥ 对应 TTL——SSE 事件后若在 TTL 内补拉，
+     * 可能拿到事件前算好的缓存，把页面刚 patch 上的新状态刷回旧值。
      */
     private final TtlSingleFlightCache<String, DashboardOverviewDto> overviewCache =
             new TtlSingleFlightCache<>(Duration.ofSeconds(5));

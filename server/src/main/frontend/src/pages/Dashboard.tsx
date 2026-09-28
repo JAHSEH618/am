@@ -57,6 +57,8 @@ import { indigo, semantic } from '../styles/tokens';
 // polling 主要负责拉今日累计指标（today_messages / today_tokens / top 列表）和"上次没开页时漏掉的"
 // 在线表全量。10s 间隔在 SSE 健康时几乎不产生用户可感的延迟，SSE 断连时也能保证大盘 ≤ 10s 刷新。
 const REFRESH_MS = 10_000;
+/** SSE 事件后补拉 overview + online 的延迟：须 ≥ 服务端 overview 缓存 TTL（5s），见 scheduleDashboardRefresh。 */
+const SSE_REFRESH_DELAY_MS = 5_500;
 
 /** 洞察审计：已审计 / 队列剩余，与 overview 解耦，默认 10s */
 const INSIGHT_AUDIT_FAST_MS = 10_000;
@@ -210,10 +212,14 @@ export default function Dashboard() {
   // 再防抖拉 overview + online，保证 hero「活跃 AI 会话」、运行中 Agent 列与后端真值一致
   // （含 target_type 从 null 展开为多行等结构变化）。
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 服务端 overview / online 有 5s / 3s 的 single-flight 缓存（DashboardController）：事件后立刻补拉，
+  // 拿到的可能是事件之前算好的那份，反而把上面本地 patch 的新状态刷回旧值。等满一个缓存 TTL 再拉，
+  // 返回的必然是事件之后才算的。节流而非防抖：事件连续不断时防抖永远等不到空档，节流保证 ≤ 5.5s 收敛。
   const scheduleDashboardRefresh = useCallback(() => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(async () => {
-      // 400ms 防抖只压住"排期"，压不住"在途"：ingest 密集时这里会和 10s 轮询叠加，
+      refreshTimerRef.current = null;
+      // 节流只压住"排期"，压不住"在途"：ingest 密集时这里会和 10s 轮询叠加，
       // 所以同样受在途标志约束，跳过的那次由下一轮 polling 兜底。
       if (overviewInFlightRef.current) return;
       overviewInFlightRef.current = true;
@@ -226,8 +232,14 @@ export default function Dashboard() {
       } finally {
         overviewInFlightRef.current = false;
       }
-    }, 400);
+    }, SSE_REFRESH_DELAY_MS);
   }, []);
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    [],
+  );
 
   const onSessionChanged = useCallback((data: string) => {
     try {

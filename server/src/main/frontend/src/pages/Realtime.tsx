@@ -25,6 +25,8 @@ const { Text } = Typography;
 // SSE 健康时只做兜底慢轮询（活跃期由 SSE 增量 + scheduleOnlineRefresh 保鲜）；断线时回退快轮询。
 const ONLINE_POLL_CONNECTED_MS = 30_000;
 const ONLINE_POLL_FALLBACK_MS = 5_000;
+/** SSE 事件后补拉 /online 的延迟：须 ≥ 服务端 online 缓存 TTL（3s）。 */
+const ONLINE_SSE_REFRESH_DELAY_MS = 3_500;
 const MAX_EVENTS = 100;
 /**
  * 会话快照只为给事件流里的行补展示信息，按「最近变更」保留有限条即可。
@@ -45,16 +47,25 @@ export default function Realtime() {
   const [loading, setLoading] = useState(true);
 
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 服务端 /online 有 3s single-flight 缓存：事件后等满一个 TTL 再补拉，拿到的才一定是事件之后算的，
+  // 不会把 onSessionChanged 刚 patch 上的状态刷回旧值。节流而非防抖：事件不断时也保证 ≤ 3.5s 收敛。
   const scheduleOnlineRefresh = useCallback(() => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(async () => {
+      refreshTimerRef.current = null;
       try {
         setAgents(await fetchOnline());
       } catch {
-        // 忽略；5s polling 会兜底
+        // 忽略；定时轮询会兜底
       }
-    }, 400);
+    }, ONLINE_SSE_REFRESH_DELAY_MS);
   }, []);
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    [],
+  );
 
   const onSessionEvent = useCallback((data: string) => {
     try {
