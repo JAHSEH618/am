@@ -2,6 +2,8 @@ package com.am.server.web.support;
 
 import com.am.server.domain.ai.AiSessionMessageRepository;
 import com.am.server.insight.aggregate.UserSlashInvocationExtractor;
+import com.am.server.system.SlashAnnotationFullBackfillPatch;
+import com.am.server.system.SystemConfigService;
 import com.am.server.web.dto.PeopleDetailDto;
 import com.am.server.web.dto.ToolStatDto;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,6 +24,9 @@ import java.util.Set;
 /**
  * 员工数据 / 模型与工具页：用户主动斜杠调用（{@code slash_command_count + slash_skill_count}，
  * Top 来自 {@code slash_hits_json}，缺失时从 {@code content_text} 回算）。
+ *
+ * <p>回算只对"从未标注过的历史行"有意义，但 ingest 把无命中行也存成 NULL，兜底查询于是会读整窗提问原文。
+ * 历史行全量标注完成后（marker {@link SlashAnnotationFullBackfillPatch#MARKER_KEY}）直接关掉回算路径。
  */
 @Component
 @RequiredArgsConstructor
@@ -30,6 +35,12 @@ public class SlashCommandStatSupport {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final AiSessionMessageRepository messageRepository;
+    private final SystemConfigService configService;
+
+    /** 历史行已全量标注 → 斜杠 Top 只读 slash_hits_json，不再拉 content_text 回算。 */
+    boolean contentFallbackRetired() {
+        return configService.find(SlashAnnotationFullBackfillPatch.MARKER_KEY).isPresent();
+    }
 
     public List<PeopleDetailDto.NameValuePair> topCommandTokensForProject(
             String projectName, LocalDateTime from, LocalDateTime to,
@@ -39,6 +50,13 @@ public class SlashCommandStatSupport {
             return List.of();
         }
         Map<String, Long> counts = new HashMap<>();
+        if (contentFallbackRetired()) {
+            for (String json : messageRepository.loadSlashHitsJsonOnlyForProjectInWindow(
+                    projectName, from, to, activeTypes)) {
+                mergeSlashHits(counts, json);
+            }
+            return toNameValuePairs(counts, topN);
+        }
         for (Object[] row : messageRepository.loadUserMessagesForSlashStatsByProjectInWindow(
                 projectName, from, to, activeTypes)) {
             accumulateSlashRow(counts, stringify(row[0]), stringify(row[1]), stringify(row[2]));
@@ -57,9 +75,11 @@ public class SlashCommandStatSupport {
                 userCode, from, to, activeTypes)) {
             mergeSlashHits(counts, json);
         }
-        for (Object[] row : messageRepository.loadSlashFallbackContentForUserInWindow(
-                userCode, from, to, activeTypes)) {
-            accumulateSlashRow(counts, stringify(row[0]), stringify(row[1]), null);
+        if (!contentFallbackRetired()) {
+            for (Object[] row : messageRepository.loadSlashFallbackContentForUserInWindow(
+                    userCode, from, to, activeTypes)) {
+                accumulateSlashRow(counts, stringify(row[0]), stringify(row[1]), null);
+            }
         }
         return toNameValuePairs(counts, topN);
     }
@@ -80,13 +100,15 @@ public class SlashCommandStatSupport {
             accumulateSlashRowWithDims(counts, usersByToken, sessionsByToken,
                     null, targetType, json, user, sessionId);
         }
-        for (Object[] row : messageRepository.loadSlashFallbackContentInWindowGlobal(from, to, activeTypes)) {
-            String user = stringify(row[0]);
-            Long sessionId = row[1] == null ? null : ((Number) row[1]).longValue();
-            String contentText = stringify(row[2]);
-            String targetType = stringify(row[3]);
-            accumulateSlashRowWithDims(counts, usersByToken, sessionsByToken,
-                    contentText, targetType, null, user, sessionId);
+        if (!contentFallbackRetired()) {
+            for (Object[] row : messageRepository.loadSlashFallbackContentInWindowGlobal(from, to, activeTypes)) {
+                String user = stringify(row[0]);
+                Long sessionId = row[1] == null ? null : ((Number) row[1]).longValue();
+                String contentText = stringify(row[2]);
+                String targetType = stringify(row[3]);
+                accumulateSlashRowWithDims(counts, usersByToken, sessionsByToken,
+                        contentText, targetType, null, user, sessionId);
+            }
         }
         List<Map.Entry<String, Long>> sorted = counts.entrySet().stream()
                 .sorted(Comparator.comparingLong(Map.Entry<String, Long>::getValue).reversed())

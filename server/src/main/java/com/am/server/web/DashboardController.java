@@ -28,6 +28,7 @@ import com.am.server.web.dto.TokenTrendDto;
 import com.am.server.web.dto.TopItemDto;
 import com.am.server.web.sse.SseHub;
 import com.am.server.web.support.TokenTrendSupport;
+import com.am.server.web.support.TtlSingleFlightCache;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +86,19 @@ public class DashboardController {
     private final SseHub sseHub;
     private final ActiveTargetTypesProvider activeTargetTypesProvider;
     private final InsightProperties insightProperties;
+
+    /**
+     * 审计进度计数是 ai_session 全表扫（带 LEFT JOIN 与不可走索引的 OR 条件），每个打开的仪表盘标签页
+     * 每 10s / 60s 各轮询一次。多标签页、多人同时看时共享一份结果：快指标 20s、慢指标 60s。
+     */
+    private final TtlSingleFlightCache<String, long[]> insightAuditFastCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(20));
+    private final TtlSingleFlightCache<String, long[]> insightAuditSlowCache =
+            new TtlSingleFlightCache<>(Duration.ofSeconds(60));
+
+    private static String insightAuditKey(List<String> types, int threshold) {
+        return types.stream().sorted().collect(java.util.stream.Collectors.joining(",")) + "|" + threshold;
+    }
     private final AgentProperties agentProperties;
     private final AiPenetrationService aiPenetrationService;
     private final DailySummaryRepository dailySummaryRepository;
@@ -177,14 +191,14 @@ public class DashboardController {
      *
      * <p>口径 = daily_summary（与员工数据页同源可对账），只含 input+output；
      * 逐日补零，date 升序。历史日由 00:05/每小时聚合任务定型，仅今日一点在动 ——
-     * 进入前对今日 ensureFresh（60s TTL 节流，稳态零成本），与员工数据页同语义。
+     * 进入前对今日 ensureFreshAsync（后台重算、不阻塞本请求），与员工数据页同语义。
      */
     @GetMapping("/token-trend")
     public R<TokenTrendDto> tokenTrend(@RequestParam(defaultValue = "30") int days) {
         int d = TokenTrendSupport.clampDays(days);
         LocalDate today = LocalDate.now();
         LocalDate from = today.minusDays(d - 1L);
-        dailySummaryAggregator.ensureFresh(today, ENSURE_FRESH_TTL);
+        dailySummaryAggregator.ensureFreshAsync(today, ENSURE_FRESH_TTL);
         List<Object[]> rows = dailySummaryRepository.sumTokensGroupedByWorkDate(from, today);
         return R.ok(new TokenTrendDto(TokenTrendSupport.fillDaily(from, today, rows)));
     }
@@ -202,9 +216,10 @@ public class DashboardController {
         }
         List<String> types = new ArrayList<>(activeTypes);
         int th = insightProperties.getReauditMessageThreshold();
-        long pending = aiSessionRepository.countPendingInsightAuditSessions(types, th);
-        long stable = aiSessionRepository.countStableInsightAuditedSessions(types, th);
-        return R.ok(new DashboardInsightAuditFastDto(stable, pending));
+        long[] counts = insightAuditFastCache.get(insightAuditKey(types, th), () -> new long[]{
+                aiSessionRepository.countPendingInsightAuditSessions(types, th),
+                aiSessionRepository.countStableInsightAuditedSessions(types, th)});
+        return R.ok(new DashboardInsightAuditFastDto(counts[1], counts[0]));
     }
 
     /**
@@ -218,9 +233,11 @@ public class DashboardController {
         }
         List<String> types = new ArrayList<>(activeTypes);
         int th = insightProperties.getReauditMessageThreshold();
-        long total = aiSessionRepository.countValidSessionsForInsightTypes(types);
-        long stable = aiSessionRepository.countStableInsightAuditedSessions(types, th);
-        long unaudited = Math.max(0L, total - stable);
+        long[] counts = insightAuditSlowCache.get(insightAuditKey(types, th), () -> new long[]{
+                aiSessionRepository.countValidSessionsForInsightTypes(types),
+                aiSessionRepository.countStableInsightAuditedSessions(types, th)});
+        long total = counts[0];
+        long unaudited = Math.max(0L, total - counts[1]);
         return R.ok(new DashboardInsightAuditSlowDto(total, unaudited));
     }
 

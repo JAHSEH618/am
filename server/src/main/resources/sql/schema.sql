@@ -395,7 +395,10 @@ CREATE TABLE IF NOT EXISTS ai_session_event
     KEY idx_tool_name (tool_name),
     KEY idx_event_time (event_time),
     KEY idx_target_event_time (target_type, event_time),
-    KEY idx_session_sourceref (ai_session_id, source_ref)
+    KEY idx_session_sourceref (ai_session_id, source_ref),
+    -- 控制台整窗聚合覆盖索引（存量库由 CoveringIndexBuilder 夜间在线补建）
+    KEY idx_window_cover (target_type, event_time, event_type, ai_session_id, user_code,
+                          tokens_delta, input_tokens_delta, output_tokens_delta, messages_delta)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'AI 会话活动事件流水';
 
 -- ai_session_message：external_message_id 是去重锚点。
@@ -431,7 +434,10 @@ CREATE TABLE IF NOT EXISTS ai_session_message
     KEY idx_session_seq (ai_session_id, sequence_no),
     KEY idx_user_time (user_code, message_time),
     KEY idx_message_time (message_time),
-    KEY idx_target_message_time (target_type, message_time)
+    KEY idx_target_message_time (target_type, message_time),
+    -- 控制台整窗聚合覆盖索引（存量库由 CoveringIndexBuilder 夜间在线补建）
+    KEY idx_window_cover (target_type, message_time, ai_session_id, user_code, role,
+                          slash_command_count, slash_skill_count)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT 'AI 会话消息原文';
 
 CREATE TABLE IF NOT EXISTS ai_session_message_blob

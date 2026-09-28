@@ -59,7 +59,26 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public R<Void> handleOther(Exception e) {
+        if (isQueryTimeout(e)) {
+            log.warn("query aborted by max execution time: {}", e.getMessage());
+            return R.fail(ErrorCode.QUERY_TIMEOUT, "查询超时，请缩小时间窗口后重试");
+        }
         log.error("unexpected error", e);
         return R.fail(ErrorCode.INTERNAL_ERROR, "internal server error");
+    }
+
+    /** MySQL ER_QUERY_TIMEOUT(3024)：SELECT 超过 MAX_EXECUTION_TIME 被服务端中止。 */
+    private static final int MYSQL_ER_QUERY_TIMEOUT = 3024;
+
+    static boolean isQueryTimeout(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof java.sql.SQLTimeoutException) {
+                return true;
+            }
+            if (t instanceof java.sql.SQLException sql && sql.getErrorCode() == MYSQL_ER_QUERY_TIMEOUT) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -99,6 +99,13 @@ local AI tools ──read──> aiwatchd monitors ──HMAC report──> /api
   全员补发又打满——服务起不来。现在重上报并发 ≤ `aiwatch.agent.ingest-max-concurrency`（16），超额在读 body
   前回 503 + `50301`（≤2KB 心跳不占名额），1.3.3+ agent 见 503 不落 outbox。上报路径上每个会话一个事务、
   每 tick 全员 × 窗口内会话数——**在 ingest 里加任何按会话的查询前，先确认它走索引且不读全量事件**。
+- **启动期回填必须一次性 + 分批**（2026-09 事故）：`ApplicationRunner` 在 Tomcat 已接流量后才跑，
+  REPEATABLE READ 下一条全表 `UPDATE…JOIN ai_session` 会把 ai_session 的间隙锁满，ingest 的
+  `INSERT ai_session` 等锁 50s 后整包失败、进 outbox 重发。回填一律走 `OneShotBackfillSupport`
+  （sys_config marker + 主键区间分批）；运行期要持续收敛的状态在写入路径里就写对，别指望"每次重启修一遍"。
+- **控制台读路径不许在请求线程里重算**：页面用 `ensureFreshAsync`（后台 single-flight），整窗聚合走
+  `TtlSingleFlightCache`；`GET /api/v1/**` 的 SELECT 带 20s `MAX_EXECUTION_TIME`（`ConsoleQueryBudgetFilter`），
+  前端切时间窗会取消旧请求。大表索引走 `CoveringIndexBuilder` 夜间在线建，不在启动时 DDL。
 - **Admin console lives at `/console`, not `/`** (Vite `base:/console/` + Router `basename`). Root `/`
   serves a standalone public install landing (`resources/landing/install.html` via `LandingController`) that
   exposes no admin SPA/routes — so employees fetching the installer can't browse the backend. `WebConfig`

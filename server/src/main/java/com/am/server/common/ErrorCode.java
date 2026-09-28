@@ -27,4 +27,7 @@ public final class ErrorCode {
 
     /** agent 上报并发已满（HTTP 503）：客户端不必落 outbox，下个 tick 重报即可。 */
     public static final int SERVER_BUSY = 50301;
+
+    /** 控制台查询超过服务端执行上限被 MySQL 中止（MAX_EXECUTION_TIME）：提示缩小时间窗口重试。 */
+    public static final int QUERY_TIMEOUT = 50401;
 }
