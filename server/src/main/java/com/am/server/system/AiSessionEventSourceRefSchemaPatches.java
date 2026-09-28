@@ -30,7 +30,7 @@ public class AiSessionEventSourceRefSchemaPatches {
      * source_ref"的旧行永久命中——于是每次重启都把整张事件表按 1 万行一块 UPDATE 一遍，
      * 恰好压在服务刚起、agent 集中补报的时候。现在探测只认真正缺列的行，且跑完一遍就不再跑。
      */
-    static final String MARKER_KEY = "event.source_ref_backfill_v1";
+    public static final String MARKER_KEY = "event.source_ref_backfill_v1";
 
     private static final String MARKER_EXISTS = "SELECT 1 FROM sys_config WHERE config_key = ?";
 

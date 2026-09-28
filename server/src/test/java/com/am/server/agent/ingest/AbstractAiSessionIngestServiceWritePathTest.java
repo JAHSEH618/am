@@ -11,9 +11,13 @@ import com.am.server.domain.ai.AiSessionMessage;
 import com.am.server.domain.ai.AiSessionMessageRepository;
 import com.am.server.domain.ai.AiSessionRepository;
 import com.am.server.insight.domain.AiSessionAuditRepository;
+import com.am.server.system.AiSessionEventSourceRefSchemaPatches;
+import com.am.server.system.SystemConfigService;
+import com.am.server.system.domain.SysConfig;
 import com.am.server.web.sse.SseHub;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
@@ -23,6 +27,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -34,7 +39,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 每 tick × 每会话的写路径开销：没有新消息的会话不得再数 message 表；有新消息时只按 role 分组数一次，
- * NL skill 归因只从新消息所在轮起取数。
+ * NL skill 归因只从新消息所在轮起取数；去重只反查本次上报里的 key；没有 SSE 订阅者时不做推送准备。
  */
 class AbstractAiSessionIngestServiceWritePathTest {
 
@@ -145,6 +150,62 @@ class AbstractAiSessionIngestServiceWritePathTest {
 
         verify(auditRepository).findByAiSessionIdIn(List.of(SESSION_ID));
         verify(sseHub).publish(eq("session_changed"), any());
+    }
+
+    @Test
+    void withSourceRefMarker_dedupLooksUpOnlyReportedKeys() {
+        SystemConfigService config = mock(SystemConfigService.class);
+        when(config.find(AiSessionEventSourceRefSchemaPatches.MARKER_KEY)).thenReturn(Optional.of(new SysConfig()));
+        ingest.setSystemConfigService(config);
+        when(messageRepository.maxSequenceNoByAiSessionId(SESSION_ID)).thenReturn(40);
+        // m41 上一拍已入库（消息行 + MESSAGE_DELTA 都在），本拍重复带上；m42 是新消息
+        AiSessionMessageRepository.MessageOrderRow m41Row = mock(AiSessionMessageRepository.MessageOrderRow.class);
+        when(m41Row.getExternalMessageId()).thenReturn("m41");
+        when(messageRepository.findMessageOrderByAiSessionIdAndExternalMessageIdIn(eq(SESSION_ID), anyCollection()))
+                .thenReturn(List.of(m41Row));
+        when(eventRepository.findSourceRefsByAiSessionIdAndSourceRefIn(eq(SESSION_ID), anyCollection()))
+                .thenReturn(List.of("m41:msg"));
+
+        List<ConversationMessageDto> msgs = new ArrayList<>();
+        msgs.add(message("m41", "user", "继续"));
+        msgs.add(message("m42", "assistant", "好的"));
+        ingest.ingest(snapshot(sessionDto(19, 59, msgs)), ctx());
+
+        verify(eventRepository, never()).findSourceRefsByAiSessionId(anyLong());
+        verify(messageRepository, never()).findMessageOrderByAiSessionId(anyLong());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<String>> refs = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(eventRepository).findSourceRefsByAiSessionIdAndSourceRefIn(eq(SESSION_ID), refs.capture());
+        assertThat(refs.getValue()).containsExactlyInAnyOrder("m41", "m41:msg", "m42", "m42:msg");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Collection<String>> ids = ArgumentCaptor.forClass(java.util.Collection.class);
+        verify(messageRepository).findMessageOrderByAiSessionIdAndExternalMessageIdIn(eq(SESSION_ID), ids.capture());
+        assertThat(ids.getValue()).containsExactly("m41", "m42");
+
+        // 去重结果与整段预载一致：m41 不重复入库、不重复记 MESSAGE_DELTA；m42 各写一次
+        ArgumentCaptor<AiSessionMessage> saved = ArgumentCaptor.forClass(AiSessionMessage.class);
+        verify(messageRepository, times(1)).save(saved.capture());
+        assertThat(saved.getValue().getExternalMessageId()).isEqualTo("m42");
+        ArgumentCaptor<AiSessionEvent> events = ArgumentCaptor.forClass(AiSessionEvent.class);
+        verify(eventRepository, org.mockito.Mockito.atLeastOnce()).save(events.capture());
+        assertThat(events.getAllValues()).extracting(AiSessionEvent::getSourceRef)
+                .contains("m42:msg")
+                .doesNotContain("m41:msg");
+    }
+
+    @Test
+    void withoutSourceRefMarker_fallsBackToFullRefSetIncludingLegacyJson() {
+        SystemConfigService config = mock(SystemConfigService.class);
+        when(config.find(AiSessionEventSourceRefSchemaPatches.MARKER_KEY)).thenReturn(Optional.empty());
+        ingest.setSystemConfigService(config);
+        when(messageRepository.maxSequenceNoByAiSessionId(SESSION_ID)).thenReturn(40);
+
+        List<ConversationMessageDto> msgs = new ArrayList<>();
+        msgs.add(message("m41", "user", "继续"));
+        ingest.ingest(snapshot(sessionDto(19, 58, msgs)), ctx());
+
+        verify(eventRepository).findSourceRefsByAiSessionId(SESSION_ID);
+        verify(eventRepository, never()).findSourceRefsByAiSessionIdAndSourceRefIn(anyLong(), anyCollection());
     }
 
     private static MonitorSnapshotDto snapshot(MonitorSessionDto s) {

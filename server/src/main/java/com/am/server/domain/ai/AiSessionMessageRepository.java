@@ -105,6 +105,21 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         """)
     List<MessageOrderRow> findMessageOrderByAiSessionId(@Param("aiSessionId") Long aiSessionId);
 
+    /**
+     * 同 {@link #findMessageOrderByAiSessionId}，只取本次上报里出现的 external_id（uk_session_extmsg 逐个定位）：
+     * ingest 去重 / 补序号只会查这些 id，不必把整段会话的已存消息都读回来。
+     */
+    @Query("""
+        SELECT m.externalMessageId AS externalMessageId,
+               m.conversationOrder AS conversationOrder,
+               m.messageTime AS messageTime
+        FROM AiSessionMessage m
+        WHERE m.aiSessionId = :aiSessionId AND m.externalMessageId IN :externalMessageIds
+        """)
+    List<MessageOrderRow> findMessageOrderByAiSessionIdAndExternalMessageIdIn(
+            @Param("aiSessionId") Long aiSessionId,
+            @Param("externalMessageIds") Collection<String> externalMessageIds);
+
     /** 聚合查询：把多个 session 的消息按 (sessionId, sequenceNo) 升序一次性拉出，
      *  供 DailySummaryAggregator 按日计算"首次响应时长 / 重试次数"。 */
     List<AiSessionMessage> findByAiSessionIdInOrderByAiSessionIdAscSequenceNoAsc(

@@ -43,6 +43,16 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
             nativeQuery = true)
     List<String> findSourceRefsByAiSessionId(@Param("sessionId") Long sessionId);
 
+    /**
+     * 只查给定 ref 是否已物化在列上（idx_session_sourceref 覆盖、逐个定位）。不含 extra_json 兜底——
+     * 仅在 source_ref 列回填已完成（marker {@code event.source_ref_backfill_v1}）后使用，届时兜底分支恒为空。
+     */
+    @Query(value = "SELECT source_ref FROM ai_session_event "
+            + "WHERE ai_session_id = :sessionId AND source_ref IN (:refs)",
+            nativeQuery = true)
+    List<String> findSourceRefsByAiSessionIdAndSourceRefIn(@Param("sessionId") Long sessionId,
+                                                           @Param("refs") Collection<String> refs);
+
     /** 0/1:会话是否已有物化的 source_ref(idx_session_sourceref 覆盖,命中第一行即停)。 */
     @Query(value = "SELECT COUNT(*) FROM (SELECT 1 FROM ai_session_event "
             + "WHERE ai_session_id = :sessionId AND source_ref IS NOT NULL LIMIT 1) t",
