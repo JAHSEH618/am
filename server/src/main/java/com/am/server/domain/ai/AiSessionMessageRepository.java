@@ -113,6 +113,26 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
     /** 单个 session 的全部消息，按 sequence 升序 —— 当日切片由调用方按 messageTime 过滤 */
     List<AiSessionMessage> findByAiSessionIdOrderBySequenceNoAsc(Long aiSessionId);
 
+    /** NL skill 增量归因：从给定序号（含）起的消息，按 sequence 升序（idx_session_seq 区间扫描）。 */
+    List<AiSessionMessage> findByAiSessionIdAndSequenceNoGreaterThanEqualOrderBySequenceNoAsc(
+            Long aiSessionId, Integer sequenceNo);
+
+    /**
+     * NL skill 增量归因：序号严格小于 {@code beforeSeq} 的最近一条 user 消息的序号（只取列，调用方传 limit 1）。
+     * 在 idx_session_seq 上倒序扫描、命中第一条 user 即停；role 判据与
+     * {@code NlSkillExecutionSupport} 的 {@code equalsIgnoreCase(trim)} 对齐。
+     */
+    @Query("""
+        SELECT m.sequenceNo FROM AiSessionMessage m
+        WHERE m.aiSessionId = :sessionId
+          AND m.sequenceNo < :beforeSeq
+          AND LOWER(TRIM(m.role)) = 'user'
+        ORDER BY m.sequenceNo DESC
+        """)
+    List<Integer> findUserSequenceNosBefore(@Param("sessionId") Long sessionId,
+                                            @Param("beforeSeq") int beforeSeq,
+                                            Pageable pageable);
+
     /** 单个 session + 时间窗口的消息分页（详情页"按筛选区间看对话"用） */
     Page<AiSessionMessage> findByAiSessionIdAndMessageTimeGreaterThanEqualAndMessageTimeLessThanOrderBySequenceNoAsc(
             Long aiSessionId, LocalDateTime from, LocalDateTime to, Pageable pageable);

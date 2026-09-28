@@ -735,6 +735,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             return 0;
         }
         int seq = messageRepository.maxSequenceNoByAiSessionId(session.getId());
+        // 新消息的 sequence_no 从 max+1 起追加：NL skill 归因只需从这之前最后一轮重算（见 reconcileSessionFrom）
+        final int firstNewSeq = seq + 1;
         int written = 0;
         Set<String> seen = new HashSet<>();
         // 一次把已存消息的 (external_id, conversation_order, message_time) 取全，
@@ -824,7 +826,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             continue;
         }
         if (written > 0 && reconciledSessions.add(session.getId())) {
-            NlSkillAttributionSupport.reconcileSession(messageRepository, session.getId());
+            NlSkillAttributionSupport.reconcileSessionFrom(messageRepository, session.getId(), firstNewSeq);
         }
         return written;
     }
