@@ -353,11 +353,9 @@ body,
   background: rgba(0, 0, 0, 0.22);
 }
 
-/* 数据表格：thead sticky，长列表滚动时表头始终可见 */
+/* 数据表格表头样式。吸顶由 Table 的 sticky={STICKY_HEADER}（utils/table）负责——
+ * 这里的 position:sticky 在 scroll.x 表格里从来没生效过（见 STICKY_HEADER 注释），已删。 */
 .am-sticky-table .ant-table-thead > tr > th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   background: var(--am-surface-sunken) !important;
   font-weight: 500;
 }

@@ -50,7 +50,7 @@ import {
 } from '../utils/format';
 import StatusDot from '../components/StatusDot';
 import { HeroCard, MetricRow } from '../components/HeroCard';
-import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE, STICKY_HEADER } from '../utils/table';
 import { indigo, semantic } from '../styles/tokens';
 
 // v2.7.1：HTTP 兜底 polling 间隔。SSE 实时 patch 已经覆盖大部分高频更新（status/tool/model/project），
@@ -1093,6 +1093,7 @@ function OnlineAgentTable({
       locale={{ emptyText: '暂无 Agent 设备（无 ACTIVE 台账或列表为空）' }}
       scroll={{ x: 2260 }}
       className="am-sticky-table am-online-table"
+      sticky={STICKY_HEADER}
       columns={columns}
       onRow={(row) => clickableRowProps(() => navigate(`/sessions?user_code=${row.user_code}`))}
     />

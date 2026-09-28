@@ -14,7 +14,7 @@ import {
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
 import { employeeName, formatTime, formatTokens, modelLabel } from '../utils/format';
-import { clickableRowProps } from '../utils/table';
+import { clickableRowProps, STICKY_HEADER } from '../utils/table';
 import { accent, indigo } from '../styles/tokens';
 
 /**
@@ -291,6 +291,7 @@ export default function Projects() {
           dataSource={list}
           scroll={{ x: 1068 }}
           className="am-sticky-table"
+          sticky={STICKY_HEADER}
           locale={{ emptyText: '当前时间窗内暂无项目活动' }}
           pagination={{ pageSize: 20, showSizeChanger: false }}
           onRow={(row) => {

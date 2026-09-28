@@ -64,7 +64,7 @@ import type {
 } from '../api/types';
 import { CollectorMark } from '../components/brand/CollectorMark';
 import { HeroCard } from '../components/HeroCard';
-import { EMPTY_DASH, NUM_STYLE } from '../utils/table';
+import { EMPTY_DASH, NUM_STYLE, STICKY_HEADER } from '../utils/table';
 
 const { Text, Paragraph } = Typography;
 
@@ -2322,6 +2322,7 @@ function AuditPanel() {
         size="middle"
         scroll={{ x: 1150 }}
         className="am-sticky-table"
+        sticky={STICKY_HEADER}
         pagination={{
           current: page + 1,
           pageSize: size,

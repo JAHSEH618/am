@@ -41,7 +41,7 @@ import TeamOverview from './Analysis/TeamOverview';
 import UserDetail from './Analysis/UserDetail';
 import MetricLabel from './Analysis/MetricLabel';
 import { BUCKET_META, GRADE_META, WATCHLIST_META, watchlistTagColor } from './Analysis/constants';
-import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE, STICKY_HEADER } from '../utils/table';
 import { employeeName } from '../utils/format';
 
 dayjs.extend(isoWeek);
@@ -792,6 +792,7 @@ function UserListTable({
   return (
     <Table<AnalysisReportUser>
       className="am-sticky-table"
+      sticky={STICKY_HEADER}
       size="small"
       rowKey="user_code"
       dataSource={users}

@@ -20,7 +20,7 @@ import {
   targetTypeLabel,
   type TargetTypeMap,
 } from '../utils/format';
-import { clickableRowProps, NUM_STYLE } from '../utils/table';
+import { clickableRowProps, NUM_STYLE, STICKY_HEADER } from '../utils/table';
 import { MODE_META, OUTCOME_META, CAPABILITY_DIMENSIONS, categoryTagStyle } from './Analysis/constants';
 
 // 页面 URL 参数键。集中在这里，避免 Sessions / SessionDetail 各写一份字符串字面量。
@@ -810,6 +810,7 @@ export default function Sessions() {
           dataSource={data?.items ?? []}
           scroll={{ x: 1954 }}
           className="am-sticky-table"
+          sticky={STICKY_HEADER}
           locale={{ emptyText: '当前筛选条件下暂无会话' }}
           pagination={{
             current: page + 1,

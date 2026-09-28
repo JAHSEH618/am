@@ -59,7 +59,7 @@ the proxy at whichever port your backend is actually on, or run the backend on 8
   (CSS vars, for DOM inline styles), wired into the AntD `ConfigProvider` theme in `src/main.tsx`. The one
   committed accent is **brand cobalt `indigo-600 #1a52dc`** (exported as `indigo`; the old `#4f46e5` / `#2563eb` are gone). DOM inline styles use
   `var(--am-*)`; ECharts uses the JS tokens; status dots use `components/StatusDot`. Never scatter raw hex —
-  add/borrow a token. 8pt spacing, `tnum` tabular numbers, sticky table headers as before.
+  add/borrow a token. 8pt spacing, `tnum` tabular numbers; long tables get a sticky header via `sticky={STICKY_HEADER}` (`utils/table`) — a CSS `position: sticky` on `th` never works once `scroll.x` is set.
 
 - **时间窗**：默认窗口 / 快捷预设 / 禁选未来日期统一走 `src/utils/timeWindow.ts`（`weekToDate` / `lastNDays` /
   `rangePresets` / `disableFutureDate`），**窗口终点不越过今天**（未来日期只会在热力图里画空格子）。分析报告页生成
