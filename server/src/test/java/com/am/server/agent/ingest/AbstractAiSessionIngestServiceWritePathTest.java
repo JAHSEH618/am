@@ -101,6 +101,58 @@ class AbstractAiSessionIngestServiceWritePathTest {
         verify(messageRepository, never()).countGroupedByRoleForSession(anyLong());
         // 只剩 reported_snapshot 对齐用的那一次（idx_session_seq 覆盖的 COUNT）
         verify(messageRepository, times(1)).countByAiSessionId(SESSION_ID);
+        // 游标在尾部且库里有消息 → 陈旧快照以库里行数为准
+        assertThat(stored.getReportedSnapshotMessages()).isEqualTo(776);
+    }
+
+    @Test
+    void recentMessagesAllDuplicates_countsOnceAfterTheFactAndRestoresCounters() {
+        // 带了 recent_messages，但全是上一拍已入库的（去重后一行没写）：写入前行数 = 现在的行数，此时才需要它
+        when(messageRepository.maxSequenceNoByAiSessionId(SESSION_ID)).thenReturn(40);
+        AiSessionMessageRepository.MessageOrderRow m41Row = mock(AiSessionMessageRepository.MessageOrderRow.class);
+        when(m41Row.getExternalMessageId()).thenReturn("m41");
+        when(messageRepository.findMessageOrderByAiSessionIdAndExternalMessageIdIn(eq(SESSION_ID), anyCollection()))
+                .thenReturn(List.of(m41Row));
+
+        List<ConversationMessageDto> msgs = new ArrayList<>();
+        msgs.add(message("m41", "user", "继续"));
+        ingest.ingest(snapshot(sessionDto(1, 38, msgs)), ctx());
+
+        verify(messageRepository, never()).save(any(AiSessionMessage.class));
+        verify(messageRepository, times(1)).countByAiSessionId(SESSION_ID);
+        verify(messageRepository, never()).countGroupedByRoleForSession(anyLong());
+        // 与改前一致：库里有消息 → 恢复上一拍对齐的计数；快照用上报的（非尾部）
+        assertThat(stored.getUserMessages()).isEqualTo(18);
+        assertThat(stored.getAssistantMessages()).isEqualTo(58);
+        assertThat(stored.getTotalMessages()).isEqualTo(76);
+        assertThat(stored.getReportedSnapshotMessages()).isEqualTo(1);
+    }
+
+    @Test
+    void recentMessagesAllDuplicates_onSessionWithoutStoredRows_keepsAgentSnapshotCounters() {
+        when(messageRepository.countByAiSessionId(SESSION_ID)).thenReturn(0);
+        when(messageRepository.maxSequenceNoByAiSessionId(SESSION_ID)).thenReturn(0);
+        // 全被 LocalCommandNoise 过滤：一行没写、库里也没有 → 保留 Agent 快照的计数
+        List<ConversationMessageDto> msgs = new ArrayList<>();
+        msgs.add(message("m1", "user", "<local-command-caveat>Caveat: ignore</local-command-caveat>"));
+        ingest.ingest(snapshot(sessionDto(3, 4, msgs)), ctx());
+
+        verify(messageRepository, never()).save(any(AiSessionMessage.class));
+        verify(messageRepository, times(1)).countByAiSessionId(SESSION_ID);
+        assertThat(stored.getUserMessages()).isEqualTo(3);
+        assertThat(stored.getAssistantMessages()).isEqualTo(4);
+        assertThat(stored.getTotalMessages()).isEqualTo(7);
+    }
+
+    @Test
+    void tailTickOnSessionWithoutStoredRows_reportsIncomingSnapshot() {
+        when(messageRepository.countByAiSessionId(SESSION_ID)).thenReturn(0);
+        MonitorSessionDto dto = sessionDto(2, 3, null);
+        dto.setSnapshotMessageCount(5);
+        ingest.ingest(snapshot(dto), ctx());
+
+        assertThat(stored.getReportedSnapshotMessages()).isEqualTo(5);
+        assertThat(stored.getTotalMessages()).isEqualTo(5);
     }
 
     @Test
@@ -127,7 +179,10 @@ class AbstractAiSessionIngestServiceWritePathTest {
         assertThat(stored.getAssistantMessages()).isEqualTo(59);
         assertThat(stored.getTotalMessages()).isEqualTo(78);
         verify(messageRepository, times(1)).countGroupedByRoleForSession(SESSION_ID);
-        verify(messageRepository, times(1)).countByAiSessionId(SESSION_ID);
+        // 带了 recent_messages 且写入了消息：reported_snapshot 用上报的快照数、计数按 role 分组重算，
+        // 写入前的行数两处都用不到——不再单独 COUNT
+        verify(messageRepository, never()).countByAiSessionId(anyLong());
+        assertThat(stored.getReportedSnapshotMessages()).as("非尾部：以上报的 recent_messages 条数为快照").isEqualTo(2);
         verify(messageRepository).findUserSequenceNosBefore(eq(SESSION_ID), eq(41), any(Pageable.class));
         verify(messageRepository, never()).findByAiSessionIdOrderBySequenceNoAsc(anyLong());
     }

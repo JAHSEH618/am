@@ -77,6 +77,17 @@ public interface AiSessionEventRepository extends JpaRepository<AiSessionEvent, 
         return countFirstMaterializedSourceRef(sessionId) > 0 || countFirstLegacySourceRef(sessionId) > 0;
     }
 
+    /**
+     * 同 {@link #existsAnySourceRef}，但只看物化列（idx_session_sourceref 覆盖、命中第一行即停），不含 extra_json 兜底。
+     *
+     * <p>仅在 source_ref 列回填已完成（sys_config marker {@code event.source_ref_backfill_v1}）后使用——
+     * 届时旧行兜底恒为空。兜底那条 {@code JSON_EXTRACT} 对"没有任何物化 ref"的会话（只有 SESSION_OPEN /
+     * STATUS_CHANGE 等）会回表扫该会话全部 source_ref 为空的事件逐行解析 JSON，而这类会话在每个 tick 都要问一次。
+     */
+    default boolean existsMaterializedSourceRef(Long sessionId) {
+        return countFirstMaterializedSourceRef(sessionId) > 0;
+    }
+
     Page<AiSessionEvent> findByAiSessionIdOrderByEventTimeDesc(Long aiSessionId, Pageable pageable);
 
     long countByEventTypeAndEventTimeAfter(String eventType, LocalDateTime since);

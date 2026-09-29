@@ -145,6 +145,28 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         this.systemConfigService = systemConfigService;
     }
 
+    /** source_ref 列回填完成后恒为 true，之后不再读 marker（true 是单向的：回填不会"反完成"）。 */
+    private volatile boolean sourceRefBackfillDone;
+
+    /**
+     * {@link AiSessionEventSourceRefSchemaPatches#MARKER_KEY} 是否已存在（= 旧行 extra_json 里的 source_ref 已全部物化到列，
+     * 兜底分支恒为空）。{@code find} 读的是 SystemConfigService 的内存缓存，不查库；这里再加一层单向缓存，
+     * 让每个 tick × 每个会话的热路径连 map 查找都省掉。
+     *
+     * <p>注意缓存是启动时加载的：回填 patch 用裸 JDBC 写 marker、不刷新缓存，所以"同一次启动里刚写下 marker"要到
+     * 下次重启才生效（新库首启期间走含兜底的慢路径，功能不受影响）；存量 prod 库 marker 早已在，启动即命中。
+     */
+    boolean sourceRefBackfillDone() {
+        if (sourceRefBackfillDone) {
+            return true;
+        }
+        if (systemConfigService != null
+                && systemConfigService.find(AiSessionEventSourceRefSchemaPatches.MARKER_KEY).isPresent()) {
+            sourceRefBackfillDone = true;
+        }
+        return sourceRefBackfillDone;
+    }
+
     private PlatformTransactionManager transactionManager;
     private TransactionTemplate sessionTxTemplate;
     private AgentProperties agentProperties;
@@ -166,6 +188,10 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         }
         sessionTxTemplate = new TransactionTemplate(transactionManager);
         sessionTxTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // 每会话事务限时：DB 变慢时不让上报线程无限期占连接。超时异常沿调用链上抛到 AgentReportService，
+        // 由它归一成 TransactionTimedOutException（见 IngestTimeouts）
+        int timeoutSeconds = agentProperties != null ? agentProperties.getIngestSessionTimeoutSeconds() : 10;
+        sessionTxTemplate.setTimeout(timeoutSeconds > 0 ? timeoutSeconds : TransactionDefinition.TIMEOUT_DEFAULT);
     }
 
     /** 单会话 ingest 在独立事务内的产出，供外层汇总 SSE / daily_summary。 */
@@ -274,8 +300,12 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (sessionTxTemplate == null) {
             return ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow);
         }
+        // inTransaction：事务 / 语句超时归一成 TransactionTimedOutException 上抛（整包失败、游标不推进、下个 tick 重报），
+        // 且不被"超时语句让 Hikari 关掉连接 → 回滚失败"盖掉；其它异常（含乐观锁）原样抛，交给重试环
         return executeWithOptimisticRetry(
-                () -> sessionTxTemplate.execute(status -> ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow)),
+                () -> IngestTimeouts.inTransaction(sessionTxTemplate,
+                        () -> ingestOneSession(incoming, ctx, snapshotCapturedAt, wallNow),
+                        "target=" + targetType() + " session=" + incoming.getSessionId()),
                 SessionIngestSlice::empty,
                 incoming.getSessionId());
     }
@@ -315,8 +345,14 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         UpsertOutcome outcome = upsertSession(incoming, ctx, snapshotCapturedAt, sseEvents);
         int messagesWritten = writeMessages(outcome.session, incoming, ctx, reconciledSessions);
         // 本拍没写消息时直接恢复上一拍对齐后的计数，不再每拍把 message 表数两遍（见 reconcileAfterIngest）
+        int storedBeforeWrite = outcome.storedBeforeWrite;
+        if (messagesWritten <= 0 && !outcome.storedKnown) {
+            // 上报带了 recent_messages 但全被去重 / 过滤：一行没写，库里行数就是写入前的行数。
+            // 写了消息时 reconcileAfterIngest 恒按 message 表重算，用不到写入前行数，所以不必数。
+            storedBeforeWrite = nz(messageRepository.countByAiSessionId(outcome.session.getId()));
+        }
         SessionMessageCountSupport.reconcileAfterIngest(outcome.session, messageRepository,
-                outcome.storedBeforeWrite, messagesWritten, outcome.countersBeforeUpsert);
+                storedBeforeWrite, messagesWritten, outcome.countersBeforeUpsert);
         sessionRepository.save(outcome.session);
         Set<String> suppressedChildComposerIds = childComposerIdsFromMessages(outcome.session, incoming);
         sseSessions.put(outcome.session.getId(), outcome.session);
@@ -469,8 +505,13 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         session.setUserMessages(nz(incoming.getUserMessages()));
         session.setAssistantMessages(nz(incoming.getAssistantMessages()));
         session.setTotalMessages(nz(incoming.getUserMessages()) + nz(incoming.getAssistantMessages()));
-        int storedBeforeWrite = isNew ? 0 : nz(messageRepository.countByAiSessionId(session.getId()));
         boolean cursorAtTail = incoming.getRecentMessages() == null || incoming.getRecentMessages().isEmpty();
+        // 库里已有多少行 message 只有两处要用：游标在尾部时 resolveReportedSnapshot 以它修正陈旧快照；
+        // 本拍一条都没写时 reconcileAfterIngest 据它判断"库里有消息就恢复上一拍对齐的计数"。
+        // 带了 recent_messages（游标不在尾部）时前者用不到（结果恒为上报的快照数），后者要等写完才知道
+        // 有没有写——写了消息就用不到（见 ingestOneSession）。所以这里只在游标在尾部时才数，其余情形按需惰性补数。
+        boolean storedKnown = isNew || cursorAtTail;
+        int storedBeforeWrite = isNew || !cursorAtTail ? 0 : nz(messageRepository.countByAiSessionId(session.getId()));
         session.setReportedSnapshotMessages(BackfillSnapshotSupport.resolveReportedSnapshot(
                 storedBeforeWrite, resolveSnapshotMessageCount(incoming), cursorAtTail));
         session.setInputTokens(nz(incoming.getInputTokens()));
@@ -604,7 +645,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 }
             }
         }
-        return new UpsertOutcome(session, eventsWritten, storedBeforeWrite, countersBeforeUpsert);
+        return new UpsertOutcome(session, eventsWritten, storedBeforeWrite, storedKnown, countersBeforeUpsert);
     }
 
     /**
@@ -724,8 +765,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
      * 之后兜底分支恒为空；marker 还不存在（回填失败 / 未跑完）时仍走原来的全量查询。
      */
     Set<String> loadExistingSourceRefs(Long sessionId, MonitorSessionDto incoming) {
-        if (systemConfigService == null
-                || systemConfigService.find(AiSessionEventSourceRefSchemaPatches.MARKER_KEY).isEmpty()) {
+        if (!sourceRefBackfillDone()) {
             return new HashSet<>(eventRepository.findSourceRefsByAiSessionId(sessionId));
         }
         Set<String> found = new HashSet<>();
@@ -799,7 +839,14 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         if (incoming.getRecentMessages() != null && !incoming.getRecentMessages().isEmpty()) {
             return true;
         }
-        return sessionId != null && eventRepository.existsAnySourceRef(sessionId);
+        if (sessionId == null) {
+            return false;
+        }
+        // marker 已在：旧行兜底（JSON_EXTRACT 扫该会话全部空 ref 事件）恒为空，只走 idx_session_sourceref 的索引探测。
+        // 没有物化 ref 的会话（只有 SESSION_OPEN / STATUS_CHANGE 之类）以前每个 tick 都白白跑一遍兜底扫描。
+        return sourceRefBackfillDone()
+                ? eventRepository.existsMaterializedSourceRef(sessionId)
+                : eventRepository.existsAnySourceRef(sessionId);
     }
 
     private static boolean hasItems(java.util.Collection<?> c) {
@@ -1110,16 +1157,19 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     private static class UpsertOutcome {
         final AiSession session;
         final int eventsWritten;
-        /** 本拍写入消息前该会话已入库的 message 行数（新会话 0）。 */
+        /** 本拍写入消息前该会话已入库的 message 行数（新会话 0；{@link #storedKnown}=false 时未查，值无意义）。 */
         final int storedBeforeWrite;
+        /** {@link #storedBeforeWrite} 是否已经查过（新会话 / 游标在尾部）；否则要用时再按需补数。 */
+        final boolean storedKnown;
         /** Agent 快照覆写前的会话计数（新会话 null）。 */
         final SessionMessageCountSupport.SessionCounters countersBeforeUpsert;
 
-        UpsertOutcome(AiSession session, int eventsWritten, int storedBeforeWrite,
+        UpsertOutcome(AiSession session, int eventsWritten, int storedBeforeWrite, boolean storedKnown,
                       SessionMessageCountSupport.SessionCounters countersBeforeUpsert) {
             this.session = session;
             this.eventsWritten = eventsWritten;
             this.storedBeforeWrite = storedBeforeWrite;
+            this.storedKnown = storedKnown;
             this.countersBeforeUpsert = countersBeforeUpsert;
         }
     }
