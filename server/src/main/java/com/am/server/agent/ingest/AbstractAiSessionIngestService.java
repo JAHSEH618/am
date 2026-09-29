@@ -154,6 +154,19 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         this.agentProperties = agentProperties;
     }
 
+    /**
+     * token 合理性护栏（会话累计 / delta 上限校验 + 限流告警）。缺省用内置默认上限、不发告警，
+     * 让不挂 Spring 的单测直接构造 ingest service 时行为不变。
+     */
+    private TokenSanityGuard tokenSanityGuard = TokenSanityGuard.withDefaults();
+
+    @Autowired(required = false)
+    public void setTokenSanityGuard(TokenSanityGuard tokenSanityGuard) {
+        if (tokenSanityGuard != null) {
+            this.tokenSanityGuard = tokenSanityGuard;
+        }
+    }
+
     @Autowired
     public void setTransactionManager(PlatformTransactionManager transactionManager) {
         this.transactionManager = transactionManager;
@@ -473,10 +486,19 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         boolean cursorAtTail = incoming.getRecentMessages() == null || incoming.getRecentMessages().isEmpty();
         session.setReportedSnapshotMessages(BackfillSnapshotSupport.resolveReportedSnapshot(
                 storedBeforeWrite, resolveSnapshotMessageCount(incoming), cursorAtTail));
-        session.setInputTokens(nz(incoming.getInputTokens()));
-        session.setOutputTokens(nz(incoming.getOutputTokens()));
-        session.setCacheCreateTokens(nz(incoming.getCacheCreateTokens()));
-        session.setCacheReadTokens(nz(incoming.getCacheReadTokens()));
+        // 会话累计 token 原样采信客户端值的日子结束了：负数 / 超上限（默认 20 亿，缓存 100 亿）一律不采信，
+        // 保留库内上一次的值并限流告警（见 TokenSanityGuard）。新会话的 previous 为 0。
+        final String extSid = incoming.getSessionId();
+        session.setInputTokens(tokenSanityGuard.acceptSessionTotal(
+                ctx, targetType(), extSid, "input_tokens", incoming.getInputTokens(), previousInput, false));
+        session.setOutputTokens(tokenSanityGuard.acceptSessionTotal(
+                ctx, targetType(), extSid, "output_tokens", incoming.getOutputTokens(), previousOutput, false));
+        session.setCacheCreateTokens(tokenSanityGuard.acceptSessionTotal(
+                ctx, targetType(), extSid, "cache_create_tokens", incoming.getCacheCreateTokens(),
+                nz(session.getCacheCreateTokens()), true));
+        session.setCacheReadTokens(tokenSanityGuard.acceptSessionTotal(
+                ctx, targetType(), extSid, "cache_read_tokens", incoming.getCacheReadTokens(),
+                nz(session.getCacheReadTokens()), true));
 
         onSessionUpsert(session, incoming, isNew);
         evaluateInvalidReason(session);
@@ -543,8 +565,14 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             }
 
             if (!hadClientTimedDeltas && !prefersPerItemDeltaPath) {
-                long inputDelta = nz(session.getInputTokens()) - previousInput;
-                long outputDelta = nz(session.getOutputTokens()) - previousOutput;
+                // 快照累计差同样只允许"正向且不超单条上限"：会话累计回落（客户端重启后从膨胀值归位、
+                // Codex 压缩）此前会写出负向 TOKEN_DELTA 进事件流，这里与 clampFallbackMessageDelta 同口径丢弃。
+                long inputDelta = tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                        session.getExternalSessionId(), "input_tokens_snapshot_delta",
+                        nz(session.getInputTokens()) - previousInput);
+                long outputDelta = tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                        session.getExternalSessionId(), "output_tokens_snapshot_delta",
+                        nz(session.getOutputTokens()) - previousOutput);
                 if (eventTime != null && (inputDelta != 0 || outputDelta != 0)) {
                     sseEvents.add(writeEvent(session, AiSessionEventType.TOKEN_DELTA, session.getStatus(), null,
                             inputDelta, outputDelta, 0, eventTime, null, sourceRefsInTxn));
@@ -625,8 +653,11 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                     && hasSourceRefEvent(ref, sourceRefsInTxn)) {
                 continue;
             }
-            long inD = nz(d.getInputTokensDelta());
-            long outD = nz(d.getOutputTokensDelta());
+            // 单条增量的合理性：超上限（默认 5 亿）/ 负数直接丢弃（记 0），见 TokenSanityGuard。
+            long inD = tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                    session.getExternalSessionId(), "input_tokens_delta", d.getInputTokensDelta());
+            long outD = tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                    session.getExternalSessionId(), "output_tokens_delta", d.getOutputTokensDelta());
             // 服务端兜底：客户端累计计数回退（Codex 压缩 / 重置）时可能下发负向 token 增量，
             // 老版本 agent 不会立即升级，这里裁 0 防止「今日 Token」求和变负、前端越界。
             // 与 clampFallbackMessageDelta「禁止负向事件」同口径。
@@ -668,8 +699,12 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             if (hasSourceRefEvent(ref, sourceRefsInTxn)) {
                 continue;
             }
-            long inD = nz(m.getInputTokens() == null ? null : m.getInputTokens().longValue());
-            long outD = nz(m.getOutputTokens() == null ? null : m.getOutputTokens().longValue());
+            long inD = tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                    session.getExternalSessionId(), "message_input_tokens",
+                    m.getInputTokens() == null ? null : m.getInputTokens().longValue());
+            long outD = tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                    session.getExternalSessionId(), "message_output_tokens",
+                    m.getOutputTokens() == null ? null : m.getOutputTokens().longValue());
             if (inD > 0 || outD > 0) {
                 sseEvents.add(writeEvent(session, AiSessionEventType.TOKEN_DELTA, session.getStatus(), null,
                         inD, outD, 0, m.getTimestamp(), ref, sourceRefsInTxn));
@@ -806,6 +841,11 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         return c != null && !c.isEmpty();
     }
 
+    /** token 护栏日志 / 告警用的上报身份：取会话创建时的 agent / user / host（与本次上报者同一设备）。 */
+    private static SignatureContext guardCtx(AiSession session) {
+        return new SignatureContext(session.getAgentId(), session.getUserCode(), session.getHostHash());
+    }
+
     /** 快照累计 fallback 只允许正向消息增量；计数回退是解析 artifact，不应进 event 流。 */
     static int clampFallbackMessageDelta(int delta) {
         return Math.max(delta, 0);
@@ -871,8 +911,12 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             msg.setRole(m.getRole() == null ? "user" : m.getRole());
             msg.setSequenceNo(++seq);
             msg.setToolName(m.getToolName());
-            msg.setInputTokens(nz(m.getInputTokens()));
-            msg.setOutputTokens(nz(m.getOutputTokens()));
+            msg.setInputTokens((int) tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                    session.getExternalSessionId(), "message_input_tokens",
+                    m.getInputTokens() == null ? null : m.getInputTokens().longValue()));
+            msg.setOutputTokens((int) tokenSanityGuard.acceptDelta(guardCtx(session), session.getTargetType(),
+                    session.getExternalSessionId(), "message_output_tokens",
+                    m.getOutputTokens() == null ? null : m.getOutputTokens().longValue()));
             msg.setMessageTime(or(m.getTimestamp(), session.getLastActivity()));
             if (m.getConversationOrder() != null && m.getConversationOrder() > 0) {
                 msg.setConversationOrder(m.getConversationOrder());

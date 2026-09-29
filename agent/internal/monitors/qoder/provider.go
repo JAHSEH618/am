@@ -62,6 +62,18 @@ type parsedSession struct {
 	Deltas            []monitor.ActivityDelta
 }
 
+// clone 返回可安全改写的副本：切片各自独立，标量按值拷贝。
+func (p *parsedSession) clone() *parsedSession {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.Messages = append([]monitor.Message(nil), p.Messages...)
+	cp.Tools = append([]monitor.Tool(nil), p.Tools...)
+	cp.Deltas = append([]monitor.ActivityDelta(nil), p.Deltas...)
+	return &cp
+}
+
 type transcriptRecord struct {
 	Type       string          `json:"type"`
 	SessionID  string          `json:"sessionId"`
@@ -192,9 +204,13 @@ func (p *Provider) collectJobs(cutoff time.Time) ([]common.ParseJob[*parsedSessi
 }
 
 func (p *Provider) parseOne(path string, offset int64, cached *parsedSession) (*parsedSession, int64, error) {
-	ps := cached
-	if ps == nil || offset == 0 {
+	var ps *parsedSession
+	if cached == nil || offset == 0 {
 		ps = &parsedSession{SessionID: sessionIDFromPath(path)}
+	} else {
+		// 增量解析必须在副本上做（与 claude/codex/openclaw/kimicode 一致）：直接改缓存里的指针，
+		// 一旦本次解析中途失败（结果被丢弃、游标没前进），下个 tick 会从旧游标把同一批行再累加一遍。
+		ps = cached.clone()
 	}
 	consumed, parsed, err := common.ScanJSONL(path, offset, maxJSONLLine, func(line []byte, _ int64) bool {
 		var rec transcriptRecord

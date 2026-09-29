@@ -1,5 +1,6 @@
 package com.am.server.aggregator;
 
+import com.am.server.common.TokenSanitySupport;
 import com.am.server.domain.ai.AiSession;
 import com.am.server.domain.ai.AiSessionEvent;
 import com.am.server.domain.ai.AiSessionEventRepository;
@@ -20,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,6 +96,17 @@ public class DailySummaryAggregator {
     @Autowired
     @Lazy
     private DailySummaryAggregator self;
+
+    /**
+     * 汇总层 token 护栏（与 ingest 入口共用 {@code aiwatch.ingest.max-session-tokens}）：单会话 input / output
+     * 任一超过它（或为负）即视为坏值会话，整块跳过；跳过后单用户单日之和仍超过 {@link #maxUserDailyTokens} 则封顶。
+     * 见 {@link TokenSanitySupport#sumUserDay}。非 final + 初始值，保证单测里 {@code new} 出来也有默认上限。
+     */
+    @Value("${aiwatch.ingest.max-session-tokens:" + TokenSanitySupport.DEFAULT_MAX_SESSION_TOKENS + "}")
+    private long maxSessionTokens = TokenSanitySupport.DEFAULT_MAX_SESSION_TOKENS;
+
+    @Value("${aiwatch.aggregate.max-user-daily-tokens:" + TokenSanitySupport.DEFAULT_MAX_USER_DAILY_TOKENS + "}")
+    private long maxUserDailyTokens = TokenSanitySupport.DEFAULT_MAX_USER_DAILY_TOKENS;
 
     /** 计算"首次响应"时认为超过这个值就是异常会话（用户开了又消息不连贯），不入平均 */
     private static final long FIRST_RESPONSE_OUTLIER_MS = 30 * 60 * 1000L;
@@ -492,6 +505,79 @@ public class DailySummaryAggregator {
     }
 
     /**
+     * 单用户单日 token 汇总（带护栏）。
+     *
+     * <p>快速路径：一条 {@code SUM(input_tokens) / SUM(output_tokens)}，与护栏出现之前完全一致（零额外查询）。
+     * 复核路径：SUM 超过 {@link #maxSessionTokens}（说明可能混入了坏值会话，例如 pre-1.3.3 客户端每个 tick 原地累加
+     * 子 agent token 导致的万亿级累计值）才逐会话读出 {@code [id, input, output]}，按
+     * {@link TokenSanitySupport#sumUserDay} 的策略<b>跳过异常会话 + 单日封顶</b>，并打 ERROR 日志。
+     * 坏值会话在库里保持原样（保留取证证据），只是不再进入趋势图 / 员工数据；修复脚本见 {@code scripts/sql/}。
+     *
+     * @return {@code [totalInput, totalOutput]}
+     */
+    private long[] sumTokensGuarded(String userCode, LocalDateTime dayStart, LocalDateTime dayEnd,
+                                    java.util.Collection<String> activeTypes) {
+        long in = 0L;
+        long out = 0L;
+        List<Object[]> tokenRows = sessionRepository
+                .sumTokensByUserInLastActivityWindowAndTargetTypeIn(userCode, dayStart, dayEnd, activeTypes);
+        if (!tokenRows.isEmpty()) {
+            Object[] row = tokenRows.get(0);
+            in = row.length > 0 ? toLong(row[0]) : 0L;
+            out = row.length > 1 ? toLong(row[1]) : 0L;
+        }
+        if (in >= 0 && out >= 0 && in <= maxSessionTokens && out <= maxSessionTokens) {
+            return new long[]{in, out};
+        }
+
+        List<TokenSanitySupport.SessionTokens> slices = new ArrayList<>();
+        for (Object[] r : sessionRepository.findTokenSlicesByUserAndLastActivityWindowAndTargetTypeIn(
+                userCode, dayStart, dayEnd, activeTypes)) {
+            if (r == null || r.length < 3) {
+                continue;
+            }
+            slices.add(new TokenSanitySupport.SessionTokens(
+                    r[0] instanceof Number n ? n.longValue() : null, toLong(r[1]), toLong(r[2])));
+        }
+        TokenSanitySupport.DayTotals totals = TokenSanitySupport.sumUserDay(
+                slices, new TokenSanitySupport.Limits(maxSessionTokens, maxUserDailyTokens));
+        if (totals.anomalous() && shouldLogTokenAnomaly(userCode, dayStart.toLocalDate())) {
+            log.error("daily_summary token anomaly: date={} user={} rawSumInput={} rawSumOutput={} "
+                            + "skippedSessions={} (limit/session={}) userDayClamped(in={},out={}, limit={}) "
+                            + "-> adopted input={} output={}; skipped(top {})={}",
+                    dayStart.toLocalDate(), userCode, in, out,
+                    totals.skipped().size(), maxSessionTokens,
+                    totals.inputClamped(), totals.outputClamped(), maxUserDailyTokens,
+                    totals.input(), totals.output(),
+                    Math.min(10, totals.skipped().size()),
+                    totals.skipped().stream().limit(10)
+                            .map(s -> "{id=" + s.sessionId() + ",in=" + s.input() + ",out=" + s.output() + "}")
+                            .toList());
+        }
+        return new long[]{totals.input(), totals.output()};
+    }
+
+    /** 坏值会话每次重算（今日有 ingest 触发的 15s 防抖刷新）都会命中——ERROR 日志按 user+date 10 分钟限流一次。 */
+    private final ConcurrentHashMap<String, Long> tokenAnomalyLoggedAtMs = new ConcurrentHashMap<>();
+    private static final long TOKEN_ANOMALY_LOG_INTERVAL_MS = 10 * 60_000L;
+
+    private boolean shouldLogTokenAnomaly(String userCode, LocalDate date) {
+        if (tokenAnomalyLoggedAtMs.size() > 2048) {
+            tokenAnomalyLoggedAtMs.clear();
+        }
+        long now = System.currentTimeMillis();
+        boolean[] emit = {false};
+        tokenAnomalyLoggedAtMs.compute(userCode + '|' + date, (k, last) -> {
+            if (last == null || now - last >= TOKEN_ANOMALY_LOG_INTERVAL_MS) {
+                emit[0] = true;
+                return now;
+            }
+            return last;
+        });
+        return emit[0];
+    }
+
+    /**
      * 计算单个用户 + 单日的所有指标。
      *
      * <p>核心数据源：
@@ -526,13 +612,11 @@ public class DailySummaryAggregator {
         // 而 ai_session.input_tokens / output_tokens 是 ReporterPipeline 必写字段，覆盖完整。
         // 切片规则：last_activity ∈ [dayStart, dayEnd) 的会话累计 token 全部计入当日；
         // 跨期会话（昨日开始今日收口）历史 token 也合并算入今日，符合"窗口期合计"语义。
-        List<Object[]> tokenRows = sessionRepository
-                .sumTokensByUserInLastActivityWindowAndTargetTypeIn(userCode, dayStart, dayEnd, activeTypes);
-        if (!tokenRows.isEmpty()) {
-            Object[] row = tokenRows.get(0);
-            st.totalInputTokens = row.length > 0 ? toLong(row[0]) : 0L;
-            st.totalOutputTokens = row.length > 1 ? toLong(row[1]) : 0L;
-        }
+        // 坏值护栏：正常路径仍是这一条 SUM；只有 SUM 超过单会话上限（必要条件：任何越界会话都会把和顶过它）
+        // 才复核逐会话明细，跳过异常会话并封顶——见 sumTokensGuarded。
+        long[] tokenTotals = sumTokensGuarded(userCode, dayStart, dayEnd, activeTypes);
+        st.totalInputTokens = tokenTotals[0];
+        st.totalOutputTokens = tokenTotals[1];
 
         // 2) firstResponse / retry 在每个 session 的当日子序列上算
         long firstRespSumMs = 0L;
@@ -562,7 +646,12 @@ public class DailySummaryAggregator {
             if (model.isBlank()) {
                 continue;
             }
-            long tokens = (row.length > 1 ? toLong(row[1]) : 0L) + (row.length > 2 ? toLong(row[2]) : 0L);
+            long rowIn = row.length > 1 ? toLong(row[1]) : 0L;
+            long rowOut = row.length > 2 ? toLong(row[2]) : 0L;
+            if (TokenSanitySupport.isAnomalousSession(rowIn, rowOut, maxSessionTokens)) {
+                continue; // 与 token 总量同口径：坏值会话不参与模型 Top（已在上面记过 ERROR）
+            }
+            long tokens = TokenSanitySupport.saturatingAdd(rowIn, rowOut);
             if (tokens <= 0) {
                 continue;
             }
