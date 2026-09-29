@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card, DatePicker, Space, Spin, Table } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import { fetchToolStats } from '../api/client';
 import type { ToolStat } from '../api/types';
 import { categoryAxisGridLeft } from '../utils/chartAxis';

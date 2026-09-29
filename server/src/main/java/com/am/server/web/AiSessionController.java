@@ -293,8 +293,15 @@ public class AiSessionController {
         return d;
     }
 
+    /**
+     * 详情 DTO：已入库消息的总数与按 role 计数每次请求各只查一遍（{@link #attachStoredMessageCount}）。
+     * <p>不再先调 {@link SessionMessageCountSupport#reconcileSessionEntity}：它把 role 计数写回实体，
+     * 只为让 {@link AiSessionDto#of} 抄出 user / assistant / total 三个字段，而
+     * {@link SessionMessageCountSupport#attachStoredRoleCounts} 随后按同一份 role 计数、同一条件
+     * （已入库 > 0）把这三个字段原样覆盖——那一遍 COUNT + role GROUP BY 是对整会话消息的重复扫描，
+     * 顺带也不再在只读 GET 里改脏托管实体。
+     */
     private AiSessionDto toSessionDetailDto(AiSession s) {
-        SessionMessageCountSupport.reconcileSessionEntity(s, messageRepository);
         AiSessionDto d = toSessionDto(s);
         attachStoredMessageCount(d, s);
         return d;
@@ -303,10 +310,9 @@ public class AiSessionController {
     /**
      * 详情页窗内视图：消息数 / token 优先按 message 表「对话」口径计算，与下方对话 Tab 一致。
      * <p>仅当尚无入库消息时，才回退到 {@link AiSessionEventRepository#aggregateSessionWindow}（兼容未上报
-     * recentMessages 的 provider）。
+     * recentMessages 的 provider）。已入库计数的取法同 {@link #toSessionDetailDto}。
      */
     private AiSessionDto toSessionDetailDtoWithWindow(AiSession s, LocalDateTime from, LocalDateTime to) {
-        SessionMessageCountSupport.reconcileSessionEntity(s, messageRepository);
         AiSessionDto d = toSessionDto(s);
         attachStoredMessageCount(d, s);
 
@@ -364,6 +370,7 @@ public class AiSessionController {
         return !s.getStartedAt().isBefore(from) && end.isBefore(to);
     }
 
+    /** 已入库总数一次 COUNT；有入库消息时 role 计数一次 GROUP BY（在 attachStoredRoleCounts 里），并覆盖三项消息数。 */
     private void attachStoredMessageCount(AiSessionDto d, AiSession s) {
         Integer stored = messageRepository.countByAiSessionId(s.getId());
         int storedN = stored == null ? 0 : stored;

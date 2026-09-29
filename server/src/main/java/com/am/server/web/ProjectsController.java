@@ -15,6 +15,7 @@ import com.am.server.web.dto.ProjectSummaryDto;
 import com.am.server.web.support.GitCommitRowMapper;
 import com.am.server.web.support.ProjectsWindowSnapshotCache;
 import com.am.server.web.support.SlashCommandStatSupport;
+import com.am.server.web.support.TtlSingleFlightCache;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.sql.Timestamp;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -33,6 +35,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 项目透视（v2.4 重构：窗内统计基于 event_time 切片 ai_session_event 流水）
@@ -74,6 +77,33 @@ public class ProjectsController {
     private final SlashCommandStatSupport slashCommandStatSupport;
     private final ObjectMapper objectMapper;
     private final ProjectsWindowSnapshotCache projectsWindowSnapshotCache;
+
+    /**
+     * 详情页的贡献者 / 时间线 / Top 模型（三次单项目事件扫描）与 Slash Top（一次消息扫描）每点开一次项目
+     * 都要全算。与窗口快照同 TTL（45s）+ single-flight，key = (project, t0, t1, activeTypes)。
+     * <p>贡献者 / Top 模型不从快照的 (project, model, user) 行在内存折：ai_session 列是 utf8mb4_unicode_ci，
+     * SQL 的 {@code s.projectName = :projectName} 与 GROUP BY 都不分大小写 / 重音 / 尾随空格，
+     * 快照每组各取一个代表值，折到 Java 的精确字符串 key 上会把 SQL 里的一组拆开，口径对不齐。
+     */
+    private static final Duration DETAIL_CACHE_TTL = Duration.ofSeconds(45);
+    private final TtlSingleFlightCache<DetailKey, DetailParts> detailCache =
+            new TtlSingleFlightCache<>(DETAIL_CACHE_TTL);
+
+    private record DetailKey(String projectName, LocalDateTime t0, LocalDateTime t1, String activeTypesKey) {
+        static DetailKey of(String projectName, LocalDateTime t0, LocalDateTime t1, Collection<String> activeTypes) {
+            return new DetailKey(projectName, t0, t1,
+                    activeTypes.stream().sorted().collect(Collectors.joining("\0")));
+        }
+    }
+
+    /** 详情页快照之外的部分；放进缓存后只读（列表 List.copyOf，topModel 回填到每次请求自己的 summary 副本上）。 */
+    private record DetailParts(
+            List<ProjectDetailDto.Contributor> contributors,
+            List<ProjectDetailDto.DailyPoint> timeline,
+            List<ProjectDetailDto.NameValuePair> topSlashCommands,
+            List<ProjectDetailDto.NameValuePair> topModels,
+            String topModel) {
+    }
 
     @GetMapping
     public R<List<ProjectSummaryDto>> list(
@@ -126,6 +156,15 @@ public class ProjectsController {
                     new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
         }
 
+        DetailParts parts = detailCache.get(DetailKey.of(projectName, t0, t1, activeTypes),
+                () -> loadDetailParts(projectName, t0, t1, activeTypes));
+        summary.setTopModel(parts.topModel());
+        return R.ok(new ProjectDetailDto(summary, parts.contributors(), parts.timeline(),
+                parts.topSlashCommands(), parts.topModels()));
+    }
+
+    private DetailParts loadDetailParts(String projectName, LocalDateTime t0, LocalDateTime t1,
+                                        Collection<String> activeTypes) {
         Map<String, long[]> contributorRollups = contributorRollupsByUser(
                 aiSessionRepository.aggregateContributorRollupsByProjectAndTargetTypeIn(
                         projectName, t0, t1, activeTypes));
@@ -190,7 +229,6 @@ public class ProjectsController {
             topModels.add(new ProjectDetailDto.NameValuePair(model, toLong(r[1])));
             if (i == 0) topModel = model;
         }
-        summary.setTopModel(topModel);
 
         List<ProjectDetailDto.NameValuePair> topSlashCommands = new ArrayList<>();
         for (PeopleDetailDto.NameValuePair p : slashCommandStatSupport.topCommandTokensForProject(
@@ -198,7 +236,8 @@ public class ProjectsController {
             topSlashCommands.add(new ProjectDetailDto.NameValuePair(p.getName(), p.getValue()));
         }
 
-        return R.ok(new ProjectDetailDto(summary, contributors, timeline, topSlashCommands, topModels));
+        return new DetailParts(List.copyOf(contributors), List.copyOf(timeline),
+                List.copyOf(topSlashCommands), List.copyOf(topModels), topModel);
     }
 
     /**

@@ -69,11 +69,14 @@ cadence. Each tick snapshots all policy-enabled providers **in parallel**
   body; it is force-resent every `unchangedResyncInterval` (15 min). Non-idle sessions are always sent — the
   server's `active` reply and work-session active seconds depend on them.
 - **Watcher-triggered ticks** fire at most once per ticker period and never while already in fast cadence
-  (IDE config-dir hints for trae/codebuddy/qoder change constantly).
+  (IDE config-dir hints for trae/codebuddy/qoder change constantly); in those states the watcher skips its
+  2 s mtime walk entirely and re-baselines (without firing) when it resumes.
 - **Memory**: `cmdStart` sets a 512 MiB Go soft memory limit unless `GOMEMLIMIT` is set (`cmd/agent/memlimit.go`).
 - **Bootstrap mode**: on first run with an empty cursor store, all monitors widen to a 30d lookback to send
   history, then snap back to 48h once drained.
-- Git commits go out separately via `GitLogReporter` → `POST /api/v1/agent/report-commits`, with its own
+- Git commits go out separately via `GitLogReporter` → `POST /api/v1/agent/report-commits` (same ≥1 KB gzip +
+  HMAC-over-wire-bytes path as `/report`; commits are filtered by author email *before* the per-commit
+  `git show`/`diff-tree` enrichment, so teammates' commits cost one `git log` line, not four forks), with its own
   per-repo commit cursor. That cursor advances **only when the response reports `failed == 0`** — the server
   ingests per commit and returns 200 even when some rows fail, and an advanced cursor puts those commits
   outside the next incremental window forever. Every scan logs one INFO line (`gitlog scan: repos=… `

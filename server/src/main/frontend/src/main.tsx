@@ -68,7 +68,7 @@ const themeConfig: Parameters<typeof ConfigProvider>[0]['theme'] = {
       paddingLG: 16,
       borderRadiusLG: 8,
     },
-    // 表格：sticky thead 由 .am-sticky-table 接管；这里只统一行高
+    // 表格：吸顶表头走 Table 的 sticky={STICKY_HEADER}（utils/table）；这里只统一行高
     Table: {
       headerBg: surface.sunken,
       headerColor: ink[2],

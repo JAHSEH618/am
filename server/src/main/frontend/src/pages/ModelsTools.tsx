@@ -3,10 +3,10 @@ import { Card, Col, DatePicker, Row, Skeleton, Space, Table, Tooltip, Typography
 import type { ColumnsType } from 'antd/es/table';
 import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
 import type { Dayjs } from 'dayjs';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import { fetchModelDistribution, fetchModelHeatmap } from '../api/client';
 import type { ModelDistribution, ModelHeatmap } from '../api/types';
-import { formatTokens } from '../utils/format';
+import { formatTokens, modelLabel } from '../utils/format';
 import { ink, indigo, semantic } from '../styles/tokens';
 import { NUM_STYLE } from '../utils/table';
 import Tools from './Tools';
@@ -15,7 +15,7 @@ import Tools from './Tools';
  * 模型与工具页（v2.1 Phase 2 增强）
  *
  * 三块：
- *   1. 模型 token 占比（堆叠柱：input/output 分色）+ 列表
+ *   1. 模型 token 占比（堆叠柱：输入 / 输出 Token 分色）+ 列表
  *   2. 模型 × 日期 token 燃烧热力图（窗口期内）
  *   3. Slash Commands Top（复用 Tools 组件）
  *
@@ -102,14 +102,15 @@ export default function ModelsTools() {
         series: [],
       };
     }
-    const models = rows.map((d) => d.model);
+    // 轴上显示 modelLabel 短名；tooltip 首行给完整模型 ID（「其他（N 个）」modelLabel 原样返回）
+    const models = rows.map((d) => modelLabel(d.model));
     return {
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
-        formatter: (items: { axisValue: string; seriesName: string; value: number }[]) => {
+        formatter: (items: { dataIndex: number; seriesName: string; value: number }[]) => {
           if (!items?.length) return '';
-          const lines = [String(items[0].axisValue)];
+          const lines = [String(rows[items[0].dataIndex]?.model ?? '')];
           let total = 0;
           for (const it of items) {
             lines.push(`${it.seriesName}: ${formatTokens(it.value)}`);
@@ -119,7 +120,7 @@ export default function ModelsTools() {
           return lines.join('<br/>');
         },
       },
-      legend: { data: ['input', 'output'], top: 0, left: 'center' },
+      legend: { data: ['输入 Token', '输出 Token'], top: 0, left: 'center' },
       grid: { left: 4, right: 20, top: 32, bottom: 8, containLabel: true },
       xAxis: {
         type: 'value',
@@ -142,7 +143,7 @@ export default function ModelsTools() {
       },
       series: [
         {
-          name: 'input',
+          name: '输入 Token',
           type: 'bar',
           stack: 'tokens',
           barMaxWidth: 22,
@@ -150,7 +151,7 @@ export default function ModelsTools() {
           itemStyle: { color: indigo[600] },
         },
         {
-          name: 'output',
+          name: '输出 Token',
           type: 'bar',
           stack: 'tokens',
           barMaxWidth: 22,
@@ -178,7 +179,7 @@ export default function ModelsTools() {
         axisLabel: { rotate: 20, fontSize: 11 }, splitArea: { show: true },
       },
       yAxis: {
-        type: 'category', data: heatmap.models,
+        type: 'category', data: heatmap.models.map((m) => modelLabel(m)), // 短名上轴，tooltip 仍给完整 ID
         axisLabel: { width: 180, overflow: 'truncate', ellipsis: '…', fontSize: 11 },
         splitArea: { show: true },
       },
@@ -203,10 +204,18 @@ export default function ModelsTools() {
     };
   }, [heatmap]);
 
-  // 列宽合计 ~430px：xl 下与左侧图表并排时也放得下，不再把"会话数 / 员工数"挤出卡片右缘。
-  // input / output 并入总量次行（与员工数据、项目透视的"入 / 出"写法一致）。
+  // 列宽合计 ~450px：xl 下与左侧图表并排时也放得下，不再把"会话数 / 员工数"挤出卡片右缘。
+  // 输入 / 输出并入总量次行（与员工数据、项目透视的"入 / 出"写法一致）。
+  // 模型列显示 modelLabel 短名（单行省略不折行），hover title 给完整模型 ID。
   const distColumns: ColumnsType<ModelDistribution> = [
-    { title: '模型', dataIndex: 'model', key: 'model', ellipsis: true, width: 100 },
+    {
+      title: '模型',
+      dataIndex: 'model',
+      key: 'model',
+      ellipsis: true,
+      width: 120,
+      render: (v: string) => <span title={v}>{modelLabel(v)}</span>,
+    },
     {
       title: '占比',
       dataIndex: 'percent',
@@ -220,7 +229,7 @@ export default function ModelsTools() {
     },
     {
       title: (
-        <Tooltip title="主数字为 Token 总量；下方小字为 input / output。">
+        <Tooltip title="主数字为 Token 总量；下方小字为输入 / 输出 Token。">
           <span>Token</span>
         </Tooltip>
       ),

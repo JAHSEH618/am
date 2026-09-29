@@ -62,7 +62,7 @@ Linear / Stripe 一类的**克制、精确、数据密集**后台。强调色单
 | brand | `#1a52dc` | `#1644b6` | `#eef4ff` | `--am-brand*` |
 | success | `#10b981` | `#047857` | `#ecfdf5` | `--am-success*` |
 | warning | `#f59e0b` | `#b45309` | `#fffbeb` | `--am-warning*` |
-| error | `#ef4444` | `#dc2626` | `#fef2f2` | `--am-error*` |
+| error | `#ef4444` | `#b91c1c` | `#fef2f2` | `--am-error*` |
 | info | `#1a52dc` | `#1644b6` | `#eef4ff` | `--am-info*` |
 
 ### 2.5 分类强调色（accent）—— 非状态、需彼此可分

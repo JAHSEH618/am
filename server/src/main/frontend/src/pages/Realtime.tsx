@@ -25,7 +25,14 @@ const { Text } = Typography;
 // SSE 健康时只做兜底慢轮询（活跃期由 SSE 增量 + scheduleOnlineRefresh 保鲜）；断线时回退快轮询。
 const ONLINE_POLL_CONNECTED_MS = 30_000;
 const ONLINE_POLL_FALLBACK_MS = 5_000;
+/** SSE 事件后补拉 /online 的延迟：须 ≥ 服务端 online 缓存 TTL（3s）。 */
+const ONLINE_SSE_REFRESH_DELAY_MS = 3_500;
 const MAX_EVENTS = 100;
+/**
+ * 会话快照只为给事件流里的行补展示信息，按「最近变更」保留有限条即可。
+ * 不设上限时页面开一整天会攒下当天所有会话，且每条事件都要整表拷贝一次。
+ */
+const MAX_SESSIONS = 500;
 
 interface FlowEvent extends AiSessionEvent {
   receivedAt: string;
@@ -35,21 +42,30 @@ export default function Realtime() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<OnlineAgent[]>([]);
   const [events, setEvents] = useState<FlowEvent[]>([]);
-  const [sessionsById, setSessionsById] = useState<Record<number, AiSession>>({});
+  const [sessionsById, setSessionsById] = useState<Map<number, AiSession>>(() => new Map());
   // 首屏占位：在线表第一次 fetchOnline 落地前别让左卡闪「暂无在线 Agent」。
   const [loading, setLoading] = useState(true);
 
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 服务端 /online 有 3s single-flight 缓存：事件后等满一个 TTL 再补拉，拿到的才一定是事件之后算的，
+  // 不会把 onSessionChanged 刚 patch 上的状态刷回旧值。节流而非防抖：事件不断时也保证 ≤ 3.5s 收敛。
   const scheduleOnlineRefresh = useCallback(() => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(async () => {
+      refreshTimerRef.current = null;
       try {
         setAgents(await fetchOnline());
       } catch {
-        // 忽略；5s polling 会兜底
+        // 忽略；定时轮询会兜底
       }
-    }, 400);
+    }, ONLINE_SSE_REFRESH_DELAY_MS);
   }, []);
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    [],
+  );
 
   const onSessionEvent = useCallback((data: string) => {
     try {
@@ -65,7 +81,17 @@ export default function Realtime() {
   const onSessionChanged = useCallback((data: string) => {
     try {
       const s: AiSession = JSON.parse(data);
-      setSessionsById((prev) => ({ ...prev, [s.id]: s }));
+      setSessionsById((prev) => {
+        // Map 保留插入顺序：先删再插把它挪到队尾，超限时从队头（最久未变更）淘汰。
+        const next = new Map(prev);
+        next.delete(s.id);
+        next.set(s.id, s);
+        if (next.size > MAX_SESSIONS) {
+          const oldest = next.keys().next();
+          if (!oldest.done) next.delete(oldest.value);
+        }
+        return next;
+      });
       setAgents((prev) => {
         let changed = false;
         const next = prev.map((a) => {
@@ -127,13 +153,42 @@ export default function Realtime() {
     };
   }, [connected]);
 
+  // 刚打开页面时 EventSource 还没 open，给 3s 宽限再提示断线，避免首屏一闪而过的「已断开」。
+  const [sseDownNotice, setSseDownNotice] = useState(false);
+  useEffect(() => {
+    if (connected) {
+      setSseDownNotice(false);
+      return;
+    }
+    const t = window.setTimeout(() => setSseDownNotice(true), 3000);
+    return () => window.clearTimeout(t);
+  }, [connected]);
+
+  // /dashboard/online 同时返回离线设备（device_online=false，供 Dashboard 注册员工表用）；
+  // 这里是「实时活动」，离线机器既没有活动也不该和在线空闲卡片长得一样，直接不列。
+  const liveAgents = useMemo(() => agents.filter((a) => a.device_online !== false), [agents]);
+
   return (
     <Row gutter={[16, 16]}>
       <Col xs={24} lg={14}>
         <Spin spinning={loading && agents.length === 0}>
-          <Card title={<Space><StatusDot color="var(--am-brand)" pulse />实时活动</Space>} size="small">
+          <Card
+            title={
+              // 标题圆点反映推送通道本身：断线时不再假装「实时」，改为灰点 + 说明正在靠轮询兜底。
+              <Space>
+                <StatusDot color={connected ? 'var(--am-brand)' : 'var(--am-ink-4)'} pulse={connected} />
+                实时活动
+                {sseDownNotice && (
+                  <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
+                    推送已断开 · 每 {ONLINE_POLL_FALLBACK_MS / 1000} 秒轮询
+                  </Text>
+                )}
+              </Space>
+            }
+            size="small"
+          >
             <List
-              dataSource={agents}
+              dataSource={liveAgents}
               rowKey={(a) => `${a.agent_id}|${a.target_type ?? '__none__'}|${a.device_online === false ? '0' : '1'}`}
               locale={{ emptyText: '暂无在线 Agent' }}
               grid={{ gutter: 12, xs: 1, sm: 2, md: 2, lg: 2, xl: 3 }}
@@ -217,7 +272,7 @@ export default function Realtime() {
               rowKey={(e) => `${e.id}-${e.receivedAt}`}
               locale={{ emptyText: '等待事件中...（启动 agent 后会自动流入）' }}
               renderItem={(e) => {
-                const sess = sessionsById[e.ai_session_id];
+                const sess = sessionsById.get(e.ai_session_id);
                 return (
                   <List.Item {...clickableRowProps(() => navigate(`/sessions/${e.ai_session_id}`))}>
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>

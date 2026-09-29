@@ -20,6 +20,7 @@ import {
   WindowsOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { isAxiosError } from 'axios';
 import { fetchInstallStatus, login } from '../api/client';
 import type { InstallStatus } from '../api/types';
 import { setCurrentUser } from '../auth';
@@ -49,6 +50,16 @@ function detectOS(): OS {
 // 公司邮箱（如 xxxx@hisuntech.com），录入框不做强制大写
 const USER_CODE_RE = /^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,63}$/;
 
+// 只有凭据被拒才算"账号或密码错误"；断网 / 超时 / 5xx 是服务侧问题，别让管理员以为输错了反复试密码。
+// 后端凭据错误走 R 信封（HTTP 200 + message=BAD_CREDENTIALS，不区分用户名 / 密码防枚举），由 unwrap 抛出。
+function isBadCredentials(e: unknown): boolean {
+  if (isAxiosError(e)) {
+    const status = e.response?.status;
+    return status === 400 || status === 401;
+  }
+  return e instanceof Error && e.message === 'BAD_CREDENTIALS';
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -70,8 +81,13 @@ export default function Login() {
       const from = new URLSearchParams(location.search).get('from');
       const safeFrom = from && from.startsWith('/') && !from.startsWith('//') ? from : '/dashboard';
       navigate(safeFrom, { replace: true });
-    } catch {
-      setAuthError('账号或密码错误');
+    } catch (e) {
+      if (isBadCredentials(e)) {
+        setAuthError('账号或密码错误');
+      } else {
+        // 拦截器 / unwrap 已 toast 技术细节（Network Error / 超时 / 5xx），这里只给就地结论
+        setAuthError('服务暂不可用，请稍后重试');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -90,12 +106,15 @@ export default function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '32px 24px',
+        padding: '32px clamp(12px, 4vw, 24px)',
       }}
     >
+      {/* 可换行：两卡最小宽 460 + 420 + gap 24，视口约 < 950px 时登录卡掉到安装卡下方；
+          员工常用手机 / 窄窗口来取安装命令，不能横向裁切 */}
       <div
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
           gap: 24,
           width: '100%',
           maxWidth: 1180,
@@ -224,19 +243,21 @@ function InstallPanel() {
     <section
       style={{
         flex: '1.6 1 0',
-        minWidth: 0,
+        // border-box：min 宽含内边距，手机上按容器宽封顶不溢出；同时是触发换行的门槛
+        boxSizing: 'border-box',
+        minWidth: 'min(460px, 100%)',
         background: 'var(--am-bg-card)',
         borderRadius: 'var(--am-r-lg)',
         boxShadow: 'var(--am-shadow-2), var(--am-inner-hi)',
         border: '1px solid var(--am-border-subtle)',
-        padding: '32px 36px 28px',
+        padding: '32px clamp(18px, 5vw, 36px) 28px',
         display: 'flex',
         flexDirection: 'column',
         gap: 20,
       }}
     >
       <header style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
           <BrandIcon variant="monogram" size={30} style={{ boxShadow: '0 4px 10px rgba(46,107,240,.30)' }} />
           <Typography.Title level={3} style={{ margin: 0, color: 'var(--am-ink)', fontWeight: 700 }}>
             AIWatch
@@ -295,7 +316,8 @@ function InstallPanel() {
       <div>
         <SectionLabel index={1} title="填写你的信息" />
         <Form layout="vertical" component="div" style={{ marginTop: 8 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {/* 自适应列数：宽屏三列，窄屏自动折成两列 / 一列 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
             <Form.Item
               label="公司邮箱"
               htmlFor="install-user-code"
@@ -550,13 +572,17 @@ function LoginPanel({ submitting, authError, onFinish }: LoginPanelProps) {
     <section
       style={{
         flex: '1 1 0',
-        minWidth: 360,
-        maxWidth: 420,
+        // border-box：min / max 含内边距（约合原 content-box 360~420 加左右内边距），手机上可缩到容器宽；
+        // 堆叠到第二行时水平居中（同行时安装卡吃满剩余空间，auto 边距不生效）
+        boxSizing: 'border-box',
+        minWidth: 'min(420px, 100%)',
+        maxWidth: 480,
+        margin: '0 auto',
         background: 'var(--am-bg-card)',
         borderRadius: 'var(--am-r-lg)',
         boxShadow: 'var(--am-shadow-2), var(--am-inner-hi)',
         border: '1px solid var(--am-border-subtle)',
-        padding: '40px 36px',
+        padding: '40px clamp(20px, 6vw, 36px)',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',

@@ -105,6 +105,21 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
         """)
     List<MessageOrderRow> findMessageOrderByAiSessionId(@Param("aiSessionId") Long aiSessionId);
 
+    /**
+     * 同 {@link #findMessageOrderByAiSessionId}，只取本次上报里出现的 external_id（uk_session_extmsg 逐个定位）：
+     * ingest 去重 / 补序号只会查这些 id，不必把整段会话的已存消息都读回来。
+     */
+    @Query("""
+        SELECT m.externalMessageId AS externalMessageId,
+               m.conversationOrder AS conversationOrder,
+               m.messageTime AS messageTime
+        FROM AiSessionMessage m
+        WHERE m.aiSessionId = :aiSessionId AND m.externalMessageId IN :externalMessageIds
+        """)
+    List<MessageOrderRow> findMessageOrderByAiSessionIdAndExternalMessageIdIn(
+            @Param("aiSessionId") Long aiSessionId,
+            @Param("externalMessageIds") Collection<String> externalMessageIds);
+
     /** 聚合查询：把多个 session 的消息按 (sessionId, sequenceNo) 升序一次性拉出，
      *  供 DailySummaryAggregator 按日计算"首次响应时长 / 重试次数"。 */
     List<AiSessionMessage> findByAiSessionIdInOrderByAiSessionIdAscSequenceNoAsc(
@@ -112,6 +127,26 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
 
     /** 单个 session 的全部消息，按 sequence 升序 —— 当日切片由调用方按 messageTime 过滤 */
     List<AiSessionMessage> findByAiSessionIdOrderBySequenceNoAsc(Long aiSessionId);
+
+    /** NL skill 增量归因：从给定序号（含）起的消息，按 sequence 升序（idx_session_seq 区间扫描）。 */
+    List<AiSessionMessage> findByAiSessionIdAndSequenceNoGreaterThanEqualOrderBySequenceNoAsc(
+            Long aiSessionId, Integer sequenceNo);
+
+    /**
+     * NL skill 增量归因：序号严格小于 {@code beforeSeq} 的最近一条 user 消息的序号（只取列，调用方传 limit 1）。
+     * 在 idx_session_seq 上倒序扫描、命中第一条 user 即停；role 判据与
+     * {@code NlSkillExecutionSupport} 的 {@code equalsIgnoreCase(trim)} 对齐。
+     */
+    @Query("""
+        SELECT m.sequenceNo FROM AiSessionMessage m
+        WHERE m.aiSessionId = :sessionId
+          AND m.sequenceNo < :beforeSeq
+          AND LOWER(TRIM(m.role)) = 'user'
+        ORDER BY m.sequenceNo DESC
+        """)
+    List<Integer> findUserSequenceNosBefore(@Param("sessionId") Long sessionId,
+                                            @Param("beforeSeq") int beforeSeq,
+                                            Pageable pageable);
 
     /** 单个 session + 时间窗口的消息分页（详情页"按筛选区间看对话"用） */
     Page<AiSessionMessage> findByAiSessionIdAndMessageTimeGreaterThanEqualAndMessageTimeLessThanOrderBySequenceNoAsc(
@@ -322,6 +357,31 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
           AND m.slashHitsJson IS NOT NULL AND TRIM(m.slashHitsJson) <> '' AND TRIM(m.slashHitsJson) <> '[]'
         """)
     List<Object[]> loadSlashHitsJsonOnlyInWindowGlobal(
+            LocalDateTime from, LocalDateTime to,
+            @Param("activeTypes") Collection<String> activeTypes);
+
+    /**
+     * Slash Commands 排行专用：同 {@link #loadSlashHitsJsonOnlyInWindowGlobal}，另加
+     * {@code slash_command_count + slash_skill_count > 0}。返回 [userCode, sessionId, slashHitsJson, targetType]。
+     * <p>两个计数列在 {@code idx_window_cover} 里，这个条件由索引下推在回表前就把无命中的提问丢掉；
+     * 原查询要为窗内<b>每一条</b> user 消息回表读 slash_hits_json 才能判空。
+     * <p>等价性：排行只数 kind ≠ noise 的命中，而所有写入方都按同一份 JSON 重记两列
+     * （command → command_count，skill / nl_skill → skill_count，noise 不计，见
+     * {@code UserSlashInvocationExtractor} / {@code SlashHitsJsonSupport#countKinds}），
+     * 故"JSON 里有可计命中"⇒"计数和 > 0"。只含 noise 的行本来就不进排行。
+     * 新增会被排行计数的 kind 时，必须同步计入这两列，否则会被这里静默滤掉。
+     */
+    @Query("""
+        SELECT m.userCode, m.aiSessionId, m.slashHitsJson, m.targetType
+        FROM AiSessionMessage m JOIN AiSession s ON s.id = m.aiSessionId
+        WHERE s.invalidReason IS NULL
+          AND m.messageTime >= :from AND m.messageTime < :to
+          AND m.targetType IN :activeTypes
+          AND LOWER(m.role) = 'user'
+          AND (m.slashCommandCount + m.slashSkillCount) > 0
+          AND m.slashHitsJson IS NOT NULL AND TRIM(m.slashHitsJson) <> '' AND TRIM(m.slashHitsJson) <> '[]'
+        """)
+    List<Object[]> loadCountedSlashHitsJsonInWindowGlobal(
             LocalDateTime from, LocalDateTime to,
             @Param("activeTypes") Collection<String> activeTypes);
 
@@ -625,4 +685,17 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
           )
         """)
     List<Long> findSessionIdsWithSkillMdToolReads();
+
+    /** 同 {@link #findSessionIdsWithSkillMdToolReads}，限消息主键区间 {@code [fromId, toId)}——一次性回填分批扫表用。 */
+    @Query("""
+        SELECT DISTINCT m.aiSessionId FROM AiSessionMessage m
+        WHERE m.id >= :fromId AND m.id < :toId
+          AND LOWER(m.role) IN ('tool', 'assistant')
+          AND (
+            (m.contentPartsJson IS NOT NULL AND LOWER(m.contentPartsJson) LIKE '%skill.md%')
+            OR (m.contentText IS NOT NULL AND LOWER(m.contentText) LIKE '%skill.md%')
+          )
+        """)
+    List<Long> findSessionIdsWithSkillMdToolReadsInIdRange(@Param("fromId") long fromId,
+                                                           @Param("toId") long toId);
 }

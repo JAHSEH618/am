@@ -42,3 +42,11 @@ export function emptyCell(v: ReactNode): ReactNode {
 
 /** 数字列内联样式：等宽数字，防止数据滚动时左右抖动（全局已开 tnum，这里用于需要局部强调处）。 */
 export const NUM_STYLE: CSSProperties = { fontVariantNumeric: 'tabular-nums' };
+
+/**
+ * 长表格的吸顶表头：直接给 antd Table 的 `sticky`。
+ * 不能靠 CSS `th { position: sticky }`：只要设了 scroll.x，rc-table 会给 .ant-table-content 加
+ * overflow-x:auto，它就成了表头的滚动容器，而它从不纵向滚动——表头永远不会吸住。
+ * offsetHeader = 顶栏高度（main.tsx Layout.headerHeight），否则会钻到毛玻璃顶栏下面。
+ */
+export const STICKY_HEADER = { offsetHeader: 56 } as const;

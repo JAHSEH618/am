@@ -1,4 +1,4 @@
-import * as echarts from 'echarts';
+import { echarts } from '@/lib/echarts';
 
 /** 离屏渲染 ECharts option → 2x PNG dataURL（PDF 嵌图用）。 */
 export function renderChartToDataUrl(option: object, width: number, height: number): string {

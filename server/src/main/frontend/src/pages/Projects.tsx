@@ -4,7 +4,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { InfoCircleOutlined, ProjectOutlined } from '@ant-design/icons';
 import { disableFutureDate, rangePresets, weekToDate } from '../utils/timeWindow';
 import type { Dayjs } from 'dayjs';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import { useNavigate } from 'react-router-dom';
 import { fetchProjectDetail, fetchProjects, fetchProjectGitCommits } from '../api/client';
 import type { NameValuePair, ProjectContributor, ProjectDetail, ProjectGitCommit, ProjectSummary } from '../api/types';
@@ -14,7 +14,7 @@ import {
   gitCommitModalPagination,
 } from '../components/gitCommitTableColumns';
 import { employeeName, formatTime, formatTokens, modelLabel } from '../utils/format';
-import { clickableRowProps } from '../utils/table';
+import { clickableRowProps, STICKY_HEADER } from '../utils/table';
 import { accent, indigo } from '../styles/tokens';
 
 /**
@@ -291,6 +291,7 @@ export default function Projects() {
           dataSource={list}
           scroll={{ x: 1068 }}
           className="am-sticky-table"
+          sticky={STICKY_HEADER}
           locale={{ emptyText: '当前时间窗内暂无项目活动' }}
           pagination={{ pageSize: 20, showSizeChanger: false }}
           onRow={(row) => {

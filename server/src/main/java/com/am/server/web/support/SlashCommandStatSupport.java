@@ -92,7 +92,8 @@ public class SlashCommandStatSupport {
         Map<String, Long> counts = new HashMap<>();
         Map<String, Set<String>> usersByToken = new HashMap<>();
         Map<String, Set<Long>> sessionsByToken = new HashMap<>();
-        for (Object[] row : messageRepository.loadSlashHitsJsonOnlyInWindowGlobal(from, to, activeTypes)) {
+        // 计数和 > 0 的行才可能有可计命中：索引下推先滤掉无命中提问，不再为每条 user 消息回表
+        for (Object[] row : messageRepository.loadCountedSlashHitsJsonInWindowGlobal(from, to, activeTypes)) {
             String user = stringify(row[0]);
             Long sessionId = row[1] == null ? null : ((Number) row[1]).longValue();
             String json = stringify(row[2]);

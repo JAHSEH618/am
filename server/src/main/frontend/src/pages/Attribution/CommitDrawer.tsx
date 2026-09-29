@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Drawer, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { fetchAttributionCommits } from '../../api/client';
 import type { AttributionCommitRow, PageDto } from '../../api/types';
 import { employeeName, formatTime, modelLabel } from '../../utils/format';
@@ -38,7 +38,6 @@ interface InnerProps {
  * 无需手工重置分页状态。服务端分页（PageDto total/page/size）。
  */
 function CommitTable({ req, from, to, userNames }: InnerProps) {
-  const navigate = useNavigate();
   const [page, setPage] = useState(0);
   const [data, setData] = useState<PageDto<AttributionCommitRow> | null>(null);
   const [loading, setLoading] = useState(false);
@@ -114,10 +113,13 @@ function CommitTable({ req, from, to, userNames }: InnerProps) {
       key: 'tier',
       width: 118,
       render: (tier: string, r) => {
-        const meta = TIER_META[tier] ?? { label: tier, tag: 'default' };
+        const meta = TIER_META[tier] ?? { ...TIER_META.NONE, label: tier };
         return (
           <span>
-            <Tag color={meta.tag}>{meta.label}</Tag>
+            {/* 档位色与透视数字 / 趋势柱同源（TIER_META），不用 antd 预设色 */}
+            <Tag style={{ color: meta.fg, background: meta.bg, borderColor: meta.border }}>
+              {meta.label}
+            </Tag>
             {r.backfilled && (
               <Tooltip title="上线前历史回溯推算所得">
                 <Tag style={{ marginInlineEnd: 0 }}>回溯</Tag>
@@ -154,7 +156,8 @@ function CommitTable({ req, from, to, userNames }: InnerProps) {
         id == null ? (
           EMPTY_DASH
         ) : (
-          <a onClick={() => navigate(`/sessions/${id}`)}>#{id}</a>
+          // 真链接：可 Tab 聚焦 / 回车打开 / 新标签页打开（Link 自带 /console basename）
+          <Link to={`/sessions/${id}`}>#{id}</Link>
         ),
     },
   ];

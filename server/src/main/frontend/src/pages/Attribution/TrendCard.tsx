@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, Segmented, Space, Spin, Typography } from 'antd';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import { fetchAttributionTrend } from '../../api/client';
 import type { AttributionTrendPoint } from '../../api/types';
 import AttrLabel from './AttrLabel';

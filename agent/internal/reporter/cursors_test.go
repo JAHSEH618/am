@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/monitor"
 )
 
 // withTempState 为单测准备独立的 stateDir，避免污染开发机的真实 ~/.../aiwatchd/state/。
@@ -202,6 +204,50 @@ var errInvalidCursorsFile = errCorrupt("cursors.json is neither v1 envelope nor 
 type errCorrupt string
 
 func (e errCorrupt) Error() string { return string(e) }
+
+// Save 剔除超过 cursorRetention 未推进的游标；保留期必须覆盖 bootstrap 扫描窗口。
+func TestCursorsSave_PrunesStaleCursors(t *testing.T) {
+	if cursorRetention <= monitor.BootstrapLookback {
+		t.Fatalf("cursorRetention %s must exceed BootstrapLookback %s", cursorRetention, monitor.BootstrapLookback)
+	}
+	now := time.Now()
+	for _, tc := range []struct {
+		name      string
+		updatedAt time.Time
+		wantKept  bool
+	}{
+		{"just updated", now, true},
+		{"older than bootstrap window, within retention", now.Add(-monitor.BootstrapLookback - 24*time.Hour), true},
+		{"just inside retention", now.Add(-cursorRetention + time.Hour), true},
+		{"past retention", now.Add(-cursorRetention - time.Hour), false},
+		{"very old", now.Add(-365 * 24 * time.Hour), false},
+		{"zero UpdatedAt cannot be aged", time.Time{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := withTempCursorPath(t)
+			s := &MsgCursorStore{path: path, cursors: map[string]MsgCursor{
+				"claude:old": {LastMsgID: "old:1", UpdatedAt: tc.updatedAt},
+			}}
+			s.Set("claude", "fresh", MsgCursor{LastMsgID: "fresh:1"})
+			if err := s.Save(); err != nil {
+				t.Fatalf("save: %v", err)
+			}
+			got, err := loadFromFile(path)
+			if err != nil {
+				t.Fatalf("reload: %v", err)
+			}
+			if _, ok := got.cursors["claude:fresh"]; !ok {
+				t.Fatal("fresh cursor must survive")
+			}
+			if _, ok := got.cursors["claude:old"]; ok != tc.wantKept {
+				t.Fatalf("old cursor kept on disk=%v want %v", ok, tc.wantKept)
+			}
+			if _, ok := s.Get("claude", "old"); ok != tc.wantKept {
+				t.Fatalf("old cursor kept in memory=%v want %v", ok, tc.wantKept)
+			}
+		})
+	}
+}
 
 func containsKey(raw []byte, key string) bool {
 	var m map[string]any

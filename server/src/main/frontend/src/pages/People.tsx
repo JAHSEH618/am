@@ -26,7 +26,7 @@ import { categoryAxisGridLeft } from '../utils/chartAxis';
 import { employeeName, formatDuration, formatTokens, formatTokensM, modelLabel } from '../utils/format';
 import { ink, semantic, indigo } from '../styles/tokens';
 import { HeroCard, MetricRow, type HeroTone } from '../components/HeroCard';
-import { clickableRowProps, EMPTY_DASH, NUM_STYLE } from '../utils/table';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE, STICKY_HEADER } from '../utils/table';
 
 
 /**
@@ -422,6 +422,7 @@ export default function People() {
             rowKey="user_code"
             size="middle"
             className="am-sticky-table"
+            sticky={STICKY_HEADER}
             columns={columns}
             dataSource={list}
             locale={{ emptyText: '所选时间窗内暂无员工 AI 使用数据' }}

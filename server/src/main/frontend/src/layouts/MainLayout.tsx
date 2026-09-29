@@ -266,10 +266,13 @@ export default function MainLayout() {
               minWidth: 0,
             }}
           >
-            <span
+            {/* 页面体内不再自带标题，这里就是整页唯一的 h1（读屏器按标题导航靠它）。 */}
+            <h1
               style={{
+                margin: 0,
                 fontSize: 16,
                 fontWeight: 600,
+                lineHeight: 'inherit',
                 color: 'var(--am-ink)',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -277,7 +280,7 @@ export default function MainLayout() {
               }}
             >
               {currentPage?.title || 'AIWatch'}
-            </span>
+            </h1>
             {currentPage?.subtitle && (
               <span
                 style={{

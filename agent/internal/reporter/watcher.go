@@ -1,7 +1,7 @@
 // 文件级活动监听：在空闲基线节奏下，轮询各 provider 暴露的 hint 路径 mtime，一旦推进就让
 // reporter 立刻补一个 tick——把"刚开始干活 → 第一条活动出现在大盘"的冷启动延迟从一个基线间隔
 // （默认 45s）压到 ~一个轮询周期（默认 2s）。活跃期由 reporter 侧限流（见 Run 的 triggerCh 分支），
-// 不会把快报节奏冲成轮询风暴。
+// 不会把快报节奏冲成轮询风暴；触发必被丢弃的时段（快报节奏 / 本周期已触发过）连扫描都暂停（paused）。
 //
 // <p>安全性：watcher 只做只读 stat，从不写盘；逻辑出错最坏是"少触发 / 多触发"，绝不影响定时 tick
 // 上报。scanAll 内 recover 任何 panic 后继续，watcher goroutine 挂掉也只是退回纯定时节奏。
@@ -35,11 +35,18 @@ type activityWatcher struct {
 	triggerCh chan<- struct{}
 	last      map[string]int64 // hint -> 上轮观测到的最新 mtime(unixNano)
 	interval  time.Duration
+	// paused 返回 true 时本轮不扫描：reporter 此刻反正会丢弃触发（已在活跃快报节奏，或本定时周期已响应过
+	// 一次）。trae/codebuddy/qoder 的 hint 是整个 IDE 配置目录，每 2s 走一遍上千个目录项纯属浪费。
+	// 由 watcher goroutine 调用，实现只能读 atomic；nil 表示从不暂停。
+	paused func() bool
+	// stale 表示暂停期间跳过了扫描、基线已过期：恢复后的首轮只重建基线不触发——与"暂停期间照扫、
+	// 信号被 reporter 丢弃"等价，避免刚退出快报节奏就因暂停期间的旧变更误补一个 tick。
+	stale bool
 }
 
 // newActivityWatcher 从 registry 里所有实现 monitor.WatchHints 的 provider 收集监听路径，去重。
-// 没有任何 hint 时返回 nil（调用方据此不启动 watcher）。
-func newActivityWatcher(registry *monitor.Registry, triggerCh chan<- struct{}) *activityWatcher {
+// 没有任何 hint 时返回 nil（调用方据此不启动 watcher）。paused 见 activityWatcher.paused。
+func newActivityWatcher(registry *monitor.Registry, triggerCh chan<- struct{}, paused func() bool) *activityWatcher {
 	var hints []string
 	seen := make(map[string]struct{})
 	for _, p := range registry.All() {
@@ -66,6 +73,7 @@ func newActivityWatcher(registry *monitor.Registry, triggerCh chan<- struct{}) *
 		triggerCh: triggerCh,
 		last:      make(map[string]int64, len(hints)),
 		interval:  watchPollInterval,
+		paused:    paused,
 	}
 }
 
@@ -80,10 +88,24 @@ func (w *activityWatcher) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if w.scanAll() {
-				w.signal()
-			}
+			w.poll()
 		}
+	}
+}
+
+// poll 是一次轮询：暂停时跳过扫描并标记基线过期；恢复后的首轮只重建基线；否则推进即发信号。
+func (w *activityWatcher) poll() {
+	if w.paused != nil && w.paused() {
+		w.stale = true
+		return
+	}
+	if w.stale {
+		w.stale = false
+		w.scanAll()
+		return
+	}
+	if w.scanAll() {
+		w.signal()
 	}
 }
 

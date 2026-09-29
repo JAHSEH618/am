@@ -72,8 +72,13 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
 > lost for good. Never drop the field or return 0 unconditionally.
 
 > Ingest cost is *per session per tick per agent*, so it dominates DB load. Sessions that carry no new
-> messages/deltas must stay cheap: the session's full `source_ref` set is only loaded when the report actually
-> carries per-item payload, and "does this session have source refs" is an index-only existence check
+> messages/deltas must stay cheap, and nothing preloads a whole session: dedup looks up only the keys present
+> in the report (`source_ref IN (…)` on `idx_session_sourceref` — falling back to the full set incl. the legacy
+> `extra_json` branch until sys_config marker `event.source_ref_backfill_v1` exists — and `external_message_id
+> IN (…)` on `uk_session_extmsg`); user/assistant/total counters are only recounted from `ai_session_message`
+> when the tick wrote messages (`SessionMessageCountSupport#reconcileAfterIngest`); NL-skill attribution
+> re-reads only from the turn the first new message lands in (`NlSkillAttributionSupport#reconcileSessionFrom`);
+> and "does this session have source refs" is an index-only existence check
 > (`AiSessionEventRepository#existsAnySourceRef`). `WorkSessionService.advance` runs on every report
 > including heartbeats and relies on `ai_session(agent_id,last_activity)` / `work_session(agent_id,status,
 > start_time)` (`PerformanceIndexSchemaPatches`). Prod has Hikari `leak-detection-threshold: 60000` — if the
@@ -130,8 +135,11 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
   truth (`CREATE TABLE IF NOT EXISTS` / `INSERT IGNORE`), `hibernate.ddl-auto=none`. Additive columns are
   applied at boot by idempotent `*SchemaPatches` classes — add migrations there + in `schema.sql`, never via
   Hibernate auto-DDL.
-- **SSE** (`web/sse/SseHub`): in-memory `SseEmitter` fan-out for live dashboard/session updates; best-effort,
-  slow clients can't block others.
+- **SSE** (`web/sse/SseHub`): in-memory `SseEmitter` fan-out for live dashboard/session updates, best-effort.
+  `publish` only serializes on the caller's thread and enqueues the frame for a single `sse-sender` thread
+  (bounded queue of 256 frames; overflow is dropped and counted), so ingest threads never block on a browser
+  socket; ingest also skips its SSE work (`ai_session_audit` lookup, DTO building) when nobody is subscribed.
+  A stalled client can still delay frames for the other subscribers until its write fails and it is evicted.
 
 See `../README.md` for deploy steps and the admin-endpoint reference (note its report-center section is
 partly stale — defer to insight's CLAUDE.md for the live report path).

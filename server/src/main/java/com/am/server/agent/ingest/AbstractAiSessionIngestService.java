@@ -24,6 +24,8 @@ import com.am.server.insight.aggregate.UserSlashInvocationExtractor;
 import com.am.server.insight.domain.AiSessionAudit;
 import com.am.server.insight.domain.AiSessionAuditRepository;
 import com.am.server.service.EmployeeDisplayService;
+import com.am.server.system.AiSessionEventSourceRefSchemaPatches;
+import com.am.server.system.SystemConfigService;
 import com.am.server.web.support.SessionMessageCountSupport;
 import com.am.server.web.dto.AiSessionAuditSummaryDto;
 import com.am.server.web.dto.AiSessionDto;
@@ -46,6 +48,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -81,6 +84,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
 
     /** 同会话并发 ingest 触发 @Version 冲突时的最大尝试次数(含首次)。耗尽本轮跳过,outbox/下轮自愈。 */
     private static final int MAX_OPTIMISTIC_ATTEMPTS = 3;
+
+    /** 按本次上报的 key 反查已存行时 IN 列表的分块上限（Cursor 单次可带上千条消息，每条两个候选 ref）。 */
+    private static final int IN_CHUNK = 500;
 
     protected final AiSessionRepository sessionRepository;
     protected final AiSessionEventRepository eventRepository;
@@ -126,6 +132,17 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     @Autowired(required = false)
     public void setMessageContentIngestService(MessageContentIngestService messageContentIngestService) {
         this.messageContentIngestService = messageContentIngestService;
+    }
+
+    /**
+     * 只用来读 source_ref 列回填 marker（见 {@link #loadExistingSourceRefs}）。required=false 让单元测试
+     * 不挂也能跑；缺省按"未回填"走含 extra_json 兜底的全量查询。
+     */
+    private SystemConfigService systemConfigService;
+
+    @Autowired(required = false)
+    public void setSystemConfigService(SystemConfigService systemConfigService) {
+        this.systemConfigService = systemConfigService;
     }
 
     private PlatformTransactionManager transactionManager;
@@ -297,7 +314,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
 
         UpsertOutcome outcome = upsertSession(incoming, ctx, snapshotCapturedAt, sseEvents);
         int messagesWritten = writeMessages(outcome.session, incoming, ctx, reconciledSessions);
-        SessionMessageCountSupport.reconcileSessionEntity(outcome.session, messageRepository);
+        // 本拍没写消息时直接恢复上一拍对齐后的计数，不再每拍把 message 表数两遍（见 reconcileAfterIngest）
+        SessionMessageCountSupport.reconcileAfterIngest(outcome.session, messageRepository,
+                outcome.storedBeforeWrite, messagesWritten, outcome.countersBeforeUpsert);
         sessionRepository.save(outcome.session);
         Set<String> suppressedChildComposerIds = childComposerIdsFromMessages(outcome.session, incoming);
         sseSessions.put(outcome.session.getId(), outcome.session);
@@ -359,7 +378,9 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     }
 
     private void publishSse(List<AiSessionEvent> events, Map<Long, AiSession> sessions) {
-        if (sseHub == null) {
+        // 没人订阅就什么都不做：下面的 ai_session_audit 查询（整实体）和 DTO 组装都在 ingest 线程上，
+        // 而 SseHub#publish 没有订阅者时本来就会丢弃
+        if (sseHub == null || sseHub.size() == 0) {
             return;
         }
         for (AiSessionEvent e : events) {
@@ -427,6 +448,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         long previousInput = nz(session.getInputTokens());
         long previousOutput = nz(session.getOutputTokens());
         int previousMessages = nz(session.getTotalMessages());
+        SessionMessageCountSupport.SessionCounters countersBeforeUpsert =
+                isNew ? null : SessionMessageCountSupport.SessionCounters.of(session);
 
         session.setCwd(incoming.getCwd());
         session.setCwdHash(incoming.getCwdHash());
@@ -460,12 +483,12 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         sessionRepository.save(session);
 
         // 已有 source_ref 集合只被两个逐条增量写入器用来去重；本次既没带 activity_deltas 也没带
-        // recent_messages 时两者都直接返回 0，不必把该会话全部事件的 ref 读进内存（长会话上万行，
-        // 而这正是每个 tick 里占绝大多数的"没变化的会话"）。
+        // recent_messages 时两者都直接返回 0，不必查（这正是每个 tick 里占绝大多数的"没变化的会话"）；
+        // 带了也只反查本次上报会用到的那些 ref（见 loadExistingSourceRefs）。
         boolean hasPerItemPayload = hasItems(incoming.getActivityDeltas()) || hasItems(incoming.getRecentMessages());
         Set<String> sourceRefsInTxn = isNew || !hasPerItemPayload
                 ? new HashSet<>()
-                : new HashSet<>(eventRepository.findSourceRefsByAiSessionId(session.getId()));
+                : loadExistingSourceRefs(session.getId(), incoming);
         int deltaEvents = writeActivityDeltasFromClient(session, incoming, sseEvents, sourceRefsInTxn);
         if (deltaEvents == 0 && !isNew) {
             deltaEvents = writeDeltasFromRecentMessages(session, incoming, sseEvents, sourceRefsInTxn);
@@ -581,7 +604,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
                 }
             }
         }
-        return new UpsertOutcome(session, eventsWritten);
+        return new UpsertOutcome(session, eventsWritten, storedBeforeWrite, countersBeforeUpsert);
     }
 
     /**
@@ -691,6 +714,70 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         return eventRepository.save(event);
     }
 
+    /**
+     * 预载去重用的已存 source_ref。{@link #hasSourceRefEvent} 只会被问到 activity_delta 的 ref / ref+":msg"
+     * 与 recent_message 的 external_id / external_id+":msg"（TOOL_CALL 去重走 existingToolKeys，不查这个集合），
+     * 所以只把这些 key 在库里的命中取回（idx_session_sourceref 逐个定位），不再把整段会话的 ref 读进内存。
+     *
+     * <p>extra_json 兜底分支只服务 P3-3a 物化前的旧行：无索引可用、得扫该会话全部空 ref 事件。现行代码已不写
+     * extra_json，回填跑完一整遍才写 marker（{@link AiSessionEventSourceRefSchemaPatches#MARKER_KEY}），
+     * 之后兜底分支恒为空；marker 还不存在（回填失败 / 未跑完）时仍走原来的全量查询。
+     */
+    Set<String> loadExistingSourceRefs(Long sessionId, MonitorSessionDto incoming) {
+        if (systemConfigService == null
+                || systemConfigService.find(AiSessionEventSourceRefSchemaPatches.MARKER_KEY).isEmpty()) {
+            return new HashSet<>(eventRepository.findSourceRefsByAiSessionId(sessionId));
+        }
+        Set<String> found = new HashSet<>();
+        for (List<String> chunk : chunks(candidateSourceRefs(incoming))) {
+            found.addAll(eventRepository.findSourceRefsByAiSessionIdAndSourceRefIn(sessionId, chunk));
+        }
+        return found;
+    }
+
+    /** 本次上报里可能被 {@link #hasSourceRefEvent} 查到的全部 ref（见 writeActivityDeltasFromClient / writeDeltasFromRecentMessages）。 */
+    static Set<String> candidateSourceRefs(MonitorSessionDto incoming) {
+        Set<String> out = new LinkedHashSet<>();
+        if (incoming.getActivityDeltas() != null) {
+            for (ActivityDeltaDto d : incoming.getActivityDeltas()) {
+                if (d != null) {
+                    addRefWithMsgVariant(out, d.getSourceRef());
+                }
+            }
+        }
+        if (incoming.getRecentMessages() != null) {
+            for (ConversationMessageDto m : incoming.getRecentMessages()) {
+                if (m != null) {
+                    addRefWithMsgVariant(out, m.getExternalMessageId());
+                }
+            }
+        }
+        return out;
+    }
+
+    private static void addRefWithMsgVariant(Set<String> out, String ref) {
+        if (ref != null && !ref.isBlank()) {
+            out.add(ref);
+            out.add(ref + ":msg");
+        }
+    }
+
+    private static List<List<String>> chunks(Collection<String> values) {
+        List<List<String>> out = new ArrayList<>();
+        List<String> cur = new ArrayList<>();
+        for (String v : values) {
+            cur.add(v);
+            if (cur.size() == IN_CHUNK) {
+                out.add(cur);
+                cur = new ArrayList<>();
+            }
+        }
+        if (!cur.isEmpty()) {
+            out.add(cur);
+        }
+        return out;
+    }
+
     private boolean hasSourceRefEvent(String sourceRef, Set<String> sourceRefsInTxn) {
         return sourceRefsInTxn.contains(sourceRef);
     }
@@ -735,14 +822,25 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             return 0;
         }
         int seq = messageRepository.maxSequenceNoByAiSessionId(session.getId());
+        // 新消息的 sequence_no 从 max+1 起追加：NL skill 归因只需从这之前最后一轮重算（见 reconcileSessionFrom）
+        final int firstNewSeq = seq + 1;
         int written = 0;
         Set<String> seen = new HashSet<>();
-        // 一次把已存消息的 (external_id, conversation_order, message_time) 取全，
-        // 好在内存里判断要不要 patch —— 见 findMessageOrderByAiSessionId 的说明。
+        // 把本次上报里出现的 external_id 在库里的 (conversation_order, message_time) 一次取回，
+        // 好在内存里判断要不要 patch —— 见 findMessageOrderByAiSessionId 的说明。下面只会按这些 id 查，
+        // 所以只反查它们（uk_session_extmsg 逐个定位），不再把整段会话的已存消息都读回来。
+        Set<String> payloadExternalIds = new LinkedHashSet<>();
+        for (ConversationMessageDto m : incoming.getRecentMessages()) {
+            if (m != null && m.getExternalMessageId() != null) {
+                payloadExternalIds.add(m.getExternalMessageId());
+            }
+        }
         Map<String, AiSessionMessageRepository.MessageOrderRow> existingByExternalId = new HashMap<>();
-        for (AiSessionMessageRepository.MessageOrderRow row
-                : messageRepository.findMessageOrderByAiSessionId(session.getId())) {
-            existingByExternalId.put(row.getExternalMessageId(), row);
+        for (List<String> chunk : chunks(payloadExternalIds)) {
+            for (AiSessionMessageRepository.MessageOrderRow row
+                    : messageRepository.findMessageOrderByAiSessionIdAndExternalMessageIdIn(session.getId(), chunk)) {
+                existingByExternalId.put(row.getExternalMessageId(), row);
+            }
         }
         Set<String> existingExternalIds = new HashSet<>(existingByExternalId.keySet());
 
@@ -824,7 +922,7 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
             continue;
         }
         if (written > 0 && reconciledSessions.add(session.getId())) {
-            NlSkillAttributionSupport.reconcileSession(messageRepository, session.getId());
+            NlSkillAttributionSupport.reconcileSessionFrom(messageRepository, session.getId(), firstNewSeq);
         }
         return written;
     }
@@ -1012,10 +1110,17 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
     private static class UpsertOutcome {
         final AiSession session;
         final int eventsWritten;
+        /** 本拍写入消息前该会话已入库的 message 行数（新会话 0）。 */
+        final int storedBeforeWrite;
+        /** Agent 快照覆写前的会话计数（新会话 null）。 */
+        final SessionMessageCountSupport.SessionCounters countersBeforeUpsert;
 
-        UpsertOutcome(AiSession session, int eventsWritten) {
+        UpsertOutcome(AiSession session, int eventsWritten, int storedBeforeWrite,
+                      SessionMessageCountSupport.SessionCounters countersBeforeUpsert) {
             this.session = session;
             this.eventsWritten = eventsWritten;
+            this.storedBeforeWrite = storedBeforeWrite;
+            this.countersBeforeUpsert = countersBeforeUpsert;
         }
     }
 }

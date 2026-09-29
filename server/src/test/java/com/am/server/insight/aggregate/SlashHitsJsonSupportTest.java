@@ -91,6 +91,40 @@ class SlashHitsJsonSupportTest {
     }
 
     @Test
+    void replaceNlSkills_noChangeWhenStoredJsonIsMysqlNormalized() {
+        // MySQL JSON 列回读:键序重排(kind 在前)+ ": " 间隔;语义与 Jackson 序列化一致,不得标脏触发整行 UPDATE
+        String mysqlNormalized =
+                "[{\"kind\": \"command\", \"token\": \"/fix\"}, {\"kind\": \"nl_skill\", \"token\": \"/skills/worklog-helper\"}]";
+        AiSessionMessage user = new AiSessionMessage();
+        user.setSlashHitsJson(mysqlNormalized);
+        user.setSlashCommandCount(1);
+        user.setSlashSkillCount(1);
+
+        boolean changed = SlashHitsJsonSupport.replaceNlSkills(user,
+                List.of(new NlSkillInvocationDetector.NlSkillHit("/skills/worklog-helper")));
+
+        assertFalse(changed);
+        assertEquals(mysqlNormalized, user.getSlashHitsJson());
+    }
+
+    @Test
+    void replaceNlSkills_changedWhenMysqlNormalizedNlSkillIsDropped() throws Exception {
+        String mysqlNormalized =
+                "[{\"kind\": \"command\", \"token\": \"/fix\"}, {\"kind\": \"nl_skill\", \"token\": \"/skills/worklog-helper\"}]";
+        AiSessionMessage user = new AiSessionMessage();
+        user.setSlashHitsJson(mysqlNormalized);
+        user.setSlashCommandCount(1);
+        user.setSlashSkillCount(1);
+
+        assertTrue(SlashHitsJsonSupport.replaceNlSkills(user, List.of()));
+        var arr = MAPPER.readTree(user.getSlashHitsJson());
+        assertEquals(1, arr.size());
+        assertEquals("/fix", arr.get(0).path("token").asText());
+        assertEquals(1, user.getSlashCommandCount());
+        assertEquals(0, user.getSlashSkillCount());
+    }
+
+    @Test
     void recomputeExtracted_nullOldJsonWithStaleCounts() {
         SlashHitsJsonSupport.ExtractedRecompute r = SlashHitsJsonSupport.recomputeExtracted(
                 null, 3, 2, UserSlashInvocationExtractor.Annotation.empty());

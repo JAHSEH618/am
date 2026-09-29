@@ -1,7 +1,8 @@
 // 分析报告 v3.0 前端常量：watchlist 文案、协作模式文案、能力维度文案。
 // 与 docs/design/employee-insight-from-ai-sessions-v1.0.md §3 / §2.2 对齐。
 
-import { semantic, violet, statusHue } from '../../styles/tokens';
+import type { CSSProperties } from 'react';
+import { semantic, accent, violet, statusHue } from '../../styles/tokens';
 import type { CompositeGrade } from '../../api/types';
 
 export const WATCHLIST_META: Record<
@@ -69,20 +70,33 @@ export function watchlistTagColor(flag: string): string {
   return meta ? SEVERITY_TAG_COLOR[meta.severity] : 'default';
 }
 
-// 5 种协作模式：类别色需彼此可分，统一从 tokens 取（emerald/blue/orange/violet/teal）
-export const MODE_META: Record<string, { label: string; color: string }> = {
-  leverage: { label: '杠杆型', color: semantic.success.base },
-  learning: { label: '学习型', color: statusHue.browsing },
-  dependent: { label: '依赖型', color: statusHue.spawning },
-  exploratory: { label: '探索型', color: violet[500] },
-  debugging: { label: '调试型', color: statusHue.compacting },
+/**
+ * 类别元信息：color = base 档，只给圆点 / 图表用（白底上作文字仅 2.2–3.7:1，不达标）；
+ * 作 Tag 文字时用 fg（同色系深色档）+ bg 浅底 + border 浅描边，均取自 tokens 四件套。
+ */
+type CategoryMeta = { label: string; color: string; fg: string; bg: string; border: string };
+
+// 5 种协作模式：类别色需彼此可分，统一从 tokens 取（emerald/blue/orange/violet/teal）；
+// Tag 配色取最近的四件套：依赖型的橙色无独立四件套，借用同暖色系的 warning。
+export const MODE_META: Record<string, CategoryMeta> = {
+  leverage: { label: '杠杆型', color: semantic.success.base, fg: semantic.success.fg, bg: semantic.success.bg, border: semantic.success.border },
+  learning: { label: '学习型', color: statusHue.browsing, fg: accent.blue.fg, bg: accent.blue.bg, border: accent.blue.border },
+  dependent: { label: '依赖型', color: statusHue.spawning, fg: semantic.warning.fg, bg: semantic.warning.bg, border: semantic.warning.border },
+  exploratory: { label: '探索型', color: violet[500], fg: accent.violet.fg, bg: accent.violet.bg, border: accent.violet.border },
+  debugging: { label: '调试型', color: statusHue.compacting, fg: accent.teal.fg, bg: accent.teal.bg, border: accent.teal.border },
 };
 
-export const OUTCOME_META: Record<string, { label: string; color: string }> = {
-  completed: { label: '完成', color: semantic.success.base },
-  partial: { label: '部分', color: semantic.warning.base },
-  abandoned: { label: '放弃', color: semantic.error.base },
+export const OUTCOME_META: Record<string, CategoryMeta> = {
+  completed: { label: '完成', color: semantic.success.base, fg: semantic.success.fg, bg: semantic.success.bg, border: semantic.success.border },
+  partial: { label: '部分', color: semantic.warning.base, fg: semantic.warning.fg, bg: semantic.warning.bg, border: semantic.warning.border },
+  abandoned: { label: '放弃', color: semantic.error.base, fg: semantic.error.fg, bg: semantic.error.bg, border: semantic.error.border },
 };
+
+/** MODE_META / OUTCOME_META 的 Tag 内联配色（文字 fg / 浅底 bg / 描边 border）；未知取值退中性。 */
+export function categoryTagStyle(meta: CategoryMeta | undefined): CSSProperties {
+  const tone = meta ?? semantic.neutral;
+  return { color: tone.fg, background: tone.bg, borderColor: tone.border };
+}
 
 export const CAPABILITY_DIMENSIONS: Array<{
   key:

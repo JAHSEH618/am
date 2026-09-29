@@ -3,6 +3,7 @@
 
 import { accent, indigo, ink } from '../../styles/tokens';
 import type { CapabilityMatrix, CapabilityTrendPoint } from '../../api/types';
+import { employeeName } from '../../utils/format';
 import { MATRIX_TOP_N } from './constants';
 
 /** 空态：居中占位字，避免只剩坐标轴空架子（与 ModelsTools 占比图同款）。 */
@@ -94,12 +95,14 @@ export function buildMatrixHeatmapOption(matrix: CapabilityMatrix) {
   const items = matrix.items.slice(0, MATRIX_TOP_N);
   const cells = matrix.cells.filter((c) => c[1] < items.length);
   const max = cells.reduce((m, c) => Math.max(m, c[2]), 0);
+  // 员工名与卡片右上 Select / 下钻抽屉同一规整（employeeName），不直接上原始 display_name
+  const userNames = matrix.users.map((u) => employeeName(u.display_name, u.user_code));
   return {
     tooltip: {
       formatter: (p: { value: [number, number, number] }) => {
         const item = items[p.value[0]];
-        const user = matrix.users[p.value[1]];
-        return `${user?.display_name ?? ''} · ${item}<br/>调用 ${p.value[2]} 次`;
+        const user = userNames[p.value[1]];
+        return `${user ?? ''} · ${item}<br/>调用 ${p.value[2]} 次`;
       },
     },
     grid: { left: 110, right: 30, top: 12, bottom: 96 },
@@ -111,7 +114,7 @@ export function buildMatrixHeatmapOption(matrix: CapabilityMatrix) {
     },
     yAxis: {
       type: 'category',
-      data: matrix.users.map((u) => u.display_name),
+      data: userNames,
       inverse: true,
       axisLabel: { width: 96, overflow: 'truncate', ellipsis: '…', fontSize: 11 },
       splitArea: { show: true },

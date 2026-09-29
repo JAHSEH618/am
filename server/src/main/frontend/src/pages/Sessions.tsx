@@ -20,8 +20,8 @@ import {
   targetTypeLabel,
   type TargetTypeMap,
 } from '../utils/format';
-import { clickableRowProps, NUM_STYLE } from '../utils/table';
-import { MODE_META, OUTCOME_META, CAPABILITY_DIMENSIONS } from './Analysis/constants';
+import { clickableRowProps, NUM_STYLE, STICKY_HEADER } from '../utils/table';
+import { MODE_META, OUTCOME_META, CAPABILITY_DIMENSIONS, categoryTagStyle } from './Analysis/constants';
 
 // 页面 URL 参数键。集中在这里，避免 Sessions / SessionDetail 各写一份字符串字面量。
 // user_code：项目透视页跳转链使用（精确）
@@ -406,8 +406,7 @@ export default function Sessions() {
                   {targetTypeLabel(v, targetMap)}
                 </Tag>
               ),
-              filters: targets.map((t) => ({ text: t.type_name, value: t.type_code })),
-              onFilter: (val, record) => record.target_type === val,
+              // 不设列级 filters：那只筛当前页、「共 N 条」不变；来源筛选统一走工具栏 SourceFilter（服务端）
             },
             {
               title: '项目 / 分支',
@@ -415,7 +414,7 @@ export default function Sessions() {
               width: 280,
               render: (v, row) => {
                 let sub: React.ReactNode = (
-                  <span style={{ color: 'var(--am-ink-5)' }}>非 git 仓库</span>
+                  <span style={{ color: 'var(--am-ink-3)' }}>非 git 仓库</span>
                 );
                 if (row.git_branch) sub = <span style={{ color: 'var(--am-ink-3)' }}>@{row.git_branch}</span>;
                 else if (row.repo_url)
@@ -462,7 +461,7 @@ export default function Sessions() {
                       <div
                         style={{
                           fontSize: 12,
-                          color: 'var(--am-ink-5)',
+                          color: 'var(--am-ink-3)',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
@@ -555,7 +554,6 @@ export default function Sessions() {
                 }
                 const outcomeLabel = OUTCOME_META[a.outcome]?.label ?? a.outcome;
                 const modeLabel = MODE_META[a.mode]?.label ?? a.mode;
-                const modeColor = MODE_META[a.mode]?.color ?? 'var(--am-ink-3)';
                 const tip = (
                   <Space direction="vertical" size={0}>
                     <span>难度（合成）：{a.difficulty}</span>
@@ -568,29 +566,14 @@ export default function Sessions() {
                     <Space size={[4, 4]} style={{ lineHeight: 1.35 }} align="center" wrap={false}>
                       <Tooltip title={tip}>
                         <Space size={[4, 4]} wrap>
-                          <Tag style={{ marginInlineEnd: 0, fontSize: 11 }}>
+                          <Tag style={{ marginInlineEnd: 0, fontSize: 12 }}>
                             难度 {a.difficulty}
                           </Tag>
-                          <Tag
-                            style={{
-                              marginInlineEnd: 0,
-                              fontSize: 11,
-                              borderColor: OUTCOME_META[a.outcome]?.color,
-                              color: OUTCOME_META[a.outcome]?.color,
-                              background: 'var(--am-bg-card)',
-                            }}
-                          >
+                          {/* 文字用 fg 深色档 + 浅底（base 色作文字在白底仅 2.2–3.7:1） */}
+                          <Tag style={{ marginInlineEnd: 0, fontSize: 12, ...categoryTagStyle(OUTCOME_META[a.outcome]) }}>
                             {outcomeLabel}
                           </Tag>
-                          <Tag
-                            style={{
-                              marginInlineEnd: 0,
-                              fontSize: 11,
-                              borderColor: modeColor,
-                              color: modeColor,
-                              background: 'var(--am-bg-card)',
-                            }}
-                          >
+                          <Tag style={{ marginInlineEnd: 0, fontSize: 12, ...categoryTagStyle(MODE_META[a.mode]) }}>
                             {modeLabel}
                           </Tag>
                         </Space>
@@ -722,6 +705,7 @@ export default function Sessions() {
           <SourceFilter value={target} onChange={onTargetChange} targets={targets} width={200} />
           <Input.Search
             placeholder="按姓名 / 工号搜索"
+            aria-label="按姓名 / 工号搜索"
             value={nameInput}
             onChange={(e) => setNameInput(e.target.value)}
             onSearch={onNameSubmit}
@@ -826,6 +810,7 @@ export default function Sessions() {
           dataSource={data?.items ?? []}
           scroll={{ x: 1954 }}
           className="am-sticky-table"
+          sticky={STICKY_HEADER}
           locale={{ emptyText: '当前筛选条件下暂无会话' }}
           pagination={{
             current: page + 1,

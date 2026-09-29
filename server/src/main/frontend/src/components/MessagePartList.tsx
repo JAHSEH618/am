@@ -165,7 +165,8 @@ function PartBlock({
             key: 'sys',
             label: <Text type="secondary">系统上下文</Text>,
             children: (
-              <Paragraph style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 12 }}>
+              // am-break：系统上下文常含长路径 / URL，无空格长串也要折行，不撑破消息气泡
+              <Paragraph className="am-break" style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: 12 }}>
                 {p.text || ''}
               </Paragraph>
             ),
@@ -184,9 +185,11 @@ function PartBlock({
   if (p.type === 'file_ref' || p.type === 'file_snippet') {
     return (
       <div>
-        <Space wrap size={4}>
+        {/* 长路径无空格：am-break 让它在气泡内折行（overflow-wrap:anywhere 同时压低 min-content，
+            flex 项才能收缩）；Space 是 inline-flex，限 maxWidth 防止整体被撑出容器 */}
+        <Space wrap size={4} style={{ maxWidth: '100%' }}>
           <Tag>{p.type === 'file_snippet' ? '文件片段' : '路径'}</Tag>
-          <Text code copyable style={{ fontSize: 12 }}>
+          <Text code copyable className="am-break" style={{ fontSize: 12 }}>
             {p.path}
           </Text>
           {p.start_line != null && p.end_line != null ? (

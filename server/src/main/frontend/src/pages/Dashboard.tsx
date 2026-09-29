@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, Col, Input, Pagination, Row, Segmented, Select, Space, Spin, Table, Tag, Progress, Typography } from 'antd';
+import type { ReactNode } from 'react';
+import { Alert, Button, Card, Col, Input, Pagination, Row, Segmented, Select, Space, Spin, Table, Tag, Tooltip, Progress, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   ApiOutlined,
@@ -49,13 +50,15 @@ import {
 } from '../utils/format';
 import StatusDot from '../components/StatusDot';
 import { HeroCard, MetricRow } from '../components/HeroCard';
-import { clickableRowProps, NUM_STYLE } from '../utils/table';
+import { clickableRowProps, EMPTY_DASH, NUM_STYLE, STICKY_HEADER } from '../utils/table';
 import { indigo, semantic } from '../styles/tokens';
 
 // v2.7.1：HTTP 兜底 polling 间隔。SSE 实时 patch 已经覆盖大部分高频更新（status/tool/model/project），
 // polling 主要负责拉今日累计指标（today_messages / today_tokens / top 列表）和"上次没开页时漏掉的"
 // 在线表全量。10s 间隔在 SSE 健康时几乎不产生用户可感的延迟，SSE 断连时也能保证大盘 ≤ 10s 刷新。
 const REFRESH_MS = 10_000;
+/** SSE 事件后补拉 overview + online 的延迟：须 ≥ 服务端 overview 缓存 TTL（5s），见 scheduleDashboardRefresh。 */
+const SSE_REFRESH_DELAY_MS = 5_500;
 
 /** 洞察审计：已审计 / 队列剩余，与 overview 解耦，默认 10s */
 const INSIGHT_AUDIT_FAST_MS = 10_000;
@@ -87,6 +90,12 @@ export default function Dashboard() {
   const [agentFilterKeyword, setAgentFilterKeyword] = useState('');
   // 全公司 Token 走势(近30天):日粒度,页面挂载拉一次即可,不进 10s polling
   const [tokenTrend, setTokenTrend] = useState<TokenTrend | null>(null);
+  const [tokenTrendFailed, setTokenTrendFailed] = useState(false);
+  // overview 最近一次拉取是否失败 / 最近一次成功的时间：失败时不能把 null 渲染成一排 0
+  // （管理者会当真），首屏失败显示「—」，已有数据时标注它停在什么时候。
+  const [overviewFailed, setOverviewFailed] = useState(false);
+  const [overviewAt, setOverviewAt] = useState<Date | null>(null);
+  const retryOverviewRef = useRef<() => void>(() => {});
 
   // overview 是全库最重的查询，而它同时被 10s 轮询和 SSE 触发的刷新调用。
   // 共用一个在途标志：上一发还没回来就跳过这一拍，避免请求越堆越多——
@@ -100,17 +109,22 @@ export default function Dashboard() {
       if (document.hidden || overviewInFlightRef.current) return;
       overviewInFlightRef.current = true;
       try {
-        const [ov, on, tp, te] = await Promise.all([
+        // allSettled：四个接口互不连坐，Top 榜超时不该让 Hero / 在线表一起停在旧值。
+        const [ov, on, tp, te] = await Promise.allSettled([
           fetchOverview(),
           fetchOnline(),
           fetchTopProjects(8),
           fetchTopEmployees(8),
         ]);
         if (!alive) return;
-        setOverview(ov);
-        setOnline(on);
-        setTopProjects(tp);
-        setTopEmployees(te);
+        if (ov.status === 'fulfilled') {
+          setOverview(ov.value);
+          setOverviewAt(new Date());
+        }
+        setOverviewFailed(ov.status === 'rejected');
+        if (on.status === 'fulfilled') setOnline(on.value);
+        if (tp.status === 'fulfilled') setTopProjects(tp.value);
+        if (te.status === 'fulfilled') setTopEmployees(te.value);
       } finally {
         overviewInFlightRef.current = false;
         if (alive) setLoading(false);
@@ -127,19 +141,25 @@ export default function Dashboard() {
       if (alive) timer = setTimeout(loop, REFRESH_MS);
     };
     loop();
+    // 手动重试：只补拉一发，不动轮询节奏（tick 自带在途守卫，连点不会叠请求）。
+    retryOverviewRef.current = () => {
+      tick().catch(() => {});
+    };
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
     };
   }, []);
 
+  const [tokenTrendAttempt, setTokenTrendAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
+    setTokenTrendFailed(false);
     fetchTokenTrend(30)
       .then((data) => { if (alive) setTokenTrend(data); })
-      .catch(() => { if (alive) setTokenTrend(null); });
+      .catch(() => { if (alive) setTokenTrendFailed(true); });
     return () => { alive = false; };
-  }, []);
+  }, [tokenTrendAttempt]);
 
   useEffect(() => {
     let alive = true;
@@ -192,10 +212,14 @@ export default function Dashboard() {
   // 再防抖拉 overview + online，保证 hero「活跃 AI 会话」、运行中 Agent 列与后端真值一致
   // （含 target_type 从 null 展开为多行等结构变化）。
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 服务端 overview / online 有 5s / 3s 的 single-flight 缓存（DashboardController）：事件后立刻补拉，
+  // 拿到的可能是事件之前算好的那份，反而把上面本地 patch 的新状态刷回旧值。等满一个缓存 TTL 再拉，
+  // 返回的必然是事件之后才算的。节流而非防抖：事件连续不断时防抖永远等不到空档，节流保证 ≤ 5.5s 收敛。
   const scheduleDashboardRefresh = useCallback(() => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    if (refreshTimerRef.current) return;
     refreshTimerRef.current = setTimeout(async () => {
-      // 400ms 防抖只压住"排期"，压不住"在途"：ingest 密集时这里会和 10s 轮询叠加，
+      refreshTimerRef.current = null;
+      // 节流只压住"排期"，压不住"在途"：ingest 密集时这里会和 10s 轮询叠加，
       // 所以同样受在途标志约束，跳过的那次由下一轮 polling 兜底。
       if (overviewInFlightRef.current) return;
       overviewInFlightRef.current = true;
@@ -208,17 +232,25 @@ export default function Dashboard() {
       } finally {
         overviewInFlightRef.current = false;
       }
-    }, 400);
+    }, SSE_REFRESH_DELAY_MS);
   }, []);
+  useEffect(
+    () => () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    },
+    [],
+  );
 
   const onSessionChanged = useCallback((data: string) => {
     try {
       const s: AiSession = JSON.parse(data);
-      setOnline((prev) =>
-        prev.map((row) => {
+      setOnline((prev) => {
+        let changed = false;
+        const next = prev.map((row) => {
           if (row.device_online === false) return row;
           if (row.agent_id !== s.agent_id) return row;
           if (row.target_type != null && row.target_type !== s.target_type) return row;
+          changed = true;
           return {
             ...row,
             target_type: row.target_type ?? s.target_type,
@@ -230,8 +262,10 @@ export default function Dashboard() {
             stale_since_seconds: 0,
             active: s.status !== 'idle' && s.status != null,
           };
-        }),
-      );
+        });
+        // 无匹配行时返回原引用：整页（含注册员工大表）不必为一条无关事件重渲。
+        return changed ? next : prev;
+      });
       scheduleDashboardRefresh();
     } catch {
       // 解析失败忽略；下一次 polling 会兜底纠偏
@@ -405,23 +439,48 @@ export default function Dashboard() {
     };
   }, [tokenTrend]);
 
+  /** 首屏 overview 没拿到时显示「—」而不是 0：0 是一个会被当真的读数。 */
+  const ovNum = (v: number | undefined): ReactNode => (overview ? (v ?? 0) : EMPTY_DASH);
+
   return (
     <Spin spinning={loading && overview === null} tip="加载中...">
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        {overviewFailed && (
+          <Alert
+            type={overview ? 'warning' : 'error'}
+            showIcon
+            message={
+              overview && overviewAt
+                ? `最近一次刷新失败，下面是 ${overviewAt.toLocaleTimeString('zh-CN', { hour12: false })} 的数据；每 10 秒自动重试。`
+                : '概览数据加载失败，每 10 秒自动重试。'
+            }
+            action={
+              <Button size="small" onClick={() => retryOverviewRef.current()}>
+                立即重试
+              </Button>
+            }
+          />
+        )}
         {/* Hero 区：4 个核心指标，颜色锚点 + 大字号；移动端两列、桌面四列 */}
         <Row gutter={[16, 16]} className="am-dashboard-hero-row">
           <Col xs={12} md={6}>
             <HeroCard
               label="注册员工"
+              // Hero 数字保持近黑（DESIGN §5）：离线只是下班关机，不是错误，不用红色；
+              // 在线 / 离线的区分交给字重 + 墨阶和下方脚注。
               value={
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  <span style={{ color: 'var(--am-success-fg)' }}>{overview?.online_agents ?? 0}</span>
+                  <span>{ovNum(overview?.online_agents)}</span>
                   <span style={{ opacity: 0.45, fontWeight: 500 }}> / </span>
-                  <span style={{ color: 'var(--am-error-fg)' }}>{overview?.offline_agents ?? 0}</span>
+                  <span style={{ color: 'var(--am-ink-3)', fontWeight: 500 }}>{ovNum(overview?.offline_agents)}</span>
                 </span>
               }
               suffix="台"
-              subnote={`在线 ${overview?.online_agents ?? 0} · 离线 ${overview?.offline_agents ?? 0} · 跑活 ${overview?.active_agents ?? 0} 台`}
+              subnote={
+                overview
+                  ? `在线 ${overview.online_agents ?? 0} · 离线 ${overview.offline_agents ?? 0} · 跑活 ${overview.active_agents ?? 0} 台`
+                  : undefined
+              }
               icon={<ApiOutlined />}
               tone="indigo"
             />
@@ -432,8 +491,9 @@ export default function Dashboard() {
               // 由后端聚合保证与 AI 会话列表"非空闲"行数严格一致；polling 周期 10s 内必同步。
               // 注意不要回退到本地 online 数组推算——它按 (agent, target_type) 去重过会少计数。
               label="活跃 AI 会话"
-              value={overview?.active_ai_sessions ?? 0}
-              suffix={`个正在跑 / 今日已开 ${overview?.today_ai_sessions ?? 0}`}
+              value={ovNum(overview?.active_ai_sessions)}
+              suffix={overview ? '个正在跑' : undefined}
+              subnote={overview ? `今日已开 ${overview.today_ai_sessions ?? 0} 个会话` : undefined}
               icon={<RocketOutlined />}
               tone="emerald"
               ariaLabel="查看当前非空闲的 AI 会话列表"
@@ -443,9 +503,11 @@ export default function Dashboard() {
           <Col xs={12} md={6}>
             <HeroCard
               label="今日 Token"
-              value={formatTokens(
-                (overview?.today_input_tokens ?? 0) + (overview?.today_output_tokens ?? 0),
-              )}
+              value={
+                overview
+                  ? formatTokens((overview.today_input_tokens ?? 0) + (overview.today_output_tokens ?? 0))
+                  : EMPTY_DASH
+              }
               icon={<ClockCircleOutlined />}
               tone="amber"
             />
@@ -453,31 +515,35 @@ export default function Dashboard() {
           <Col xs={12} md={6}>
             {(() => {
               const penDisplay = penPct ?? (overview ? overview.ai_penetration_percent : -1);
-              const winLabel = penWindow === 'today' ? '今日' : penWindow === '7d' ? '近7天' : '近30天';
               return (
                 <HeroCard
                   label="AI 渗透率"
                   value={penDisplay >= 0 ? `${penDisplay}%` : '—'}
                   suffix={penDisplay >= 0 ? '北极星' : undefined}
+                  // 窗口切换放在脚注行而不是标题行：标题行放不下会把大数字挤到下一行，
+                  // 和另外三张卡的读数对不齐；脚注行本来就写「近 N 天」，选择器直接替代它。
                   subnote={
-                    penDisplay >= 0
-                      ? `${winLabel} · AI 协助代码占比`
-                      : 'git_commit 与会话归因后生效'
+                    penDisplay >= 0 ? (
+                      <span className="am-hero-subnote-controls">
+                        <Segmented
+                          size="small"
+                          aria-label="渗透率统计窗口"
+                          value={penWindow}
+                          onChange={(v) => setPenWindow(v as 'today' | '7d' | '30d')}
+                          options={[
+                            { label: '今日', value: 'today' },
+                            { label: '7天', value: '7d' },
+                            { label: '30天', value: '30d' },
+                          ]}
+                        />
+                        <span>AI 协助代码占比</span>
+                      </span>
+                    ) : (
+                      'git_commit 与会话归因后生效'
+                    )
                   }
                   icon={<AimOutlined />}
                   tone="rose"
-                  extra={
-                    <Segmented
-                      size="small"
-                      value={penWindow}
-                      onChange={(v) => setPenWindow(v as 'today' | '7d' | '30d')}
-                      options={[
-                        { label: '今日', value: 'today' },
-                        { label: '7天', value: '7d' },
-                        { label: '30天', value: '30d' },
-                      ]}
-                    />
-                  }
                 />
               );
             })()}
@@ -492,20 +558,20 @@ export default function Dashboard() {
             <Col xs={24} md={12} lg={8}>
               <MetricRow
                 label="今日在线时长"
-                value={formatDuration(overview?.today_online_seconds)}
+                value={overview ? formatDuration(overview.today_online_seconds) : EMPTY_DASH}
               />
               <MetricRow
                 label="今日活跃时长"
-                value={formatDuration(overview?.today_active_seconds)}
+                value={overview ? formatDuration(overview.today_active_seconds) : EMPTY_DASH}
               />
             </Col>
             <Col xs={24} md={12} lg={8}>
-              <MetricRow label="今日活跃员工" value={overview?.today_users ?? 0} />
-              <MetricRow label="今日涉及项目" value={overview?.today_projects ?? 0} />
+              <MetricRow label="今日活跃员工" value={ovNum(overview?.today_users)} />
+              <MetricRow label="今日涉及项目" value={ovNum(overview?.today_projects)} />
             </Col>
             <Col xs={24} md={12} lg={8}>
-              <MetricRow label="今日消息数" value={overview?.today_messages ?? 0} />
-              <MetricRow label="今日工具调用" value={overview?.today_tool_calls ?? 0} />
+              <MetricRow label="今日消息数" value={ovNum(overview?.today_messages)} />
+              <MetricRow label="今日工具调用" value={ovNum(overview?.today_tool_calls)} />
             </Col>
           </Row>
         </Card>
@@ -514,7 +580,16 @@ export default function Dashboard() {
         <Card size="small" title="Token 走势（近30天）">
           {tokenTrend === null ? (
             <div style={{ height: 260, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--am-ink-3)' }}>
-              加载中…
+              {tokenTrendFailed ? (
+                <span>
+                  走势加载失败
+                  <Button type="link" size="small" onClick={() => setTokenTrendAttempt((n) => n + 1)}>
+                    重试
+                  </Button>
+                </span>
+              ) : (
+                '加载中…'
+              )}
             </div>
           ) : (
             <div style={{ height: 260 }}>
@@ -546,6 +621,7 @@ export default function Dashboard() {
                 <span className="am-agent-filter-label">在线状态</span>
                 <Select<'all' | 'online' | 'offline'>
                   className="am-agent-filter-select"
+                  aria-label="在线状态"
                   variant="borderless"
                   popupMatchSelectWidth={false}
                   value={agentFilterStatus}
@@ -560,6 +636,7 @@ export default function Dashboard() {
               <span className="am-agent-filter-divider" aria-hidden />
               <Input
                 className="am-agent-filter-input"
+                aria-label="搜索注册员工"
                 variant="borderless"
                 allowClear
                 placeholder="搜索姓名、工号或 IP（模糊 · 任一命中）"
@@ -987,10 +1064,13 @@ function OnlineAgentTable({
         const latest = latestPublishedVersion?.trim() || null;
         const mismatch = Boolean(installed && latest && installed !== latest);
         if (!installed) return <span style={{ color: 'var(--am-ink-5)' }}>—</span>;
+        // 不只靠颜色：旧版本额外带「待升级」字样，悬停给出目标版本。
         return mismatch ? (
-          <Tag color="orange" style={{ marginInlineEnd: 0 }}>
-            {installed}
-          </Tag>
+          <Tooltip title={`最新版本 ${latest}，客户端重启或执行 aiwatchd update 后升级`}>
+            <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+              {installed} · 待升级
+            </Tag>
+          </Tooltip>
         ) : (
           <span>{installed}</span>
         );
@@ -1025,6 +1105,7 @@ function OnlineAgentTable({
       locale={{ emptyText: '暂无 Agent 设备（无 ACTIVE 台账或列表为空）' }}
       scroll={{ x: 2260 }}
       className="am-sticky-table am-online-table"
+      sticky={STICKY_HEADER}
       columns={columns}
       onRow={(row) => clickableRowProps(() => navigate(`/sessions?user_code=${row.user_code}`))}
     />

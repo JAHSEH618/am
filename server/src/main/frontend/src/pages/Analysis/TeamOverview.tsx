@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Empty, Input, Select, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
-import ReactECharts from 'echarts-for-react';
+import ReactECharts from '@/components/ECharts';
 import type { AnalysisReportDetail } from '../../api/types';
 import { ink, accent, indigo, semantic } from '../../styles/tokens';
 import { NUM_STYLE } from '../../utils/table';

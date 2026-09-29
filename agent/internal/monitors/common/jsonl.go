@@ -5,6 +5,7 @@ package common
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/logger"
 )
 
 // FileCache 维护单个 JSONL 文件的"已解析到第几字节 + 上次 mtime + 缓存好的会话快照"。
@@ -137,7 +140,8 @@ type ScanLine func(line []byte, totalBytes int64) bool
 
 // ScanJSONL 从 path 的 startOffset 字节处开始按行扫描 JSONL。
 //
-//	maxLine  单行最大字节数（Cursor / Claude assistant 大段输出可能超 1 MB），建议 4 << 20
+//	maxLine  单行最大字节数（Cursor / Claude assistant 大段输出可能超 1 MB），建议 4 << 20；
+//	         超过的行整行丢弃（不回调）并越过继续扫描，未以换行结尾的超长行留待下次
 //	cb       每读到一行调用一次，返回 false 立刻退出
 //
 // 返回:
@@ -164,16 +168,54 @@ func ScanJSONL(path string, startOffset int64, maxLine int, cb ScanLine) (consum
 	if maxLine <= 0 {
 		maxLine = 4 << 20
 	}
-	scanner.Buffer(make([]byte, 0, 64<<10), maxLine)
+	const initBuf = 64 << 10
+	scanner.Buffer(make([]byte, 0, initBuf), maxLine)
+	// Scanner 的实际行长上限是 max(maxLine, cap(buf))：缓冲区涨到这么满还没有换行，下一步就是 ErrTooLong。
+	limit := max(maxLine, initBuf)
 
+	// 超长行不能让 Scanner 报 ErrTooLong 后停在行首：那样 consumed 永远卡在这一行之前，文件每变一次就
+	// 重读这 4MB、且其后的行再也解析不到。这里在切分函数里把超长行丢弃到下一个 '\n' 为止并继续；
+	// 若到 EOF 仍没有换行（这行还在写），consumed 回退到行首，下次再来。
+	// consumed 按切分函数的 advance 精确累加（含 "\r\n"），不再按"行长 + 1"估算。
 	consumed = startOffset
+	skipFrom := int64(-1) // >=0：正在丢弃从该偏移开始的超长行
+	var skippedLines int
+	var skippedBytes int64
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if skipFrom >= 0 {
+			if i := bytes.IndexByte(data, '\n'); i >= 0 {
+				consumed += int64(i + 1)
+				skippedLines++
+				skippedBytes += consumed - skipFrom
+				skipFrom = -1
+				return i + 1, nil, nil
+			}
+			if atEOF {
+				return 0, nil, nil // 超长行尚未写完：Scan 随即结束，下面把 consumed 回退到行首
+			}
+			consumed += int64(len(data))
+			return len(data), nil, nil
+		}
+		advance, token, err := bufio.ScanLines(data, atEOF)
+		if advance == 0 && token == nil && err == nil && len(data) >= limit {
+			skipFrom = consumed
+			consumed += int64(len(data))
+			return len(data), nil, nil
+		}
+		consumed += int64(advance)
+		return advance, token, err
+	})
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		consumed += int64(len(line)) + 1 // +1 for \n stripped by Scanner
 		parsed = true
-		if !cb(line, consumed) {
+		if !cb(scanner.Bytes(), consumed) {
 			break
 		}
+	}
+	if skipFrom >= 0 {
+		consumed = skipFrom
+	}
+	if skippedLines > 0 {
+		logger.Infof("jsonl: skipped %d line(s) over %d bytes (%d bytes total) in %s", skippedLines, limit, skippedBytes, path)
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, bufio.ErrTooLong) {
 		return consumed, parsed, err

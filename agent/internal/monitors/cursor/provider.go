@@ -30,7 +30,7 @@ const (
 //     一定没变（cursor 写入只 append 不改写历史 bubble）。
 //   - 首次 tick 14 sessions 全 miss → 一次性 SQLite fetch + 解析；之后 tick 只有真正在
 //     用的 1-2 个活跃 session lastBubbleAt 推进，老会话 100% 命中缓存，省掉 N-1 次
-//     `composerData:?` 单点 + `bubbleId:?:%` 全 LIKE。
+//     `composerData:?` 单点 + `bubbleId:?:` 前缀区间查询。
 //   - 缓存随 Provider 生命周期常驻，进程退出即清空，无需淘汰策略；体积 ≈ session 数 × 单 session
 //     parsedSession（含 RecentMessages 已是去 prompt 的精简结构），整体 KB 量级。
 type parsedSessionCache struct {
