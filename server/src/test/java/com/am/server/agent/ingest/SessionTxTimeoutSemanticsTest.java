@@ -68,12 +68,20 @@ class SessionTxTimeoutSemanticsTest {
     }
 
     @Test
-    void commitAfterTheDeadlineAlsoFails() {
-        assertThatThrownBy(() -> template(1).execute(s -> {
-            repo.count();
-            sleep(1500);
-            return null;
-        })).matches(IngestTimeouts::isTimeout);
+    void commitAfterTheDeadline_eitherSucceedsOrFailsAsARecognizedTimeout() {
+        // Hibernate 只在「创建语句」时检查事务截止时间（JdbcCoordinatorImpl#determineRemainingTransactionTimeOutPeriod），
+        // 过期后若 commit 时没有待执行语句（这里的只读事务）就直接提交成功，不会报错——对 ingest 无害：
+        // 真正写库的事务在 flush / 下一条语句时都会走到上面几个用例里的已识别形态。
+        // 所以契约是「不抛，或抛就必须被 IngestTimeouts 识别」，而不是「一定抛」（后者随 flush 时机 / 驱动而变）。
+        try {
+            template(1).execute(s -> {
+                repo.count();
+                sleep(1500);
+                return null;
+            });
+        } catch (RuntimeException e) {
+            assertThat(IngestTimeouts.isTimeout(e)).as("提交期失败必须是可识别的超时形态: %s", e).isTrue();
+        }
     }
 
     @Test

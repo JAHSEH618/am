@@ -37,6 +37,11 @@ class CoveringIndexBuilderNetworkTimeoutTest {
         when(existsQuery.executeQuery()).thenReturn(noRows);
         when(noRows.next()).thenReturn(false); // 索引都不存在 → 两张表都要建
         when(conn.createStatement()).thenReturn(stmt);
+        // SchemaPatchSupport.withLockWaitTimeout 发 DDL 前先读会话原 lock_wait_timeout，用完还原
+        ResultSet lockWait = mock(ResultSet.class);
+        when(stmt.executeQuery(startsWith("SELECT @@SESSION.lock_wait_timeout"))).thenReturn(lockWait);
+        when(lockWait.next()).thenReturn(true);
+        when(lockWait.getLong(1)).thenReturn(31_536_000L);
 
         new CoveringIndexBuilder(ds, mock(DynamicScheduledTaskManager.class)).buildMissing();
 
