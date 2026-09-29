@@ -22,12 +22,9 @@ func TestCountSnapshotMessages(t *testing.T) {
 }
 
 func TestApplyDedupeReplayFastForwardDisabled(t *testing.T) {
-	cursors, err := LoadCursorStore()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 内存 store：不要碰开发机真实的 state 目录（LoadCursorStore 对损坏文件会改名备份）。
 	r := &Reporter{
-		cursors:            cursors,
+		cursors:            &MsgCursorStore{cursors: make(map[string]MsgCursor)},
 		dedupeReplayStreak: dedupeReplayFastForwardAfter,
 		uncappedTail: map[string]MsgCursor{
 			"cursor:s1": {LastMsgID: "cursor:s1:m999", LastMsgTime: time.Unix(1000, 0)},

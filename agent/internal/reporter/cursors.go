@@ -44,14 +44,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
+
+	"github.com/am/aiwatch-agent/internal/logger"
 )
 
 const (
 	cursorsFileName = "cursors.json"
 
 	// CursorSchemaVersion 当前 cursor 文件 schema 版本号。任何破坏 cursor 兼容性的改动都必须升这个号。
+	//
+	// !!! 不要随手升这个版本号 !!!
+	// 升级会让**全员**在同一次发版后同时判定"游标为空"，进入 bootstrap 全量回填（30 天历史、每台机器数十~数百 MB），
+	// 这正是 2026-09 事故的放大器之一。确需升级时必须同时满足：
+	//   1. 单请求字节预算已生效（budget.go，回填被切成 ~4MB 一批的多个 tick）；
+	//   2. 走灰度发布（manifest.json 的 rollout_percent，分批放量），不要一次全员；
+	//   3. 服务端 /agent/report 舱壁 / 限流就位，并预估好回填期间的入库压力；
+	//   4. 分批发版、逐批观察连接池与 503 比例，而不是一次性推给所有人。
 	//
 	// <p>升级动机示例：
 	//   - v0 → v1 (v2.7.1)：增加 envelope；防御 rev1/rev2 升级中途锁死历史的边缘案例
@@ -106,14 +117,25 @@ type MsgCursorStore struct {
 //
 // 这三种都返回空 store，让 reporter 第一次 tick 走全量回填路径。
 //
-// <p>文件被损坏 / JSON 解析失败仍返回 error，由 New 降级为"无断点续传"模式（不删原文件，
-// 留运维排查），避免静默吞掉数据问题。
+// <p>文件被损坏 / JSON 解析失败：把坏文件改名备份成 cursors.json.corrupt-<时间戳>（只留最近
+// corruptBackupKeep 份，留给运维排查），返回一个**带正确落盘路径**的空 store，等价于"首次安装"——
+// 只回填一次，随后新的游标文件正常写盘。
+//
+// 历史 bug：这里曾经返回 error，New 降级成一个 path 为空的 store，Save 永远写不进去
+// （写 ".tmp" 再 rename 到 ""），于是每次重启都 cursors 为空 → 全量 bootstrap，无限循环。
 func LoadCursorStore() (*MsgCursorStore, error) {
 	dir, err := stateDir()
 	if err != nil {
 		return nil, fmt.Errorf("state dir: %w", err)
 	}
-	path := filepath.Join(dir, cursorsFileName)
+	return loadCursorStoreFrom(filepath.Join(dir, cursorsFileName), time.Now())
+}
+
+// corruptBackupKeep 游标文件损坏时保留的备份份数。
+const corruptBackupKeep = 2
+
+// loadCursorStoreFrom 是 LoadCursorStore 去掉路径解析的部分（now 用于备份文件名，便于单测）。
+func loadCursorStoreFrom(path string, now time.Time) (*MsgCursorStore, error) {
 	s := &MsgCursorStore{
 		path:    path,
 		cursors: make(map[string]MsgCursor),
@@ -152,9 +174,42 @@ func LoadCursorStore() (*MsgCursorStore, error) {
 		return s, nil
 	}
 
-	// 真损坏（既不是新格式也不是老格式），抛错让运维介入
-	return nil, fmt.Errorf("parse %s: file is neither v%d envelope nor legacy map",
-		path, CursorSchemaVersion)
+	// 真损坏（既不是新格式也不是老格式）：备份坏文件、以空 store 继续。
+	backup := quarantineCorruptCursors(path, now)
+	logger.Warnf("cursors file %s is corrupt (neither v%d envelope nor legacy map): moved to %q, "+
+		"starting from empty cursors (one-time full backfill, new file will be written on next successful report)",
+		path, CursorSchemaVersion, backup)
+	s.dirty = true
+	return s, nil
+}
+
+// quarantineCorruptCursors 把坏的游标文件改名为 <path>.corrupt-<UTC 时间戳> 并清理旧备份，返回备份路径。
+// 改名失败（权限 / 被占用）时退而求其次直接删除，保证后续 Save 能写出新文件；两者都失败返回空串，
+// Save 仍会以 tmp + rename 原子覆盖。
+func quarantineCorruptCursors(path string, now time.Time) string {
+	backup := path + corruptSuffix + now.UTC().Format("20060102T150405.000000000")
+	if err := os.Rename(path, backup); err != nil {
+		if rmErr := os.Remove(path); rmErr != nil {
+			logger.Warnf("cannot move or remove corrupt cursors file %s: rename=%v remove=%v", path, err, rmErr)
+		}
+		backup = ""
+	}
+	pruneCorruptCursorBackups(path, corruptBackupKeep)
+	return backup
+}
+
+const corruptSuffix = ".corrupt-"
+
+// pruneCorruptCursorBackups 只保留最近 keep 份损坏备份（文件名里的时间戳可按字典序比较）。
+func pruneCorruptCursorBackups(path string, keep int) {
+	matches, err := filepath.Glob(path + corruptSuffix + "*")
+	if err != nil || len(matches) <= keep {
+		return
+	}
+	sort.Strings(matches)
+	for _, m := range matches[:len(matches)-keep] {
+		_ = os.Remove(m)
+	}
 }
 
 // Get 返回 (provider, sessionID) 对应的游标；不存在返回零值与 false。
@@ -181,6 +236,11 @@ func (s *MsgCursorStore) Save() error {
 	defer s.mu.Unlock()
 	if !s.dirty {
 		return nil
+	}
+	if s.path == "" {
+		// 没有落盘路径（state 目录都解析不出来）：纯内存运行。不能继续往下写——
+		// filepath.Dir("")=="." 会在进程 cwd 里留下 ".tmp"，再 rename 到 "" 必然失败。
+		return errors.New("cursor store has no file path (in-memory only)")
 	}
 	cutoff := time.Now().Add(-cursorRetention)
 	for k, c := range s.cursors {

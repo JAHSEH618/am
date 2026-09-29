@@ -161,49 +161,11 @@ func TestCursorsFile_SaveLoadRoundtrip_PreservesCursorsAndEnvelope(t *testing.T)
 	}
 }
 
-// loadFromFile 是 LoadCursorStore 的单测版本：跳过 stateDir() 的环境依赖，直接给定 path。
-//
-// <p>把 LoadCursorStore 内部除"路径解析"以外的逻辑独立出来，方便单测覆盖 schema 兼容性分支
-// 而不需要 mock 文件系统位置。
+// loadFromFile 直接调用真正的加载逻辑（loadCursorStoreFrom），只是跳过 stateDir() 的环境依赖、直接给定 path。
+// 以前这里复制了一份加载代码，单测测的是副本而不是生产逻辑。
 func loadFromFile(path string) (*MsgCursorStore, error) {
-	s := &MsgCursorStore{
-		path:    path,
-		cursors: make(map[string]MsgCursor),
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return s, nil
-		}
-		return nil, err
-	}
-	if len(data) == 0 {
-		return s, nil
-	}
-	var env cursorsFile
-	if err := json.Unmarshal(data, &env); err == nil && env.SchemaVersion > 0 {
-		if env.SchemaVersion != CursorSchemaVersion {
-			s.dirty = true
-			return s, nil
-		}
-		if env.Cursors != nil {
-			s.cursors = env.Cursors
-		}
-		return s, nil
-	}
-	var legacy map[string]MsgCursor
-	if err := json.Unmarshal(data, &legacy); err == nil {
-		s.dirty = true
-		return s, nil
-	}
-	return nil, errInvalidCursorsFile
+	return loadCursorStoreFrom(path, time.Now())
 }
-
-var errInvalidCursorsFile = errCorrupt("cursors.json is neither v1 envelope nor legacy map")
-
-type errCorrupt string
-
-func (e errCorrupt) Error() string { return string(e) }
 
 // Save 剔除超过 cursorRetention 未推进的游标；保留期必须覆盖 bootstrap 扫描窗口。
 func TestCursorsSave_PrunesStaleCursors(t *testing.T) {
@@ -256,4 +218,158 @@ func containsKey(raw []byte, key string) bool {
 	}
 	_, ok := m[key]
 	return ok
+}
+
+// ---- 游标文件损坏（cursors.json 一旦损坏，过去每次重启都全量 bootstrap 且永远存不了盘）----
+
+func writeCorruptCursors(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(`{"schema_version": 3, "cursors": {"claude:a": {"last_msg_id": "x"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func corruptBackups(t *testing.T, path string) []string {
+	t.Helper()
+	m, err := filepath.Glob(path + corruptSuffix + "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestLoadCursorStore_CorruptFile_BacksUpAndRecovers(t *testing.T) {
+	path := withTempCursorPath(t)
+	writeCorruptCursors(t, path)
+	now := time.Date(2026, 9, 29, 10, 15, 0, 0, time.UTC)
+
+	s, err := loadCursorStoreFrom(path, now)
+	if err != nil {
+		t.Fatalf("a corrupt file must be recovered from, not surfaced as an error (caller would degrade to a path-less store): %v", err)
+	}
+	if s.path != path {
+		t.Fatalf("recovered store has path %q, want %q — a path-less store can never persist", s.path, path)
+	}
+	if !s.IsEmpty() {
+		t.Error("recovered store starts empty (one-time full backfill)")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("the corrupt file must be moved away")
+	}
+	backups := corruptBackups(t, path)
+	if len(backups) != 1 {
+		t.Fatalf("want exactly 1 backup, got %v", backups)
+	}
+	if b, _ := os.ReadFile(backups[0]); len(b) == 0 {
+		t.Error("the backup must keep the original bytes for post-mortem")
+	}
+
+	// 新游标能正常写盘，并且下次启动读得回来——不再无限循环回填。
+	s.Set("claude", "sess", MsgCursor{LastMsgID: "m9", LastMsgTime: now})
+	if err := s.Save(); err != nil {
+		t.Fatalf("save after recovery: %v", err)
+	}
+	again, err := loadCursorStoreFrom(path, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.IsEmpty() || again.cursors["claude:sess"].LastMsgID != "m9" {
+		t.Errorf("after one backfill the cursors must persist across restarts, got %+v", again.cursors)
+	}
+	if len(corruptBackups(t, path)) != 1 {
+		t.Error("a healthy reload must not create more backups")
+	}
+}
+
+// 各种"既不是 envelope 也不是老格式"的损坏形态都走恢复路径。
+func TestLoadCursorStore_CorruptShapes(t *testing.T) {
+	for name, content := range map[string]string{
+		"truncated json":             `{"schema_version":3,"cursors":{"a":`,
+		"binary garbage":             "\x00\x01\x02\xff\xfe",
+		"wrong top level":            `[1,2,3]`,
+		"envelope, bad cursors type": `{"schema_version":3,"cursors":"nope"}`,
+		"plain text":                 `hello`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := withTempCursorPath(t)
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s, err := loadCursorStoreFrom(path, time.Now())
+			if err != nil || s == nil || s.path != path || !s.IsEmpty() {
+				t.Fatalf("store=%+v err=%v", s, err)
+			}
+		})
+	}
+}
+
+// 反复损坏只保留最近 2 份备份。
+func TestQuarantineCorruptCursors_KeepsNewestTwo(t *testing.T) {
+	path := withTempCursorPath(t)
+	base := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		writeCorruptCursors(t, path)
+		if _, err := loadCursorStoreFrom(path, base.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backups := corruptBackups(t, path)
+	if len(backups) != corruptBackupKeep {
+		t.Fatalf("kept %d backups, want %d: %v", len(backups), corruptBackupKeep, backups)
+	}
+	// 保留下来的应是最新的两份（文件名里的 UTC 时间戳可按字典序比较）。
+	want := []string{
+		path + corruptSuffix + base.Add(3*time.Minute).Format("20060102T150405.000000000"),
+		path + corruptSuffix + base.Add(4*time.Minute).Format("20060102T150405.000000000"),
+	}
+	for i, w := range want {
+		if backups[i] != w {
+			t.Errorf("backup %d = %s, want %s", i, filepath.Base(backups[i]), filepath.Base(w))
+		}
+	}
+}
+
+// 无落盘路径的 store（state 目录都解析不出来）纯内存运行：Save 报错但绝不在 cwd 留下 ".tmp" 垃圾文件。
+func TestMsgCursorStore_SaveWithoutPathDoesNotTouchDisk(t *testing.T) {
+	cwd := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(cwd); err != nil {
+		t.Skipf("cannot chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+
+	s := &MsgCursorStore{cursors: make(map[string]MsgCursor)}
+	s.Set("claude", "a", MsgCursor{LastMsgID: "1"})
+	if err := s.Save(); err == nil {
+		t.Error("saving a path-less store must report an error rather than pretend success")
+	}
+	entries, _ := os.ReadDir(cwd)
+	if len(entries) != 0 {
+		t.Errorf("Save left files in cwd: %v", entries)
+	}
+}
+
+// 正常 / 老格式 / 未来版本不受影响：仍是"重置但不备份"。
+func TestLoadCursorStore_NonCorruptResetsDoNotCreateBackups(t *testing.T) {
+	path := withTempCursorPath(t)
+	env := cursorsFile{SchemaVersion: CursorSchemaVersion + 1, Cursors: map[string]MsgCursor{"a:b": {LastMsgID: "x"}}}
+	data, _ := json.Marshal(env)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCursorStoreFrom(path, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(corruptBackups(t, path)); n != 0 {
+		t.Errorf("schema reset created %d corrupt backups", n)
+	}
+}
+
+// 升级 schema 会让全员同时进入全量回填：这个常量不能被顺手改掉。改它之前必须先满足常量旁注释里的前置条件。
+func TestCursorSchemaVersionIsPinned(t *testing.T) {
+	if CursorSchemaVersion != 3 {
+		t.Fatalf("CursorSchemaVersion=%d: bumping it forces EVERY agent into a 30-day full backfill at once. "+
+			"Read the warning above the constant (byte budget + gray release + server rate limiting + batched rollout) "+
+			"and update this test deliberately.", CursorSchemaVersion)
+	}
 }

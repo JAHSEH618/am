@@ -1,6 +1,11 @@
 // outbox.go 是上报失败的报文磁盘队列。
 //
-// <p>设计目标：员工离线（在家干活、网络故障、server 宕机）期间，所有 tickOnce 拼好的 body
+// <p>【现状】本版本的 tickOnce 不再调用 Append：游标只在上报成功后才推进，任何失败的增量下个 tick 都会
+// 由游标重新切出来重发，再写一份进 outbox 只会在服务端恢复时叠出重放风暴（2026-09 事故）。
+// Drain 仍保留，用来排空旧版本遗留在磁盘上的文件（每 tick 有条数上限，遇错即停并触发退避）。
+// Append 保留给"游标确已推进、必须保序补发"的场景，目前没有这样的调用方。
+//
+// <p>（历史）设计目标：员工离线（在家干活、网络故障、server 宕机）期间，所有 tickOnce 拼好的 body
 // 全量持久化到 ~/Library/Application Support/aiwatchd/state/outbox/，按文件名（time-sortable）
 // 顺序在恢复联网后逐个补发，**永不过期**。
 //
@@ -144,7 +149,7 @@ func (o *Outbox) Pending() int {
 // 调用方语义：
 //   - err == nil 时表示本次无发送失败；队列可能已清空，也可能因单次上限提前停止，
 //     此时 Pending() 反映余量、下次 tick 自动继续
-//   - err != nil 时调用方应把当前 tick 的 body 也 Append，下次 tick 再一起重试
+//   - err != nil 时调用方应退避，本 tick 不再发新包；不要把新包 Append 进来（见文件头）
 func (o *Outbox) Drain(ctx context.Context, send Sender) (int, error) {
 	if o.Pending() == 0 {
 		return 0, nil
