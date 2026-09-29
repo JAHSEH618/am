@@ -188,8 +188,8 @@ public abstract class AbstractAiSessionIngestService implements MonitorIngestor 
         }
         sessionTxTemplate = new TransactionTemplate(transactionManager);
         sessionTxTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        // 每会话事务限时：DB 变慢时不让上报线程无限期占连接。超时异常沿调用链上抛到 AgentReportService，
-        // 由它归一成 TransactionTimedOutException（见 IngestTimeouts）
+        // 每会话事务限时：DB 变慢时不让上报线程无限期占连接。超时异常由 IngestTimeouts.inTransaction 归一成
+        // TransactionTimedOutException 后一路上抛（AgentReportService / MonitorRouter 都没有 catch）
         int timeoutSeconds = agentProperties != null ? agentProperties.getIngestSessionTimeoutSeconds() : 10;
         sessionTxTemplate.setTimeout(timeoutSeconds > 0 ? timeoutSeconds : TransactionDefinition.TIMEOUT_DEFAULT);
     }
