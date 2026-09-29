@@ -19,6 +19,17 @@ spring:
           optimizer:
             pooled:
               preferred: pooled-lo
+  # Boot 的 @Scheduled 池（SSE 心跳 / 员工展示名 / 活跃类型 / 审计扫描）。Boot 默认 1 个线程：审计扫描 tick 会阻塞等一批
+  # LLM 调用，期间 25s 一次的 SSE 心跳等全部停摆。3 = 审计扫描占 1 个 + 其余三个毫秒级任务共用。
+  # 这个数字是 Hikari 连接总账的一项（每线程至多同时持 1 条），见 BackgroundExecutorConfig 类注释，调大前先重算；
+  # BackgroundExecutorConfigTest 会读它。停机限时等待须与 Docker 默认 stop 超时 10s 的预算相加（该类注释里有）。
+  task:
+    scheduling:
+      pool:
+        size: 3
+      shutdown:
+        await-termination: true
+        await-termination-period: 2s
   # 离线提醒邮件 SMTP（基础设施级密钥，走 AIWATCH_SMTP_* 环境变量；未配置 host 时不发信、不影响启动）。
   # 行为开关 / 阈值 / 发件人走 sys_config（category=notifications，UI 可热改）。
   mail:
