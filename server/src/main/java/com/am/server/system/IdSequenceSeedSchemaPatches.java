@@ -10,8 +10,11 @@ import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * 存量 MySQL：{@code id_sequences}(P3-3b 表生成器后备表)幂等建表 + 5 张高写表种子。
@@ -39,19 +42,66 @@ public class IdSequenceSeedSchemaPatches {
         return args -> migrate(dataSource);
     }
 
+    private static final String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS id_sequences ("
+            + "seq_name VARCHAR(64) NOT NULL, next_val BIGINT NOT NULL, PRIMARY KEY (seq_name)"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci"
+            + " COMMENT 'Hibernate 表生成器 id 预分配'";
+
+    /**
+     * 稳态（表与全部种子行都在）：一条 information_schema 查询 + 一条 {@code SELECT seq_name}，零 DDL、
+     * 零 {@code INSERT … SELECT MAX(id) FROM <大表>}（后者要在大表尾部记录上加共享锁，每次启动白做）。
+     * 只有缺行才补，语义仍是 {@code INSERT IGNORE}（MAX(id)+1000 缓冲）。
+     */
     private static void migrate(DataSource dataSource) {
-        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS id_sequences ("
-                    + "seq_name VARCHAR(64) NOT NULL, next_val BIGINT NOT NULL, PRIMARY KEY (seq_name)"
-                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci"
-                    + " COMMENT 'Hibernate 表生成器 id 预分配'");
+        SchemaPatchSupport.ensureTable(dataSource, "id_sequences", CREATE_TABLE);
+        int seeded = 0;
+        try (Connection c = dataSource.getConnection()) {
+            Set<String> present = presentSeeds(c);
             for (String t : TABLES) {
-                st.executeUpdate("INSERT IGNORE INTO id_sequences (seq_name, next_val)"
-                        + " SELECT '" + t + "', COALESCE(MAX(id), 0) + 1000 FROM " + t);
+                if (present.contains(t)) {
+                    continue;
+                }
+                try {
+                    seedRow(c, t);
+                    seeded++;
+                } catch (SQLException e) {
+                    // 源表还不存在（如 git_commit_attribution 由 GitCommitAttributionSchemaPatches 稍后建并自补种）：别连累其它表
+                    log.warn("id_sequences seed for {} skipped: {}", t, e.getMessage());
+                }
             }
-            log.info("id_sequences ensured + seeded (buffer +1000) for {} tables", TABLES.length);
         } catch (SQLException e) {
             log.warn("id_sequences seed best-effort failed: {}", e.getMessage());
+            return;
+        }
+        log.info("id_sequences ensured (buffer +1000): {} tables checked, {} seeded", TABLES.length, seeded);
+    }
+
+    /** 单表补种（表已建好之后调用，如 {@link GitCommitAttributionSchemaPatches}）；已有行则不动。 */
+    static void seedIfMissing(DataSource dataSource, String table) {
+        try (Connection c = dataSource.getConnection()) {
+            if (!presentSeeds(c).contains(table)) {
+                seedRow(c, table);
+            }
+        } catch (SQLException e) {
+            log.warn("id_sequences seed for {} failed: {}", table, e.getMessage());
+        }
+    }
+
+    private static Set<String> presentSeeds(Connection c) throws SQLException {
+        Set<String> out = new HashSet<>();
+        try (Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT seq_name FROM id_sequences")) {
+            while (rs.next()) {
+                out.add(rs.getString(1));
+            }
+        }
+        return out;
+    }
+
+    private static void seedRow(Connection c, String table) throws SQLException {
+        try (Statement st = c.createStatement()) {
+            st.executeUpdate("INSERT IGNORE INTO id_sequences (seq_name, next_val)"
+                    + " SELECT '" + table + "', COALESCE(MAX(id), 0) + 1000 FROM " + table);
         }
     }
 }
