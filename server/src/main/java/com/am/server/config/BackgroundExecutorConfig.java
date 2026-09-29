@@ -31,7 +31,7 @@ import java.util.concurrent.Executor;
  *   <tr><td>{@code scheduling-*}（Boot {@code @Scheduled}：SSE 心跳 / 展示名 / 活跃类型 / 审计扫描）</td><td>3</td>
  *       <td>{@code spring.task.scheduling.pool.size}；原来 1（且被 @Async 占用）。审计扫描 tick 会阻塞等一批 LLM，
  *           其余三个都是毫秒级，3 足够</td></tr>
- *   <tr><td>{@code dyn-sched-*}（{@code DynamicScheduledTaskManager}，9 个 cron 任务）</td><td>4</td>
+ *   <tr><td>{@code dyn-sched-*}（{@code DynamicScheduledTaskManager}，10 个 cron 任务）</td><td>4</td>
  *       <td>固定；任务都是小时 / 每日 / 每分钟级，同时命中的极少</td></tr>
  *   <tr><td>{@code daily-summary-refresh} / {@code capability-daily-refresh} / {@code git-attribution-refresh}</td><td>3</td>
  *       <td>各 1 个单线程；队列长度被 per-date single-flight 集合限死（同一天只排一个），页面调用只涉及今天与最近几天，
