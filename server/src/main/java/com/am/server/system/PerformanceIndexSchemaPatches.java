@@ -7,10 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.util.List;
 
 /**
  * 热查询复合索引幂等补齐（存量库启动时执行；新库见 schema.sql CREATE TABLE 内联索引）。
@@ -26,56 +23,27 @@ public class PerformanceIndexSchemaPatches {
     }
 
     private static void migrate(DataSource dataSource) {
-        ensureIndex(dataSource, "ai_session_event", "idx_target_event_time",
-                "CREATE INDEX idx_target_event_time ON ai_session_event (target_type, event_time)");
-        ensureIndex(dataSource, "ai_session_message", "idx_target_message_time",
-                "CREATE INDEX idx_target_message_time ON ai_session_message (target_type, message_time)");
-        ensureIndex(dataSource, "ai_session", "idx_target_last_invalid",
-                "CREATE INDEX idx_target_last_invalid ON ai_session (target_type, last_activity, invalid_reason)");
-        ensureIndex(dataSource, "ai_session", "idx_target_status",
-                "CREATE INDEX idx_target_status ON ai_session (target_type, status)");
-        ensureIndex(dataSource, "ai_session", "idx_project_last",
-                "CREATE INDEX idx_project_last ON ai_session (project_name, last_activity)");
-        // dashboard /overview 每次请求都按 updated_time 聚合今日 work_session；缺索引 = 每次全表扫。
-        ensureIndex(dataSource, "work_session", "idx_updated_time",
-                "CREATE INDEX idx_updated_time ON work_session (updated_time)");
-        // patch 保留期清理按 commit_time 切窗口。
-        ensureIndex(dataSource, "git_commit", "idx_commit_time",
-                "CREATE INDEX idx_commit_time ON git_commit (commit_time)");
-        // 以下两条都在每一次 /agent/report（含 60s 一次的设备心跳）里执行（WorkSessionService.advance）。
-        // work_session 原先没有任何 agent_id 索引，只能靠 idx_status 扫全部 OPEN 行再排序；
-        // ai_session 只有单列 idx_agent_id，重度用户上千个会话每次都要回表 + filesort 取最新一条。
-        ensureIndex(dataSource, "work_session", "idx_agent_status_start",
-                "CREATE INDEX idx_agent_status_start ON work_session (agent_id, status, start_time)");
-        ensureIndex(dataSource, "ai_session", "idx_agent_last",
-                "CREATE INDEX idx_agent_last ON ai_session (agent_id, last_activity)");
-    }
-
-    private static void ensureIndex(DataSource dataSource, String table, String indexName, String ddl) {
-        if (indexExists(dataSource, table, indexName)) {
-            return;
-        }
-        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            st.executeUpdate(ddl);
-            log.info("Created index {} on {}", indexName, table);
-        } catch (SQLException e) {
-            log.warn("Index {} on {} ensure failed: {}", indexName, table, e.getMessage());
-        }
-    }
-
-    private static boolean indexExists(DataSource dataSource, String table, String indexName) {
-        try (Connection c = dataSource.getConnection();
-             Statement st = c.createStatement();
-             ResultSet rs = st.executeQuery("""
-                     SELECT 1 FROM information_schema.statistics
-                     WHERE table_schema = DATABASE()
-                       AND table_name = '%s'
-                       AND index_name = '%s'
-                     LIMIT 1
-                     """.formatted(table, indexName))) {
-            return rs.next();
-        } catch (SQLException e) {
-            return false;
-        }
+        int created = SchemaPatchSupport.ensureIndexes(dataSource, List.of(
+                new SchemaPatchSupport.IndexSpec("ai_session_event", "idx_target_event_time",
+                        "target_type, event_time"),
+                new SchemaPatchSupport.IndexSpec("ai_session_message", "idx_target_message_time",
+                        "target_type, message_time"),
+                new SchemaPatchSupport.IndexSpec("ai_session", "idx_target_last_invalid",
+                        "target_type, last_activity, invalid_reason"),
+                new SchemaPatchSupport.IndexSpec("ai_session", "idx_target_status",
+                        "target_type, status"),
+                new SchemaPatchSupport.IndexSpec("ai_session", "idx_project_last",
+                        "project_name, last_activity"),
+                // dashboard /overview 每次请求都按 updated_time 聚合今日 work_session；缺索引 = 每次全表扫。
+                new SchemaPatchSupport.IndexSpec("work_session", "idx_updated_time", "updated_time"),
+                // patch 保留期清理按 commit_time 切窗口。
+                new SchemaPatchSupport.IndexSpec("git_commit", "idx_commit_time", "commit_time"),
+                // 以下两条都在每一次 /agent/report（含 60s 一次的设备心跳）里执行（WorkSessionService.advance）。
+                // work_session 原先没有任何 agent_id 索引，只能靠 idx_status 扫全部 OPEN 行再排序；
+                // ai_session 只有单列 idx_agent_id，重度用户上千个会话每次都要回表 + filesort 取最新一条。
+                new SchemaPatchSupport.IndexSpec("work_session", "idx_agent_status_start",
+                        "agent_id, status, start_time"),
+                new SchemaPatchSupport.IndexSpec("ai_session", "idx_agent_last", "agent_id, last_activity")));
+        log.debug("performance indexes checked, {} created", created);
     }
 }

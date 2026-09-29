@@ -8,9 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Statement;
 
 /**
  * 存量 MySQL：agent_device 增量列 last_offline_email_time（离线提醒邮件 12h 去重锚点）幂等补齐。
@@ -31,10 +28,6 @@ public class OfflineEmailSchemaPatches {
         String table = "agent_device";
         String col = "last_offline_email_time";
         String def = "DATETIME DEFAULT NULL COMMENT '上次离线提醒邮件发送时间（12h 去重）'";
-        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            st.executeUpdate("ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS " + col + " " + def);
-        } catch (SQLException e) {
-            AnalysisReportSchemaPatches.tryFallbackAddColumn(dataSource, table, col, def, e);
-        }
+        SchemaPatchSupport.ensureColumn(dataSource, table, col, def);
     }
 }

@@ -8,9 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Statement;
 
 /**
  * 存量 MySQL：capability_daily 建表（幂等，与 schema.sql 定义一致）。
@@ -46,16 +43,8 @@ public class CapabilityDailySchemaPatches {
     @Order(120)
     ApplicationRunner ensureCapabilityDailySchema(DataSource dataSource) {
         return args -> {
-            try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-                st.executeUpdate(CREATE_TABLE);
-                log.debug("Ensured capability_daily table");
-            } catch (SQLException e) {
-                String msg = e.getMessage() != null ? e.getMessage() : "";
-                if (msg.toLowerCase().contains("already exists")) {
-                    return;
-                }
-                log.warn("capability_daily schema patch failed: {}", msg);
-            }
+            SchemaPatchSupport.ensureTable(dataSource, "capability_daily", CREATE_TABLE);
+            log.debug("Ensured capability_daily table");
         };
     }
 }

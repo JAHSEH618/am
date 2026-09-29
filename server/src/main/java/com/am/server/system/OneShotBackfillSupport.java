@@ -57,6 +57,47 @@ final class OneShotBackfillSupport {
         }
     }
 
+    private static final String CONFIG_READ = "SELECT config_value FROM sys_config WHERE config_key = ?";
+
+    private static final String CONFIG_UPSERT = """
+            INSERT INTO sys_config
+                (config_key, config_value, value_type, category, is_secret, description, updated_time, created_time)
+            VALUES (?, ?, 'string', 'system', 0, ?, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE config_value = VALUES(config_value), updated_time = NOW()
+            """;
+
+    private static final String CONFIG_DELETE = "DELETE FROM sys_config WHERE config_key = ?";
+
+    /** 读 sys_config 一个键的原值（进度 / 失败清单等回填状态）；键不存在返回 null。直连库，不经 SystemConfigService 缓存。 */
+    static String readConfig(DataSource dataSource, String key) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(CONFIG_READ)) {
+            ps.setString(1, key);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        }
+    }
+
+    /** 写（存在则覆盖）sys_config 一个键。 */
+    static void upsertConfig(DataSource dataSource, String key, String value, String description) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(CONFIG_UPSERT)) {
+            ps.setString(1, key);
+            ps.setString(2, value);
+            ps.setString(3, description);
+            ps.executeUpdate();
+        }
+    }
+
+    static void deleteConfig(DataSource dataSource, String key) throws SQLException {
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(CONFIG_DELETE)) {
+            ps.setString(1, key);
+            ps.executeUpdate();
+        }
+    }
+
     /**
      * 按驱动表主键区间分批执行 {@code sql}，每批独立提交。
      *

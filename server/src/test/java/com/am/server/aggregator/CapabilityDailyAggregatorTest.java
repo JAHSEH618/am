@@ -11,13 +11,17 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -150,6 +154,52 @@ class CapabilityDailyAggregatorTest {
         // 整日重算语义：即便当日无任何能力信号，也要清掉旧行（消息可能被判 invalid 后回撤）
         verify(capabilityRepository).deleteByWorkDate(eq(day));
         verify(capabilityRepository, never()).saveAll(any());
+    }
+
+    /**
+     * 回溯走的 aggregateUnderDateLock 与整点任务共用同一把 per-date 锁：整点任务正在重算 today 时，
+     * 回溯对 today 拿不到锁（不并发 delete + insert 撞唯一键）；别的日期不受影响；锁释放后即可拿到。
+     */
+    @Test
+    void backfillEntryPointSharesThePerDateLockWithTheHourlyJob() throws Exception {
+        LocalDate today = LocalDate.now();
+        CountDownLatch inDelete = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(inv -> {
+            inDelete.countDown();
+            assertTrue(release.await(10, TimeUnit.SECONDS));
+            return 0;
+        }).when(capabilityRepository).deleteByWorkDate(eq(today));
+
+        Thread hourly = new Thread(aggregator::hourlyJob, "test-hourly");
+        hourly.start();
+        try {
+            assertTrue(inDelete.await(10, TimeUnit.SECONDS), "hourly job should be inside today's aggregate");
+
+            assertEquals(CapabilityDailyAggregator.LOCK_NOT_ACQUIRED,
+                    aggregator.aggregateUnderDateLock(today, Duration.ofMillis(150)),
+                    "today's lock is held by the hourly job");
+            assertEquals(0, aggregator.aggregateUnderDateLock(today.minusDays(30), Duration.ofMillis(150)),
+                    "other dates are independent");
+        } finally {
+            release.countDown();
+            hourly.join(10_000);
+        }
+
+        assertEquals(0, aggregator.aggregateUnderDateLock(today, Duration.ofMillis(150)),
+                "lock is free again once the hourly job is done");
+    }
+
+    @Test
+    void backfillEntryPointReleasesTheLockEvenWhenAggregateThrows() throws Exception {
+        when(capabilityRepository.deleteByWorkDate(eq(day))).thenThrow(new IllegalStateException("db"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> aggregator.aggregateUnderDateLock(day, Duration.ofMillis(100)));
+
+        when(capabilityRepository.deleteByWorkDate(eq(day))).thenReturn(0);
+        assertEquals(0, aggregator.aggregateUnderDateLock(day, Duration.ofMillis(100)),
+                "a failed run must not leave the date locked");
     }
 
     @SuppressWarnings("unchecked")

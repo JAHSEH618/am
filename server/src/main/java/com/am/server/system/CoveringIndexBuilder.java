@@ -82,9 +82,13 @@ public class CoveringIndexBuilder {
                 continue;
             }
             long start = System.currentTimeMillis();
-            try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-                st.execute("SET SESSION lock_wait_timeout = " + MDL_WAIT_SECONDS);
-                st.execute(ddl(spec));
+            try (Connection c = dataSource.getConnection()) {
+                // 会话变量用完还原：连接来自池，不还原会把 10s 的 MDL 等待上限带给之后借到它的业务语句。
+                SchemaPatchSupport.withLockWaitTimeout(c, MDL_WAIT_SECONDS, conn -> {
+                    try (Statement st = conn.createStatement()) {
+                        st.execute(ddl(spec));
+                    }
+                });
                 log.info("covering index built: {}.{} in {}s", spec.table(), spec.name(),
                         (System.currentTimeMillis() - start) / 1000);
             } catch (SQLException e) {

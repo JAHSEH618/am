@@ -11,8 +11,13 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -30,6 +35,12 @@ import java.util.List;
  * 落点；设备恢复在线后不主动清空，靠 dedup 窗口自然过期，下次掉线满 12h 再提醒。
  *
  * <p>安全默认：任务 {@code defaultEnabled=false}——必须先配好 SMTP（spring.mail.* + from）并在 UI 启用才发信。
+ *
+ * <p><b>启动宽限</b>：启动补丁 / 回填（ApplicationRunner）没跑完前，上报入口回 503，{@code agent_device.last_seen}
+ * 不会更新——此时按 last_seen 判离线会把全员误判成离线。所以：应用 {@link ApplicationReadyEvent}（runner 全部跑完之后
+ * 才发布）之前<b>一律不判定</b>；就绪之后再等 {@link SystemConfigKeys#NOTIF_OFFLINE_STARTUP_GRACE_MINUTES}
+ * （默认 10 分钟，覆盖 agent 心跳 60s / 数据 tick 45s～2min 的补报恢复）才开始。宽限内被跳过的那次扫描
+ * 顺延到下一次 cron（默认每小时一次）。宽限按“本次 JVM 启动”计，每次重启都重新计时。
  * gz
  */
 @Component
@@ -49,6 +60,12 @@ public class OfflineDeviceAlerter {
     private final EmployeeDisplayService employeeDisplayService;
     private final DynamicScheduledTaskManager scheduledTaskManager;
 
+    /** 应用就绪（所有 ApplicationRunner 跑完）的时刻；null = 尚未就绪。 */
+    private volatile Instant readyAt;
+
+    /** 可换：单测用可控时钟推进“就绪后过了多久”。 */
+    private volatile Clock clock = Clock.systemUTC();
+
     @PostConstruct
     public void registerDynamicTask() {
         config.seedIfAbsent(SystemConfigKeys.NOTIF_OFFLINE_EMAIL_FROM, "", "string",
@@ -61,6 +78,9 @@ public class OfflineDeviceAlerter {
                 SystemConfigKeys.CAT_NOTIFICATIONS, false, "工作时段起始小时（含），只在此时段内发信");
         config.seedIfAbsent(SystemConfigKeys.NOTIF_OFFLINE_WORK_HOUR_END, "18", "int",
                 SystemConfigKeys.CAT_NOTIFICATIONS, false, "工作时段结束小时（不含），只在此时段内发信");
+        config.seedIfAbsent(SystemConfigKeys.NOTIF_OFFLINE_STARTUP_GRACE_MINUTES, "10", "int",
+                SystemConfigKeys.CAT_NOTIFICATIONS, false,
+                "启动宽限（分钟）：应用就绪后再等这么久才判定离线 / 发提醒，避免启动补丁期间上报被拒（503）导致全员被误报离线；0=不宽限");
         config.seedIfAbsent(SystemConfigKeys.NOTIF_OFFLINE_INSTALL_BASE_URL, "", "string",
                 SystemConfigKeys.CAT_NOTIFICATIONS, false,
                 "AIWatch 服务器公网地址（如 https://aiwatch.公司.com）；用于邮件里的重装命令，留空则只给通用指引");
@@ -81,11 +101,51 @@ public class OfflineDeviceAlerter {
                 this::scanAndAlert);
     }
 
+    /** ApplicationReadyEvent 在全部 ApplicationRunner（启动补丁 / 回填）执行完之后才发布：宽限从这一刻起算。 */
+    @EventListener(ApplicationReadyEvent.class)
+    void onApplicationReady() {
+        this.readyAt = clock.instant();
+    }
+
+    /** 测试 / 排障用：ApplicationReadyEvent 是否已收到。 */
+    boolean isReady() {
+        return readyAt != null;
+    }
+
+    /** 测试用：注入时钟。 */
+    void setClock(Clock clock) {
+        this.clock = clock;
+    }
+
+    /**
+     * 是否仍在“启动补丁期 + 宽限期”内（此时不许判定离线）。就绪前恒为 true；就绪后 {@code now - readyAt < grace} 为 true。
+     */
+    private boolean inStartupGrace() {
+        Instant ready = this.readyAt;
+        if (ready == null) {
+            log.info("offline_device_alerter: skip — 应用尚未就绪（启动补丁 / 回填还在跑，此时上报被拒，last_seen 不可信）");
+            return true;
+        }
+        int graceMinutes = Math.max(0, config.getInt(SystemConfigKeys.NOTIF_OFFLINE_STARTUP_GRACE_MINUTES, 10));
+        Duration sinceReady = Duration.between(ready, clock.instant());
+        if (sinceReady.compareTo(Duration.ofMinutes(graceMinutes)) < 0) {
+            log.info("offline_device_alerter: skip — 启动宽限期内（就绪后 {}s，宽限 {}min），等 agent 补报后下次再判",
+                    sinceReady.toSeconds(), graceMinutes);
+            return true;
+        }
+        return false;
+    }
+
     // 不加 @Transactional：循环内含 SMTP 慢 I/O，避免把 DB 事务跨整批邮件长时间持有；
-    // 每台设备的 save 走 Spring Data 自带事务、彼此独立，不需要跨设备原子性。
+    // 每台设备的回写走 Spring Data 自带事务、彼此独立，不需要跨设备原子性。
+    // 回写只更新告警列（markOfflineEmailSent 定向 UPDATE），不整行 save：整行 merge 会把筛选时刻读到的
+    // last_seen 等列写回，覆盖发信期间设备刚上报的心跳。
     public void scanAndAlert() {
         if (!mailService.isConfigured()) {
             log.info("offline_device_alerter: skip — 邮件未配置（spring.mail.* + notifications.offline_email.from）");
+            return;
+        }
+        if (inStartupGrace()) {
             return;
         }
         int workStart = config.getInt(SystemConfigKeys.NOTIF_OFFLINE_WORK_HOUR_START, 9);
@@ -119,7 +179,7 @@ public class OfflineDeviceAlerter {
             try {
                 mailService.send(to, buildSubject(), buildBody(d));
                 d.setLastOfflineEmailTime(now);
-                deviceRepository.save(d);
+                deviceRepository.markOfflineEmailSent(d.getAgentId(), now);
                 sent++;
             } catch (Exception e) {
                 failed++;

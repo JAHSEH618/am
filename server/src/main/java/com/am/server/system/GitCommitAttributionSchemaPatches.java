@@ -8,9 +8,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.sql.Statement;
 
 /**
  * 存量 MySQL：git_commit_attribution 建表（幂等，与 schema.sql 定义一致）。
@@ -58,18 +55,9 @@ public class GitCommitAttributionSchemaPatches {
     @Order(130)
     ApplicationRunner ensureGitCommitAttributionSchema(DataSource dataSource) {
         return args -> {
-            try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-                st.executeUpdate(CREATE_TABLE);
-                st.executeUpdate("INSERT IGNORE INTO id_sequences (seq_name, next_val)"
-                        + " SELECT 'git_commit_attribution', COALESCE(MAX(id), 0) + 1000 FROM git_commit_attribution");
-                log.debug("Ensured git_commit_attribution table + id_sequences seed");
-            } catch (SQLException e) {
-                String msg = e.getMessage() != null ? e.getMessage() : "";
-                if (msg.toLowerCase().contains("already exists")) {
-                    return;
-                }
-                log.warn("git_commit_attribution schema patch failed: {}", msg);
-            }
+            SchemaPatchSupport.ensureTable(dataSource, "git_commit_attribution", CREATE_TABLE);
+            IdSequenceSeedSchemaPatches.seedIfMissing(dataSource, "git_commit_attribution");
+            log.debug("Ensured git_commit_attribution table + id_sequences seed");
         };
     }
 }
