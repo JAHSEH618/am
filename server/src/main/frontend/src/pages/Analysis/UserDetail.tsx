@@ -16,8 +16,12 @@ import { formatTokens } from '../../utils/format';
 import { ink, indigo } from '../../styles/tokens';
 import { BUCKET_META, CAPABILITY_DIMENSIONS, CAP_TEAM_KEY, GRADE_META, MODE_META, WATCHLIST_META, categoryTagStyle, watchlistTagColor } from './constants';
 import MetricLabel from './MetricLabel';
+import { fillWindowHours } from './timelineFill';
 
 const { Text, Paragraph } = Typography;
+
+/** 员工日汇总为空时的自动补拉间隔：后端把过期日期丢给后台重算（不阻塞请求），通常几秒内就绪。 */
+const EMPTY_TIMELINE_RETRY_MS = [4_000, 12_000];
 
 function EChartsAutoBox({ option, height }: { option: EChartsOption; height: number }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -56,27 +60,54 @@ export default function UserDetail({ report, user }: Props) {
   const [peopleDetail, setPeopleDetail] = useState<PeopleDetail | null>(null);
   // 员工数据（日趋势）异步拉取期间的加载态：避免在到位前一闪而过地显示「暂无 timeline」兜底
   const [peopleLoading, setPeopleLoading] = useState(true);
+  // 拉取失败（超时 / 服务繁忙）与「拉到了但窗口内没有日汇总行」是两回事：前者要给重试入口，
+  // 不能再被吞成"暂无 timeline"，让人以为该员工当周没数据。
+  const [peopleError, setPeopleError] = useState(false);
+  // 服务端在后台重算日汇总期间，一直在重试中（首个空结果 → 稍后自动补拉）
+  const [peopleWarming, setPeopleWarming] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setPeopleLoading(true);
-    fetchPersonDetail(user.user_code, {
-      from: report.window_from,
-      to: report.window_to,
-    })
-      .then((d) => {
-        if (!cancelled) setPeopleDetail(d);
+    setPeopleError(false);
+    setPeopleWarming(false);
+
+    const load = (attempt: number) => {
+      fetchPersonDetail(user.user_code, {
+        from: report.window_from,
+        to: report.window_to,
       })
-      .catch(() => {
-        if (!cancelled) setPeopleDetail(null);
-      })
-      .finally(() => {
-        if (!cancelled) setPeopleLoading(false);
-      });
+        .then((d) => {
+          if (cancelled) return;
+          setPeopleDetail(d);
+          // 员工详情读的是 daily_summary 当前快照，过期日期由后端后台异步重算（不阻塞请求）：
+          // 历史窗口第一次被打开时快照可能还是空的，隔几秒再读一次就有了。
+          if ((d.daily_timeline?.length ?? 0) === 0 && attempt < EMPTY_TIMELINE_RETRY_MS.length) {
+            setPeopleWarming(true);
+            timer = setTimeout(() => load(attempt + 1), EMPTY_TIMELINE_RETRY_MS[attempt]);
+            return;
+          }
+          setPeopleWarming(false);
+          setPeopleLoading(false);
+        })
+        .catch((err: { code?: string }) => {
+          // 被更新的时间窗请求取代而主动取消：不是失败（见 api/client.ts 的 in-flight 取消规则）
+          if (cancelled || err?.code === 'ERR_CANCELED') return;
+          setPeopleDetail(null);
+          setPeopleError(true);
+          setPeopleWarming(false);
+          setPeopleLoading(false);
+        });
+    };
+    load(0);
+
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, [user.user_code, report.window_from, report.window_to]);
+  }, [user.user_code, report.window_from, report.window_to, reloadKey]);
 
   const teamP50Radar = useMemo(() => {
     const caps = report.team_capability_percentiles;
@@ -156,21 +187,32 @@ export default function UserDetail({ report, user }: Props) {
     };
   }, [user]);
 
+  // 图铺满报告窗口 [window_from, min(window_to, 今天)]，窗口内没有日汇总行的日子补 0。
+  // 注意：后端 daily_timeline 已是日期升序（PeopleController#buildDetail），这里不能再 reverse，
+  // 否则 x 轴会从新到旧倒着画。
+  const windowTimeline = useMemo(
+    () => fillWindowHours(report.window_from, report.window_to, peopleDetail?.daily_timeline),
+    [report.window_from, report.window_to, peopleDetail],
+  );
+
   const activeHoursTimelineOption = useMemo(() => {
-    const timeline = peopleDetail?.daily_timeline ?? [];
-    if (timeline.length === 0) return null;
-    const dates = [...timeline].reverse().map((p) => p.date);
-    const hours = [...timeline]
-      .reverse()
-      .map((p) => Math.round(((p.ai_active_seconds_union ?? 0) / 3600) * 10) / 10);
+    if (peopleDetail == null || windowTimeline.dates.length === 0) return null;
     return {
       tooltip: { trigger: 'axis' as const },
       grid: { left: 40, right: 16, bottom: 28, top: 28 },
-      xAxis: { type: 'category' as const, data: dates, axisLabel: { color: ink[3] } },
+      xAxis: { type: 'category' as const, data: windowTimeline.dates, axisLabel: { color: ink[3] } },
       yAxis: { type: 'value' as const, name: '协作 h', axisLabel: { color: ink[3] } },
-      series: [{ type: 'line' as const, data: hours, smooth: true, color: indigo[600], areaStyle: { opacity: 0.15 } }],
+      series: [
+        {
+          type: 'line' as const,
+          data: windowTimeline.hours,
+          smooth: true,
+          color: indigo[600],
+          areaStyle: { opacity: 0.15 },
+        },
+      ],
     };
-  }, [peopleDetail]);
+  }, [peopleDetail, windowTimeline]);
 
   const watchlistFlags = user.watchlist_flags || [];
   const peopleLink = `/people/${encodeURIComponent(user.user_code)}?from=${encodeURIComponent(report.window_from)}&to=${encodeURIComponent(report.window_to)}`;
@@ -435,18 +477,43 @@ export default function UserDetail({ report, user }: Props) {
                 </Row>
                 {peopleLoading ? (
                   <div style={{ marginTop: 16 }}>
+                    {peopleWarming && (
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        该窗口的员工日汇总正在后台生成，稍后自动刷新…
+                      </Text>
+                    )}
                     <Skeleton active paragraph={{ rows: 5 }} />
                   </div>
+                ) : peopleError ? (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 16 }}
+                    message="员工日趋势加载失败（请求超时或服务繁忙），不代表该窗口没有数据"
+                    action={
+                      <Button size="small" onClick={() => setReloadKey((k) => k + 1)}>
+                        重试
+                      </Button>
+                    }
+                  />
                 ) : activeHoursTimelineOption ? (
                   <div style={{ marginTop: 16 }}>
                     <Text strong style={{ fontSize: 12, color: 'var(--am-ink-3)' }}>
-                      日协作时长趋势（员工数据同源）
+                      日协作时长趋势（员工数据同源 · 报告窗口 {report.window_from} ~ {report.window_to}）
                     </Text>
                     <EChartsAutoBox option={activeHoursTimelineOption} height={220} />
+                    {!windowTimeline.hasRows && (
+                      <Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+                        该窗口内员工数据页暂无日汇总记录（当周无 AI 协作，或日汇总尚未生成），图中为补零展示。
+                        <Button type="link" size="small" onClick={() => setReloadKey((k) => k + 1)}>
+                          重新加载
+                        </Button>
+                      </Paragraph>
+                    )}
                   </div>
                 ) : (
                   <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
-                    产出指标基于 git_commit；日趋势需员工数据页日汇总，当前窗口暂无 timeline。
+                    产出指标基于 git_commit；报告窗口尚未开始，暂无日趋势。
                   </Paragraph>
                 )}
               </Card>
