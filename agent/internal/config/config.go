@@ -39,8 +39,22 @@ const (
 	DefaultTimestampWindowMs = 300000
 	// DefaultGitLogIntervalMs gitlog Provider 默认扫描周期（5 分钟）。
 	DefaultGitLogIntervalMs = 300000
-	// DefaultReportTimeoutMs /report HTTP 客户端超时（毫秒），默认 15 分钟。
-	DefaultReportTimeoutMs = 15 * 60 * 1000
+	// DefaultReportTimeoutMs /report HTTP 客户端超时（毫秒），默认 90 秒。
+	//
+	// 旧默认是 15 分钟，并且已被 init / register / Load 写进每台机器的 config.json，光改默认值不会生效——
+	// 见 normalizeReportTimeoutMs：超过 MaxReportTimeoutMs 的存量值在运行时一律回落到本默认。
+	DefaultReportTimeoutMs = 90 * 1000
+	// MaxReportTimeoutMs 可接受的上报超时上限（毫秒）。超过它的值（包括存量的 15 分钟）视为过期 / 误配，
+	// 回落到 DefaultReportTimeoutMs。运维要调长也只能到这个上限：超时的语义是"服务端已经卡死"，
+	// 等得越久占着的连接越久。
+	MaxReportTimeoutMs = 120 * 1000
+
+	// DefaultReportBodyBudgetBytes 单个 /report 请求 body 的 JSON 字节预算（压缩前），默认 4MiB。
+	// 超出预算的会话 / 消息留到下个 tick 发送（reporter/budget.go）。
+	DefaultReportBodyBudgetBytes = 4 << 20
+	// MinReportBodyBudgetBytes / MaxReportBodyBudgetBytes 是 report_body_budget_bytes 配置值的夹取范围。
+	MinReportBodyBudgetBytes = 256 << 10
+	MaxReportBodyBudgetBytes = 16 << 20
 
 	// dirCurrent 是 v2.0 起的配置子目录名（aiwatchd）。
 	dirCurrent = "aiwatchd"
@@ -55,17 +69,21 @@ type Config struct {
 	// v2.3 员工自助注册：安装时由命令行 --user-name / --department 写入；
 	// 服务端 /register 在 employee 表无此 user_code 时按这两个字段创建 ACTIVE 记录。
 	// 已存在员工不会被覆盖（HR 已录入的姓名 / 部门是事实来源）。
-	UserName          string `json:"user_name,omitempty"`
-	Department        string `json:"department,omitempty"`
-	AgentID           string `json:"agent_id,omitempty"`
-	AgentSecret       string `json:"agent_secret,omitempty"`
-	ReportIntervalMs  int64  `json:"report_interval_ms,omitempty"`
+	UserName         string `json:"user_name,omitempty"`
+	Department       string `json:"department,omitempty"`
+	AgentID          string `json:"agent_id,omitempty"`
+	AgentSecret      string `json:"agent_secret,omitempty"`
+	ReportIntervalMs int64  `json:"report_interval_ms,omitempty"`
 	// ActiveReportIntervalMs：活跃时段的快速上报间隔（毫秒）；0 或未配置时用 DefaultActiveReportIntervalMs。
 	// 服务端 /register 下发，reporter.Run 据 active 信号在它与 ReportIntervalMs 之间切换 cadence。
 	ActiveReportIntervalMs int64 `json:"active_report_interval_ms,omitempty"`
-	// ReportTimeoutMs：单次 /api/v1/agent/report HTTP 超时（毫秒）；0 或未配置时用 DefaultReportTimeoutMs。
-	ReportTimeoutMs   int64  `json:"report_timeout_ms,omitempty"`
-	TimestampWindowMs int64  `json:"timestamp_window_ms,omitempty"`
+	// ReportTimeoutMs：单次 /api/v1/agent/report HTTP 超时（毫秒）；0、未配置或超过 MaxReportTimeoutMs 时
+	// 用 DefaultReportTimeoutMs（存量的 15 分钟就是这样被迁移掉的，见 ReportTimeout）。
+	ReportTimeoutMs int64 `json:"report_timeout_ms,omitempty"`
+	// ReportBodyBudgetBytes：单个 /report 请求 body 的 JSON 字节预算；0 或未配置时用
+	// DefaultReportBodyBudgetBytes，其余值夹到 [MinReportBodyBudgetBytes, MaxReportBodyBudgetBytes]。
+	ReportBodyBudgetBytes int64 `json:"report_body_budget_bytes,omitempty"`
+	TimestampWindowMs     int64 `json:"timestamp_window_ms,omitempty"`
 
 	// v2.2 Phase 3 起：gitlog Provider 配置
 	//
@@ -104,12 +122,47 @@ func (c *Config) IsRegistered() bool {
 	return c.AgentID != "" && c.AgentSecret != ""
 }
 
-// ReportTimeout 返回上报 HTTP 客户端超时。config.json 的 report_timeout_ms 优先。
-func (c *Config) ReportTimeout() time.Duration {
-	if c != nil && c.ReportTimeoutMs > 0 {
-		return time.Duration(c.ReportTimeoutMs) * time.Millisecond
+// normalizeReportTimeoutMs 把 config.json 里的 report_timeout_ms 归一化：未配置 / 超过上限一律用默认值。
+//
+// 迁移方式选"运行时钳制"而不是"启动时重写 config.json"：
+//   - 每台机器的 config.json 里都躺着 900000（旧默认 15 分钟），只改默认值不生效，必须处理存量；
+//   - 运行时钳制零 IO、幂等，config 只读 / 被同步工具管理的机器也照样生效；
+//   - 不会因为"每次启动都发现值过大 → 写盘"而反复改文件。落盘留给下一次本来就要发生的 Save
+//     （注册 / 服务端策略变更 / AGENT_NOT_FOUND 清凭证），见 SaveTo 与 Load。
+//
+// 超过上限的值不是"夹到上限"而是回落默认：15 分钟这种值只可能是旧默认，不是运维的有意选择。
+func normalizeReportTimeoutMs(ms int64) int64 {
+	if ms <= 0 || ms > MaxReportTimeoutMs {
+		return DefaultReportTimeoutMs
 	}
-	return time.Duration(DefaultReportTimeoutMs) * time.Millisecond
+	return ms
+}
+
+// ReportTimeout 返回上报 HTTP 客户端超时。config.json 的 report_timeout_ms 优先，
+// 但超过 MaxReportTimeoutMs 的存量值（旧默认 15 分钟）会被忽略，改用 DefaultReportTimeoutMs。
+func (c *Config) ReportTimeout() time.Duration {
+	var ms int64
+	if c != nil {
+		ms = c.ReportTimeoutMs
+	}
+	return time.Duration(normalizeReportTimeoutMs(ms)) * time.Millisecond
+}
+
+// ReportBodyBudget 返回单个 /report 请求 body 的 JSON 字节预算（压缩前）。
+func (c *Config) ReportBodyBudget() int {
+	var n int64
+	if c != nil {
+		n = c.ReportBodyBudgetBytes
+	}
+	switch {
+	case n <= 0:
+		return DefaultReportBodyBudgetBytes
+	case n < MinReportBodyBudgetBytes:
+		return MinReportBodyBudgetBytes
+	case n > MaxReportBodyBudgetBytes:
+		return MaxReportBodyBudgetBytes
+	}
+	return int(n)
 }
 
 // Load 读取配置文件。文件不存在则返回 (zero-value, ErrNotInstalled)。
@@ -131,6 +184,10 @@ func Load() (*Config, error) {
 		if saveErr := Save(cfg); saveErr != nil {
 			_ = saveErr
 		}
+	} else if cfg.ReportTimeoutMs > MaxReportTimeoutMs {
+		// 旧默认 15 分钟：只在内存里改，不为它专门写盘（见 normalizeReportTimeoutMs）；
+		// 之后任何一次 Save 会顺带把磁盘上的值也换成新默认。
+		cfg.ReportTimeoutMs = DefaultReportTimeoutMs
 	}
 	return cfg, nil
 }
@@ -162,6 +219,9 @@ func Save(cfg *Config) error {
 
 // SaveTo 把配置写到指定路径。
 func SaveTo(cfg *Config, path string) error {
+	if cfg.ReportTimeoutMs > MaxReportTimeoutMs {
+		cfg.ReportTimeoutMs = DefaultReportTimeoutMs // 顺带迁移存量的 15 分钟超时
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

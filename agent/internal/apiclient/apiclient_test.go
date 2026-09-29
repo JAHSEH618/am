@@ -115,3 +115,119 @@ func TestReport_503IsServerBusy(t *testing.T) {
 		t.Fatalf("503 response must be classified as busy, got %v", err)
 	}
 }
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty", "", 0},
+		{"seconds", "30", 30 * time.Second},
+		{"seconds with spaces", "  120 ", 120 * time.Second},
+		{"zero", "0", 0},
+		{"negative", "-5", 0},
+		{"garbage", "soon", 0},
+		{"http date in future", now.Add(90 * time.Second).UTC().Format(http.TimeFormat), 90 * time.Second},
+		{"http date in past", now.Add(-time.Minute).UTC().Format(http.TimeFormat), 0},
+		{"absurdly large seconds are clamped, not overflowed", "99999999999999", 365 * 24 * time.Hour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseRetryAfter(tc.in, now); got != tc.want {
+				t.Errorf("parseRetryAfter(%q) = %s, want %s", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// 各种"服务端没处理成功"的响应：Report 必须返回可被 reporter 正确分类的错误，且带上 Retry-After。
+func TestReport_FailureClassification(t *testing.T) {
+	cases := []struct {
+		name         string
+		status       int
+		retryAfter   string
+		body         string
+		wantBusy     bool
+		wantTooLarge bool
+		wantRetry    time.Duration
+	}{
+		{"503 busy", 503, "7", `{"code":50301}`, true, false, 7 * time.Second},
+		{"429", 429, "15", ``, true, false, 15 * time.Second},
+		{"500 not busy", 500, "", `oops`, false, false, 0},
+		{"502 from nginx", 502, "", `<html>bad gateway</html>`, false, false, 0},
+		{"504 from nginx with retry-after", 504, "20", `<html>timeout</html>`, false, false, 20 * time.Second},
+		{"413 too large (nginx page)", 413, "", `<html>too large</html>`, false, true, 0},
+		{"413 + business code 41301 (server guard)", 413, "", `{"code":41301,"message":"payload too large"}`, false, true, 0},
+		{"non-413 status carrying business code 41301", 400, "", `{"code":41301,"message":"payload too large"}`, false, true, 0},
+		{"HTTP 200 + business code 41301", 200, "", `{"code":41301,"message":"payload too large"}`, false, true, 0},
+		{"503 + 50301 + Retry-After 30 (readiness gate / bulkhead)", 503, "30", `{"code":50301,"message":"busy"}`, true, false, 30 * time.Second},
+		{"non-503 status carrying business code 50301", 500, "", `{"code":50301}`, true, false, 0},
+		{"401", 401, "", `{"code":10001}`, false, false, 0},
+		{"200 + business code 50000 (legacy pool timeout)", 200, "", `{"code":50000,"message":"pool"}`, false, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.retryAfter != "" {
+					w.Header().Set("Retry-After", tc.retryAfter)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL, 5*time.Second).Report(context.Background(), "a", "s", []byte(`{}`), "")
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if got := IsServerBusy(err); got != tc.wantBusy {
+				t.Errorf("IsServerBusy = %v, want %v (err=%v)", got, tc.wantBusy, err)
+			}
+			if got := IsPayloadTooLarge(err); got != tc.wantTooLarge {
+				t.Errorf("IsPayloadTooLarge = %v, want %v", got, tc.wantTooLarge)
+			}
+			if got := RetryAfter(err); got != tc.wantRetry {
+				t.Errorf("RetryAfter = %s, want %s", got, tc.wantRetry)
+			}
+		})
+	}
+}
+
+func TestRetryAfter_NonHTTPErrors(t *testing.T) {
+	for _, err := range []error{nil, fmt.Errorf("dial tcp: refused"), &ServerError{Code: CodeServerBusy}} {
+		if got := RetryAfter(err); got != 0 {
+			t.Errorf("RetryAfter(%v) = %s, want 0", err, got)
+		}
+	}
+	if IsPayloadTooLarge(&HTTPError{StatusCode: 500}) || IsPayloadTooLarge(nil) {
+		t.Error("only HTTP 413 is payload-too-large")
+	}
+}
+
+func TestNew_DefaultTimeoutIsNinetySeconds(t *testing.T) {
+	if got := New("http://x", 0).http.Timeout; got != 90*time.Second {
+		t.Errorf("default timeout = %s, want 90s (was 15m before the 2026-09 incident fix)", got)
+	}
+	if got := New("http://x", 7*time.Second).http.Timeout; got != 7*time.Second {
+		t.Errorf("explicit timeout = %s, want 7s", got)
+	}
+}
+
+// 请求超时也是"服务端没处理成功"：返回 error（不是 HTTPError / ServerError），调用方按通用失败走退避。
+func TestReport_TimeoutIsPlainError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(300 * time.Millisecond):
+		}
+	}))
+	defer srv.Close()
+	_, err := New(srv.URL, 50*time.Millisecond).Report(context.Background(), "a", "s", []byte(`{}`), "")
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if IsServerBusy(err) || IsPayloadTooLarge(err) || IsAgentNotFound(err) {
+		t.Errorf("timeout must not be classified as busy/too-large/agent-not-found: %v", err)
+	}
+}
