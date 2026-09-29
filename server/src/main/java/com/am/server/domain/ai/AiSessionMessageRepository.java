@@ -128,9 +128,82 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
     /** 单个 session 的全部消息，按 sequence 升序 —— 当日切片由调用方按 messageTime 过滤 */
     List<AiSessionMessage> findByAiSessionIdOrderBySequenceNoAsc(Long aiSessionId);
 
-    /** NL skill 增量归因：从给定序号（含）起的消息，按 sequence 升序（idx_session_seq 区间扫描）。 */
+    /**
+     * NL skill 增量归因：从给定序号（含）起的<b>整行实体</b>，按 sequence 升序（idx_session_seq 区间扫描）。
+     * ingest 热路径已改用 {@link #findNlSkillReconcileRowsFrom} 的投影版（不读 MEDIUMTEXT / JSON 整行）；
+     * 本方法留给需要完整实体的调用方与测试。
+     */
     List<AiSessionMessage> findByAiSessionIdAndSequenceNoGreaterThanEqualOrderBySequenceNoAsc(
             Long aiSessionId, Integer sequenceNo);
+
+    /**
+     * NL skill 归因只需要的列（见 {@code NlSkillExecutionSupport} / {@code NlSkillInvocationDetector} /
+     * {@code SlashHitsJsonSupport#replaceNlSkills}）：
+     * <ul>
+     *   <li>agent 侧消息（role 为 tool / assistant，判据与 Java 侧 {@code trim + equalsIgnoreCase} 对齐）才带
+     *       {@code contentPartsJson}；{@code contentText} 只在没有 parts 时才被检测器读（回退路径）；</li>
+     *   <li>user 消息的正文（常有粘贴的长日志）从不参与判定，这里直接不取；只需 {@code slashHitsJson} 与两个计数，
+     *       用来判断是否要改写、以及改写时的回写值。</li>
+     * </ul>
+     * 每拍有新消息的会话都会跑一次（见 {@code NlSkillAttributionSupport#reconcileSessionFrom}）。
+     */
+    interface NlSkillReconcileRow {
+        Long getId();
+
+        String getRole();
+
+        Integer getSequenceNo();
+
+        String getToolName();
+
+        String getSlashHitsJson();
+
+        Integer getSlashCommandCount();
+
+        Integer getSlashSkillCount();
+
+        String getContentPartsJson();
+
+        String getContentText();
+    }
+
+    @Query("""
+        SELECT m.id AS id,
+               m.role AS role,
+               m.sequenceNo AS sequenceNo,
+               m.toolName AS toolName,
+               m.slashHitsJson AS slashHitsJson,
+               m.slashCommandCount AS slashCommandCount,
+               m.slashSkillCount AS slashSkillCount,
+               CASE WHEN LOWER(TRIM(m.role)) IN ('tool', 'assistant') THEN m.contentPartsJson ELSE NULL END
+                   AS contentPartsJson,
+               CASE WHEN LOWER(TRIM(m.role)) IN ('tool', 'assistant') AND m.contentPartsJson IS NULL
+                    THEN m.contentText ELSE NULL END AS contentText
+        FROM AiSessionMessage m
+        WHERE m.aiSessionId = :sessionId AND m.sequenceNo >= :fromSeq
+        ORDER BY m.sequenceNo ASC
+        """)
+    List<NlSkillReconcileRow> findNlSkillReconcileRowsFrom(@Param("sessionId") Long sessionId,
+                                                           @Param("fromSeq") Integer fromSeq);
+
+    /**
+     * NL skill 归因回写：只改 slash 三列，不碰 content_text / content_parts_json（对整行实体 save 会连 MEDIUMTEXT
+     * 一起重写）。刻意不开 clearAutomatically：ingest 事务里还有同拍新建的 AiSession / message 托管实体，
+     * 清掉持久化上下文会让随后的 {@code sessionRepository.save} 退化成 merge；同拍新消息的托管副本因此保留旧的
+     * slash 值，但它们没有被改动过，flush 时不会再发 UPDATE，不会覆盖这里的结果。
+     */
+    @Modifying
+    @Query("""
+        UPDATE AiSessionMessage m
+        SET m.slashHitsJson = :hitsJson,
+            m.slashCommandCount = :commandCount,
+            m.slashSkillCount = :skillCount
+        WHERE m.id = :id
+        """)
+    int updateSlashHits(@Param("id") Long id,
+                        @Param("hitsJson") String hitsJson,
+                        @Param("commandCount") int commandCount,
+                        @Param("skillCount") int skillCount);
 
     /**
      * NL skill 增量归因：序号严格小于 {@code beforeSeq} 的最近一条 user 消息的序号（只取列，调用方传 limit 1）。

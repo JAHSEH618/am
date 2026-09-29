@@ -160,11 +160,12 @@ class AbstractAiSessionIngestServiceWritePathTest {
         when(messageRepository.maxSequenceNoByAiSessionId(SESSION_ID)).thenReturn(40);
         when(messageRepository.findUserSequenceNosBefore(eq(SESSION_ID), eq(41), any(Pageable.class)))
                 .thenReturn(List.of(39));
-        AiSessionMessage turnStart = new AiSessionMessage();
-        turnStart.setRole("user");
-        turnStart.setSequenceNo(39);
-        when(messageRepository.findByAiSessionIdAndSequenceNoGreaterThanEqualOrderBySequenceNoAsc(SESSION_ID, 39))
-                .thenReturn(List.of(turnStart));
+        AiSessionMessageRepository.NlSkillReconcileRow turnStart =
+                mock(AiSessionMessageRepository.NlSkillReconcileRow.class);
+        when(turnStart.getId()).thenReturn(390L);
+        when(turnStart.getRole()).thenReturn("user");
+        when(turnStart.getSequenceNo()).thenReturn(39);
+        when(messageRepository.findNlSkillReconcileRowsFrom(SESSION_ID, 39)).thenReturn(List.of(turnStart));
         when(messageRepository.countGroupedByRoleForSession(SESSION_ID)).thenReturn(List.of(
                 new Object[]{"user", 19L},
                 new Object[]{"assistant", 59L},
