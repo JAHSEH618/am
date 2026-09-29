@@ -20,6 +20,37 @@ spring:
       # 连接被借出超过 60s 就打一条带借出栈的 WARN（"Connection leak detection triggered"）。
       # 池子再被打满时，这条日志直接告诉你是谁占着连接不还——比事后猜 30s 超时的受害者强。
       leak-detection-threshold: 60000
+      # 拿不到连接的最长等待（HikariCP 默认 30s → 5s）。2026-09 事故里 50 个 Tomcat 线程排队等 40 条连接，
+      # 每个请求都白等 30s 才失败，线程被继续占住，健康检查也超时，雪崩。5s 内拿不到就快速失败
+      # （全局异常处理把它映射成 HTTP 503 + 50301），线程立刻释放；agent 见 503 不落 outbox、下个 tick 重报。
+      # 池子本身健康时借连接是微秒级，5s 只会在真正饱和时触发。
+      connection-timeout: 5000
+      # 校验一条连接是否存活的最长耗时；必须 < connection-timeout（HikariCP 强制这一点）。
+      validation-timeout: 3000
+      # 连接最长寿命 30min（即 HikariCP 默认值，显式写出以便对照）。必须明显小于 MySQL wait_timeout（默认 8h），
+      # 否则会借到已被服务端单方面关掉的连接；也让连接定期轮换，配合 MySQL 侧改参 / 主从切换后自动收敛。
+      max-lifetime: 1800000
+      # 空闲连接每 3min 发一次保活探测：防止防火墙 / NAT / 云负载均衡按空闲时间悄悄丢弃 TCP 连接
+      # （常见阈值 4~5min：Azure LB 4min、AWS NLB 350s），否则下一个借到它的请求会卡到 socketTimeout 才发现。
+      # 必须 < max-lifetime。MySQL 在同机容器网络里时几乎无感，远程库时很有用。
+      keepalive-time: 180000
+      # 事务隔离级别开关（默认保持现状 REPEATABLE_READ）。可选 TRANSACTION_READ_COMMITTED，
+      # 但会改变事务语义，切换前必读 docs/ops/read-committed-evaluation.md（要求 binlog_format=ROW、需灰度与回归）。
+      transaction-isolation: ${AIWATCH_DB_ISOLATION:TRANSACTION_REPEATABLE_READ}
+      # 直接下发给 MySQL Connector/J 的参数。放在这里（而不是 DB_URL 里）是因为部署机的 .env 里已经有一份
+      # 旧的 DB_URL，改仓库里的模板不会传到现网；而 Connector/J 规定"Properties 里的值覆盖 URL 里的同名参数"，
+      # 所以这里对所有部署都生效。
+      data-source-properties:
+        # TCP 建连超时 5s（默认 0 = 不设，退化成操作系统的 ~2min 建连超时）。MySQL 不可达时快速失败，
+        # 配合 connection-timeout 让线程尽快释放。
+        connectTimeout: 5000
+        # 单次 socket 读超时，取 10min（Connector/J 默认 0 = 永不超时）。它只用来兜"网络黑洞"（对端消失、包被丢弃、半开连接——此时没有 RST，
+        # 线程会永远卡在读上），不是查询超时：客户端断开后 MySQL 服务端的语句仍会继续跑完。
+        # 所以取值必须容得下所有正常语句：控制台查询被 MAX_EXECUTION_TIME 限在 20s，ingest / 聚合 / 回填批次
+        # 都是秒级；夜间 CoveringIndexBuilder 建索引（几十分钟）自己借连接后 setNetworkTimeout 放宽，
+        # 不受这里限制。启动期 *SchemaPatches 里对超大表的一次性 DDL 仍受此值约束——发版含这类补丁时，
+        # 临时设 AIWATCH_DB_SOCKET_TIMEOUT_MS=0（不设上限）再启动，跑完改回。
+        socketTimeout: ${AIWATCH_DB_SOCKET_TIMEOUT_MS:600000}
   sql:
     init:
       mode: never

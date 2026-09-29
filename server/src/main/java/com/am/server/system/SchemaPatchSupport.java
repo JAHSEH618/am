@@ -47,6 +47,13 @@ final class SchemaPatchSupport {
     /** DDL 期间会话级 MDL 等待上限（秒）。MySQL 默认 lock_wait_timeout = 31536000（一年）。 */
     static final int DDL_LOCK_WAIT_SECONDS = 5;
 
+    /**
+     * DDL 连接的 JDBC 网络超时（毫秒）。prod 的 socketTimeout（默认 10 分钟）只用来兜「网络黑洞」，
+     * 而旧库缺列时 INSTANT 被拒回退 INPLACE、大表建索引都可能跑很久——不抬高会被它当成断网误杀。
+     * HikariCP 在连接归还时会复位 networkTimeout，不会污染池。
+     */
+    static final int DDL_NETWORK_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+
     // MySQL 服务端错误码（SQLException#getErrorCode）
     private static final int ER_TABLE_EXISTS = 1050;
     private static final int ER_DUP_FIELDNAME = 1060;
@@ -372,6 +379,7 @@ final class SchemaPatchSupport {
         }
         int applied = 0;
         Set<String> lockedOut = new HashSet<>();
+        raiseNetworkTimeout(c);
         try {
             long original = readSessionLockWaitTimeout(c);
             try (Statement st = c.createStatement()) {
@@ -402,6 +410,15 @@ final class SchemaPatchSupport {
             log.warn("schema patch: DDL batch aborted: {}", e.getMessage());
         }
         return applied;
+    }
+
+    /** 尽力而为：驱动 / 代理不支持时保持原超时，不影响 DDL 本身。 */
+    private static void raiseNetworkTimeout(Connection c) {
+        try {
+            c.setNetworkTimeout(Runnable::run, DDL_NETWORK_TIMEOUT_MS);
+        } catch (SQLException | RuntimeException e) {
+            log.debug("schema patch: setNetworkTimeout unsupported: {}", e.toString());
+        }
     }
 
     private static Outcome runStep(Connection c, Step step) {

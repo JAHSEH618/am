@@ -1,0 +1,55 @@
+# AIWatch MySQL 8.0 服务端参数（挂载到容器 /etc/mysql/conf.d/aiwatch.cnf，见 docker-compose.yml）
+#
+# 只放"静态、无需按机器调整"的参数。两处例外与分工：
+#   - innodb_buffer_pool_size 要随机器内存变，而 cnf 不支持环境变量插值，
+#     所以由 docker-compose.yml 的 command 传入（.env 的 MYSQL_INNODB_BUFFER_POOL_SIZE，默认 1G）。
+#     命令行参数优先级高于 cnf，这里刻意不重复写，避免两处不一致。
+#   - 字符集 / 排序规则仍在 compose 的 command 里（历史写法，保持不动）。
+#
+# 生效方式：改完执行 docker compose restart mysql（bind mount 的文件内容变化不会让 compose 自动重建容器）。
+#   想不重启先在线试，可用 SET GLOBAL（清单与注意事项见 docs/guides/docker-deploy-centos.md 的「MySQL 参数与在线调整」）。
+# 文件权限：MySQL 会忽略"任何人可写"的 cnf（日志里报 World-writable config file ... is ignored），
+#   保持 644（chmod 644 docker/mysql/aiwatch.cnf）。
+# 修改本文件后请同步 docs/ops/ 下相关说明。
+
+[mysqld]
+
+# ---- 连接数 ----
+# 必须 ≥ 应用连接池上限：HikariCP prod maximum-pool-size = 40（application-prod.yml；旧注释里的 100 已过时）。
+# 300 = 40（应用）+ 备份 / 运维 / 监控 exporter 的余量，再留足冗余；MySQL 的线程缓冲是按需分配的，
+# 空闲余量几乎不占内存，所以不必为了省而调小。别调大：真需要 > 100 条并发连接说明应用侧出了问题
+# （2026-09 事故就是池被占满），应该查原因而不是放大上限。
+max_connections = 300
+
+# ---- 锁等待 ----
+# 行锁等待超时，默认 50s。2026-09 事故里，启动期整表 UPDATE…JOIN 在 REPEATABLE READ 下锁满 ai_session
+# 的间隙，ingest 的 INSERT 排队等锁 50s 才整包失败，期间占着 Tomcat 线程和连接池。
+# 改成 10s：拿不到锁就快速失败（1205），agent 下个 tick 会重报，比让线程 / 连接干等 50s 便宜得多。
+# 注意：这是"行锁"等待；元数据锁等待由会话变量 lock_wait_timeout 控制（CoveringIndexBuilder 自己设 10s），互不影响。
+# 代价：合法的长事务若需要等超过 10s 的行锁会失败重试。现有批处理（回填 / 清理）都是按主键区间小批提交的，不受影响。
+innodb_lock_wait_timeout = 10
+
+# ---- binlog ----
+# MySQL 8.0 默认 binlog_expire_logs_seconds = 2592000（30 天），无人清理时会把磁盘写满
+# （2026-07 生产 binlog 曾占 41G，根分区被打满）。CLAUDE.md 记载生产早已手工设为 3 天，这里把它固化进仓库，
+# 换机器 / 重建容器不会丢。259200 = 3 天。
+# 与备份的关系：binlog 只保留 3 天，意味着"能用 binlog 回放的时间点恢复"最多回到 3 天前；
+# 更早的只能恢复到最近一次全量备份的时间点（见 docs/ops/backup-restore.md）。
+# 不要同时设置已弃用的 expire_logs_days。
+binlog_expire_logs_seconds = 259200
+
+# ---- 慢查询 ----
+# 慢查询阈值，默认 10s 太钝。Slow_queries 状态计数器不管慢日志文件开没开都会累加，
+# 所以只改阈值、不开慢日志文件（slow_query_log 保持默认 OFF，避免日志文件无限增长）：
+# Prometheus（mysqld_exporter）的 mysql_global_status_slow_queries 就能告警；
+# 需要看具体是哪些语句时，临时 SET GLOBAL slow_query_log = ON 抓一段时间再关（见 docs/ops/monitoring.md）。
+long_query_time = 2
+
+# ---- 故意不设置的参数（保持 MySQL 默认，写在这里防止以后被"优化"掉）----
+# innodb_flush_log_at_trx_commit = 1（默认）  每次提交都刷 redo，崩溃不丢已提交事务。不要为了吞吐改成 0 / 2。
+# sync_binlog = 1（默认）                     每次提交都刷 binlog，与上一项一起保证持久性。
+# binlog_format = ROW（8.0 默认）             必须保持 ROW：将来若切 READ COMMITTED（docs/ops/read-committed-evaluation.md），
+#                                             STATEMENT / MIXED 会直接报错；ROW 也是 git_commit_file 大 blob 写放大的来源（见 CLAUDE.md）。
+# wait_timeout = 28800（默认 8h）             应用连接池 max-lifetime = 30min，远小于它，无需调整。
+# transaction_isolation = REPEATABLE-READ（默认）  应用侧通过 AIWATCH_DB_ISOLATION 开关，服务端默认不动。
+# innodb_redo_log_capacity（8.0.30+，默认 100MB） 写入很重时可考虑调大以减少检查点抖动；本次不调，需要时先压测。

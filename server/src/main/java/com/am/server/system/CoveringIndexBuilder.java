@@ -45,6 +45,14 @@ public class CoveringIndexBuilder {
 
     static final int MDL_WAIT_SECONDS = 10;
 
+    /**
+     * 建索引期间放宽的 JDBC 网络（socket 读）超时：4h。prod 连接池带 {@code socketTimeout}（application-prod.yml，
+     * 默认 10min，用来兜网络黑洞），而大表 {@code ALTER … ADD INDEX} 要几十分钟才返回第一个字节，
+     * 不放宽会被驱动在半途切断连接。仍取一个有限的大值而不是 0：真遇到黑洞时定时任务线程至多卡这么久。
+     * HikariCP 在连接归还时会把网络超时复位回池配置值，不会污染其他借用者。
+     */
+    static final int DDL_NETWORK_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+
     record IndexSpec(String table, String name, String columns) {}
 
     static final List<IndexSpec> INDEXES = List.of(
@@ -83,6 +91,9 @@ public class CoveringIndexBuilder {
             }
             long start = System.currentTimeMillis();
             try (Connection c = dataSource.getConnection()) {
+                // 长 DDL（大表在线建索引可能几十分钟）不能被 JDBC socketTimeout（prod 10min，只兜网络黑洞）误杀；
+                // HikariCP 归还连接时会复位 networkTimeout，不会污染池。
+                c.setNetworkTimeout(Runnable::run, DDL_NETWORK_TIMEOUT_MS);
                 // 会话变量用完还原：连接来自池，不还原会把 10s 的 MDL 等待上限带给之后借到它的业务语句。
                 SchemaPatchSupport.withLockWaitTimeout(c, MDL_WAIT_SECONDS, conn -> {
                     try (Statement st = conn.createStatement()) {
