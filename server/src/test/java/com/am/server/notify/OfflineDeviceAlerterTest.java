@@ -9,7 +9,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,6 +34,35 @@ class OfflineDeviceAlerterTest {
     private SystemConfigService config;
     private EmployeeDisplayService employeeDisplayService;
     private OfflineDeviceAlerter alerter;
+    private MutableClock clock;
+
+    /** 可手动推进的时钟：控制“应用就绪后过了多久”。 */
+    private static final class MutableClock extends Clock {
+        private Instant now;
+
+        MutableClock(Instant start) {
+            this.now = start;
+        }
+
+        void advance(Duration d) {
+            now = now.plus(d);
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("UTC");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+    }
 
     @BeforeEach
     void setUp() {
@@ -40,6 +73,12 @@ class OfflineDeviceAlerterTest {
         DynamicScheduledTaskManager sched = mock(DynamicScheduledTaskManager.class);
         alerter = new OfflineDeviceAlerter(
                 deviceRepository, mailService, config, employeeDisplayService, sched);
+        // 默认：应用已就绪且早已过了 10 分钟启动宽限，让下面的发信类用例与宽限逻辑无关；宽限本身另有专测。
+        clock = new MutableClock(Instant.parse("2026-09-29T02:00:00Z"));
+        alerter.setClock(clock);
+        alerter.onApplicationReady();
+        clock.advance(Duration.ofMinutes(11));
+        when(config.getInt(contains("startup_grace"), anyInt())).thenReturn(10);
 
         when(mailService.isConfigured()).thenReturn(true);
         when(config.getInt(contains("threshold"), anyInt())).thenReturn(2);
@@ -78,7 +117,22 @@ class OfflineDeviceAlerterTest {
 
         verify(mailService).send(eq("user@corp.com"), anyString(), anyString());
         assertThat(d.getLastOfflineEmailTime()).isNotNull();
-        verify(deviceRepository).save(d);
+        // 只回写告警列：绝不整行 save(device)——那会把筛选时刻读到的 last_seen 写回，盖掉发信期间刚上报的心跳
+        verify(deviceRepository).markOfflineEmailSent(eq("a-1"), eq(d.getLastOfflineEmailTime()));
+        verify(deviceRepository, never()).save(any());
+    }
+
+    @Test
+    void failedSendDoesNotWriteBackTheDedupAnchor() {
+        AgentDevice d = device("user@corp.com", null, null);
+        when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
+        org.mockito.Mockito.doThrow(new RuntimeException("smtp down"))
+                .when(mailService).send(anyString(), anyString(), anyString());
+
+        alerter.scanAndAlert();
+
+        verify(deviceRepository, never()).markOfflineEmailSent(anyString(), any());
+        assertThat(d.getLastOfflineEmailTime()).isNull();
     }
 
     @Test
@@ -101,6 +155,7 @@ class OfflineDeviceAlerterTest {
         alerter.scanAndAlert();
 
         verify(mailService, never()).send(anyString(), anyString(), anyString());
+        verify(deviceRepository, never()).markOfflineEmailSent(anyString(), any());
         verify(deviceRepository, never()).save(any());
     }
 
@@ -124,6 +179,77 @@ class OfflineDeviceAlerterTest {
         alerter.scanAndAlert();
 
         verify(mailService).send(eq("user@corp.com"), anyString(), anyString());
+    }
+
+    // ---------------------------------------------------------------- 启动宽限
+
+    /** 新建一个“尚未就绪”的告警器（不调用 onApplicationReady），共用同一批 mock 与时钟。 */
+    private OfflineDeviceAlerter notYetReadyAlerter() {
+        OfflineDeviceAlerter a = new OfflineDeviceAlerter(
+                deviceRepository, mailService, config, employeeDisplayService, mock(DynamicScheduledTaskManager.class));
+        a.setClock(clock);
+        return a;
+    }
+
+    @Test
+    void doesNothingBeforeTheApplicationIsReady() {
+        // 启动补丁 / 回填还没跑完（ApplicationReadyEvent 未发布）：上报入口在回 503，last_seen 不可信
+        AgentDevice d = device("user@corp.com", null, null);
+        when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
+
+        notYetReadyAlerter().scanAndAlert();
+
+        verify(deviceRepository, never()).findByStatusAndOfflineBefore(any(), any());
+        verify(mailService, never()).send(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void doesNothingInsideTheStartupGraceWindowThenResumes() {
+        AgentDevice d = device("user@corp.com", null, null);
+        when(deviceRepository.findByStatusAndOfflineBefore(any(), any())).thenReturn(List.of(d));
+        OfflineDeviceAlerter a = notYetReadyAlerter();
+        a.onApplicationReady();                                   // 就绪时刻 = 当前时钟
+
+        clock.advance(Duration.ofMinutes(9).plusSeconds(59));
+        a.scanAndAlert();
+        verify(deviceRepository, never()).findByStatusAndOfflineBefore(any(), any());
+        verify(mailService, never()).send(anyString(), anyString(), anyString());
+
+        clock.advance(Duration.ofSeconds(1));                     // 恰好 10 分钟：宽限结束
+        a.scanAndAlert();
+        verify(deviceRepository).findByStatusAndOfflineBefore(any(), any());
+        verify(mailService).send(eq("user@corp.com"), anyString(), anyString());
+    }
+
+    @Test
+    void graceWindowIsReadFromConfigOnEveryScan() {
+        when(config.getInt(contains("startup_grace"), anyInt())).thenReturn(30);
+        OfflineDeviceAlerter a = notYetReadyAlerter();
+        a.onApplicationReady();
+        clock.advance(Duration.ofMinutes(29));
+
+        a.scanAndAlert();
+        verify(deviceRepository, never()).findByStatusAndOfflineBefore(any(), any());
+
+        clock.advance(Duration.ofMinutes(1));
+        a.scanAndAlert();
+        verify(deviceRepository).findByStatusAndOfflineBefore(any(), any());
+    }
+
+    @Test
+    void zeroOrNegativeGraceMeansNoWaitButStillRequiresReadiness() {
+        when(config.getInt(contains("startup_grace"), anyInt())).thenReturn(0);
+        OfflineDeviceAlerter a = notYetReadyAlerter();
+        a.scanAndAlert();                                          // 未就绪：仍不判定
+        verify(deviceRepository, never()).findByStatusAndOfflineBefore(any(), any());
+
+        a.onApplicationReady();
+        a.scanAndAlert();                                          // 就绪即判定
+        verify(deviceRepository).findByStatusAndOfflineBefore(any(), any());
+
+        when(config.getInt(contains("startup_grace"), anyInt())).thenReturn(-5);
+        a.scanAndAlert();                                          // 负数按 0 处理
+        verify(deviceRepository, org.mockito.Mockito.times(2)).findByStatusAndOfflineBefore(any(), any());
     }
 
     @Test
