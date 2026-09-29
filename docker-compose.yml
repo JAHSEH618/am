@@ -63,8 +63,8 @@ services:
       dockerfile: Dockerfile
       args:
         # 与 image tag、agent 分发版本对齐；默认与 server/build.gradle 当前 version 一致
-        VERSION: ${AIWATCH_VERSION:-1.3.3}
-    image: aiwatch-server:${AIWATCH_VERSION:-1.3.3}
+        VERSION: ${AIWATCH_VERSION:-1.4.0}
+    image: aiwatch-server:${AIWATCH_VERSION:-1.4.0}
     container_name: aiwatch-server
     # 只有进程退出才会被 Docker 重启（unhealthy 本身不会触发重启）。所以 JVM 出现 OOM 时靠
     # -XX:+ExitOnOutOfMemoryError 让进程退出（见 Dockerfile）；要"卡死也自动重启"见 docs/ops/monitoring.md 的 autoheal 一节。
