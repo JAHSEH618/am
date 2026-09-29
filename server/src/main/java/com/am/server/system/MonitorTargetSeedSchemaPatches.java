@@ -10,7 +10,6 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.Statement;
 
 /**
  * 启动时把 {@code monitor_target} 字典种子幂等灌入存量库（含表自愈）。
@@ -104,10 +103,9 @@ public class MonitorTargetSeedSchemaPatches {
     }
 
     private static void seed(DataSource dataSource) {
+        // 表已存在时不发 CREATE TABLE IF NOT EXISTS（它对已存在的表同样要抢表名元数据锁），缺才建。
+        SchemaPatchSupport.ensureTable(dataSource, "monitor_target", CREATE_TABLE);
         try (Connection c = dataSource.getConnection()) {
-            try (Statement st = c.createStatement()) {
-                st.executeUpdate(CREATE_TABLE); // IF NOT EXISTS → 幂等
-            }
             try (PreparedStatement ps = c.prepareStatement(UPSERT)) {
                 for (Seed s : SEEDS) {
                     ps.setString(1, s.code());

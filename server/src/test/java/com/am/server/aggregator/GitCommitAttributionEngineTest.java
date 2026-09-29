@@ -99,6 +99,46 @@ class GitCommitAttributionEngineTest {
         return all;
     }
 
+    // ---------- 写入串行 ----------
+
+    /**
+     * ingest 去抖增量 / 夜间批 / 启动回溯可能同时重算同一批 commit；各自「delete by commit_id + insert」
+     * 交错会撞 uk_commit。写入必须串行：第一条线程还在写（卡在 saveAll）时，第二条线程连 delete 都不许开始。
+     */
+    @Test
+    void concurrentAttributionWritesAreSerialised() throws Exception {
+        java.util.concurrent.CountDownLatch firstInsideSave = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseFirst = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger saves = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (saves.incrementAndGet() == 1) {
+                firstInsideSave.countDown();
+                assertTrue(releaseFirst.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            return inv.getArgument(0);
+        }).when(attributionRepository).saveAll(any());
+
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> engine.attributeCommits(List.of(commit(1, "u1", "https://git.x/am.git", null)), true));
+            assertTrue(firstInsideSave.await(10, java.util.concurrent.TimeUnit.SECONDS));
+
+            var second = pool.submit(() -> engine.attributeCommits(List.of(commit(1, "u1", "https://git.x/am.git", null)), false));
+            Thread.sleep(300);
+            // 第二条线程的 delete 还没开始：整块写入被第一条线程的写锁挡在外面
+            verify(attributionRepository, org.mockito.Mockito.times(1)).deleteByCommitIdIn(any());
+            assertTrue(!second.isDone());
+
+            releaseFirst.countDown();
+            first.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            second.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            verify(attributionRepository, org.mockito.Mockito.times(2)).deleteByCommitIdIn(any());
+        } finally {
+            releaseFirst.countDown();
+            pool.shutdownNow();
+        }
+    }
+
     // ---------- B 档 ----------
 
     @Test

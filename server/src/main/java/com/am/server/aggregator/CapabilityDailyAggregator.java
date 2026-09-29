@@ -33,6 +33,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 能力使用日聚合任务（《管理后台-产出归因与能力使用分析 v1.0》§3.3）：把
@@ -51,7 +53,8 @@ import java.util.concurrent.Executors;
  *
  * <p>调度：每日 00:15 (Asia/Shanghai) 跑昨日 + 每小时 :10 滚动跑 today + yesterday（错开
  * daily_summary 的 00:05 / 整点，避免同刻抢 DB）；查询侧可调 {@link #ensureFresh} view-time 收口。
- * 历史回溯由 {@code CapabilityDailyBackfillPatch} 启动期一次性补齐。
+ * 历史回溯由 {@code CapabilityDailyBackfillPatch} 启动期一次性补齐（经 {@link #aggregateUnderDateLock}，
+ * 与上述任务共用 per-date 锁）。
  * gz
  */
 @Component
@@ -83,7 +86,7 @@ public class CapabilityDailyAggregator {
 
     /** {@link #ensureFresh} 的 TTL 快速路径 + per-date 互斥，语义与 DailySummaryAggregator 一致。 */
     private final ConcurrentHashMap<LocalDate, LocalDateTime> lastAggregatedAt = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<LocalDate, Object> ensureFreshLocks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<LocalDate, ReentrantLock> ensureFreshLocks = new ConcurrentHashMap<>();
     /** {@link #ensureFreshAsync} 的 per-date single-flight。 */
     private final Set<LocalDate> asyncFreshInFlight = ConcurrentHashMap.newKeySet();
     private final ExecutorService refreshExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -209,9 +212,38 @@ public class CapabilityDailyAggregator {
     }
 
     private <T> T withDateLock(LocalDate date, java.util.function.Supplier<T> body) {
-        Object lock = ensureFreshLocks.computeIfAbsent(date, d -> new Object());
-        synchronized (lock) {
+        ReentrantLock lock = ensureFreshLocks.computeIfAbsent(date, d -> new ReentrantLock());
+        lock.lock();
+        try {
             return body.get();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /** {@link #aggregateUnderDateLock} 在 {@code maxWait} 内没拿到该日期的锁。 */
+    public static final int LOCK_NOT_ACQUIRED = -1;
+
+    /**
+     * 历史回溯专用：与整点任务 / 每日任务 / {@link #ensureFresh} <b>共用同一把 per-date 锁</b>重算一天。
+     *
+     * <p>回溯此前直接调 {@link #aggregate}，不拿这把锁：回溯到 today / yesterday 时会与整点任务、view-time
+     * 刷新对同一天并发 delete + insert，撞 {@code uk_day_user_kind_item}（或死锁），该日失败、回溯标记永远写不上。
+     * 等锁有上限——整点任务重算一天只要秒级；拿不到返回 {@link #LOCK_NOT_ACQUIRED}，由回溯方记录并稍后重试，
+     * 不无限阻塞回溯线程。不改 {@code lastAggregatedAt}：回溯的是历史日，不该顶掉 view-time 的 TTL 判断。
+     *
+     * @return 写入行数；{@link #LOCK_NOT_ACQUIRED} 表示没拿到锁（该日未处理）
+     * @throws InterruptedException 等锁期间线程被中断
+     */
+    public int aggregateUnderDateLock(LocalDate date, Duration maxWait) throws InterruptedException {
+        ReentrantLock lock = ensureFreshLocks.computeIfAbsent(date, d -> new ReentrantLock());
+        if (!lock.tryLock(maxWait.toMillis(), TimeUnit.MILLISECONDS)) {
+            return LOCK_NOT_ACQUIRED;
+        }
+        try {
+            return aggregate(date);
+        } finally {
+            lock.unlock();
         }
     }
 

@@ -49,36 +49,10 @@ public class AiSessionEventSourceRefSchemaPatches {
         String table = "ai_session_event";
         String col = "source_ref";
         String def = "VARCHAR(191) DEFAULT NULL COMMENT '去重锚点(P3-3a 物化)'";
-        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            st.executeUpdate("ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS " + col + " " + def);
-        } catch (SQLException e) {
-            AnalysisReportSchemaPatches.tryFallbackAddColumn(dataSource, table, col, def, e);
-        }
-        ensureIndex(dataSource, table, "idx_session_sourceref",
-                "CREATE INDEX idx_session_sourceref ON ai_session_event (ai_session_id, source_ref)");
+        SchemaPatchSupport.ensureColumn(dataSource, table, col, def);
+        SchemaPatchSupport.ensureIndex(dataSource, table, "idx_session_sourceref", "ai_session_id, source_ref");
         backfill(dataSource);
         log.debug("schema patch checked: {}.{}", table, col);
-    }
-
-    private static void ensureIndex(DataSource dataSource, String table, String indexName, String ddl) {
-        try (Connection c = dataSource.getConnection();
-             Statement st = c.createStatement();
-             ResultSet rs = st.executeQuery(
-                     "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE()"
-                             + " AND table_name = '" + table + "' AND index_name = '" + indexName + "'")) {
-            if (rs.next()) {
-                return;
-            }
-        } catch (SQLException e) {
-            log.warn("index existence check failed for {}.{}: {}", table, indexName, e.getMessage());
-            return;
-        }
-        try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-            st.executeUpdate(ddl);
-            log.info("Created index {} on {}", indexName, table);
-        } catch (SQLException e) {
-            log.warn("Index {} on {} ensure failed: {}", indexName, table, e.getMessage());
-        }
     }
 
     /** 尽力而为:分块把 extra_json 里的 source_ref 回填到列。失败/中断不致命,COALESCE 兜底。 */

@@ -759,6 +759,22 @@ public interface AiSessionRepository extends JpaRepository<AiSession, Long> {
             @Param("activeTypes") java.util.Collection<String> activeTypes);
 
     /**
+     * DailySummary token 汇总的异常复核路径：逐会话 [id, inputTokens, outputTokens]。
+     * 只在整日 SUM 超过单会话上限（说明可能混入坏值会话）时才走，正常路径仍是一条 SUM。
+     */
+    @Query("""
+        SELECT s.id, s.inputTokens, s.outputTokens
+        FROM AiSession s
+        WHERE s.invalidReason IS NULL
+          AND s.userCode = :userCode
+          AND s.lastActivity >= :from AND s.lastActivity < :to
+          AND s.targetType IN :activeTypes
+        """)
+    List<Object[]> findTokenSlicesByUserAndLastActivityWindowAndTargetTypeIn(
+            String userCode, LocalDateTime from, LocalDateTime to,
+            @Param("activeTypes") java.util.Collection<String> activeTypes);
+
+    /**
      * 大盘 online：非 idle 会话摘要，避免 hydrate 全实体。
      * 返回 [agentId, targetType, lastActivity, status, currentTool, model, projectName]。
      */

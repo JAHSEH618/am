@@ -1,5 +1,6 @@
 package com.am.server.domain.git;
 
+import com.am.server.domain.IdAllocation;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -34,7 +35,7 @@ public class GitCommit {
     @GeneratedValue(strategy = GenerationType.TABLE, generator = "gitCommitIdGen")
     @TableGenerator(name = "gitCommitIdGen", table = "id_sequences",
             pkColumnName = "seq_name", valueColumnName = "next_val",
-            pkColumnValue = "git_commit", allocationSize = 50)
+            pkColumnValue = "git_commit", allocationSize = IdAllocation.BLOCK_SIZE)
     private Long id;
 
     @Column(name = "agent_id", nullable = false, length = 64)

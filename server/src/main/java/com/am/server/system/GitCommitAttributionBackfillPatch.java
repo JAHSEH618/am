@@ -10,9 +10,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 
@@ -22,8 +19,14 @@ import java.time.LocalDate;
  * 回溯行打 backfilled=1（前端趋势图对回溯区间注明「上线前数据为回溯推算」）。
  * B 档回溯（trailer 文本匹配）可信；A 档回溯依赖历史会话事件完整性。
  *
- * <p>完成后写 sys_config marker（{@value #MARKER_KEY}）；途中有失败日则不写 marker，
- * 下次启动整段重跑（delete+insert 幂等）。后台 daemon 线程执行，不阻塞启动。
+ * <p><b>可续跑 + 容错</b>（骨架见 {@link ResumableBackfill}）：进度游标落 sys_config
+ * {@code attribution.backfill_v1.progress}，重启从游标续跑；单日失败记 WARN + 记入
+ * {@code attribution.backfill_v1.failed}、跳过继续（delete+insert 幂等，重算安全）；整轮跑完写完成标记
+ * （{@value #MARKER_KEY}）；之后每次启动只重试失败日，最多 {@value ResumableBackfill#MAX_RETRY_ATTEMPTS} 次。
+ * 此前“一天失败就不写标记、每次重启整段重算”。
+ *
+ * <p>与 ingest 增量 / 夜间批并发写同一批 commit 的冲突由引擎内的写锁串行化
+ * （{@link GitCommitAttributionEngine#attributeCommits}）。后台 daemon 线程执行，不阻塞启动。
  * gz
  */
 @Configuration
@@ -33,13 +36,7 @@ public class GitCommitAttributionBackfillPatch {
 
     static final String MARKER_KEY = "attribution.backfill_v1";
 
-    private static final String MARKER_EXISTS = "SELECT 1 FROM sys_config WHERE config_key = ?";
-
-    private static final String MARKER_INSERT = """
-            INSERT IGNORE INTO sys_config
-                (config_key, config_value, value_type, category, is_secret, description, updated_by, updated_time, created_time)
-            VALUES (?, 'done', 'string', 'attribution', 0, 'git_commit_attribution 历史全量回溯完成标记', 'seed', NOW(), NOW())
-            """;
+    static final String MARKER_DESCRIPTION = "git_commit_attribution 历史全量回溯完成标记";
 
     /** 晚于 GitCommitAttributionSchemaPatches（@Order(130)）：先建表再回溯。 */
     @Bean
@@ -48,71 +45,59 @@ public class GitCommitAttributionBackfillPatch {
                                                    GitCommitAttributionEngine engine,
                                                    GitCommitRepository gitCommitRepository) {
         return args -> {
-            try (Connection c = dataSource.getConnection()) {
-                if (markerExists(c)) {
+            ResumableBackfill state = new ResumableBackfill(
+                    ResumableBackfill.Store.jdbc(dataSource), MARKER_KEY, MARKER_DESCRIPTION);
+            try {
+                if (!state.hasPendingWork()) {
                     return;
                 }
             } catch (SQLException e) {
                 log.warn("git attribution backfill skipped: {}", e.getMessage());
                 return;
             }
-            var minCommitTime = gitCommitRepository.findMinCommitTime();
-            if (minCommitTime == null) {
-                try (Connection c = dataSource.getConnection()) {
-                    writeMarker(c);
-                } catch (SQLException e) {
-                    log.warn("git attribution backfill marker write failed: {}", e.getMessage());
-                }
-                return;
-            }
-            LocalDate from = minCommitTime.toLocalDate();
-            Thread t = new Thread(() -> runBackfill(dataSource, engine, from), "git-attribution-backfill");
+            Thread t = new Thread(() -> run(state, engine, gitCommitRepository), "git-attribution-backfill");
             t.setDaemon(true);
             t.start();
         };
     }
 
-    private static void runBackfill(DataSource dataSource, GitCommitAttributionEngine engine, LocalDate from) {
-        LocalDate to = LocalDate.now();
-        int days = 0;
-        int failed = 0;
-        long commits = 0;
-        for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
-            try {
-                commits += engine.attributeWindow(d.atStartOfDay(), d.plusDays(1).atStartOfDay(), true);
-                days++;
-            } catch (Exception ex) {
-                failed++;
-                log.warn("git attribution backfill: date={} failed: {}", d, ex.toString());
+    private static void run(ResumableBackfill state, GitCommitAttributionEngine engine,
+                            GitCommitRepository gitCommitRepository) {
+        try {
+            if (state.isDone()) {
+                ResumableBackfill.RetryResult r = state.retryFailed(label -> attributeDay(engine, label));
+                if (r.retried() > 0) {
+                    log.info("git attribution backfill retry: retried={} recovered={} remaining={}",
+                            r.retried(), r.recovered(), r.remaining());
+                }
+                return;
             }
-        }
-        if (failed > 0) {
-            log.warn("git attribution backfill incomplete: from={} to={} ok={} failed={}; marker not written, will retry on next boot",
-                    from, to, days, failed);
-            return;
-        }
-        try (Connection c = dataSource.getConnection()) {
-            writeMarker(c);
-        } catch (SQLException e) {
-            log.warn("git attribution backfill marker write failed: {}", e.getMessage());
-            return;
-        }
-        log.info("git attribution backfill done: from={} to={} days={} commits={}", from, to, days, commits);
-    }
-
-    private static boolean markerExists(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(MARKER_EXISTS)) {
-            ps.setString(1, MARKER_KEY);
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next();
+            var minCommitTime = gitCommitRepository.findMinCommitTime();
+            if (minCommitTime == null) {
+                state.loadFailed();
+                state.complete();
+                return;
             }
+            LocalDate from = minCommitTime.toLocalDate();
+            LocalDate to = LocalDate.now();
+            ResumableBackfill.PassResult r = backfill(state, from, to, engine);
+            log.info("git attribution backfill {}: from={} to={} ok={} failed={}",
+                    r.status().name().toLowerCase(), from, to, r.ok(), r.failed());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception e) {
+            log.warn("git attribution backfill aborted (will resume next boot): {}", e.toString());
         }
     }
 
-    private static void writeMarker(Connection c) throws SQLException {
-        try (PreparedStatement ps = c.prepareStatement(MARKER_INSERT)) {
-            ps.setString(1, MARKER_KEY);
-            ps.executeUpdate();
-        }
+    /** 一整轮日期回填（可测入口：状态与引擎都由调用方注入）。 */
+    static ResumableBackfill.PassResult backfill(ResumableBackfill state, LocalDate from, LocalDate to,
+                                                 GitCommitAttributionEngine engine) throws InterruptedException {
+        return state.runDayPass(from, to, label -> attributeDay(engine, label));
+    }
+
+    static void attributeDay(GitCommitAttributionEngine engine, String isoDate) {
+        LocalDate d = LocalDate.parse(isoDate);
+        engine.attributeWindow(d.atStartOfDay(), d.plusDays(1).atStartOfDay(), true);
     }
 }

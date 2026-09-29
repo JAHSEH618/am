@@ -8,9 +8,9 @@
 //     external_message_id + timestamp，下一次 tick 在 reporter 端按游标切片，server 端不再依靠
 //     client 的 tail(N) 截断（消除"client 只发最后 10 条 → server 永远收不到中间消息"的截断丢失）。
 //
-//   - 磁盘失败队列 {@link Outbox}：上报失败的 body 全量持久化到 ~/.../aiwatchd/state/outbox/，
-//     按文件名时序在恢复联网后逐个补发，永不过期。员工在家干活离线一天，第二天回公司联网时
-//     所有当天 body 全部按时序补齐到 server。
+//   - 磁盘失败队列 {@link Outbox}：~/.../aiwatchd/state/outbox/。旧版本把上报失败的 body 全量写进这里、
+//     恢复联网后逐个补发。2026-09 事故后不再写入（游标只在成功后推进，失败的增量下个 tick 自然重发，
+//     写 outbox 只会在服务端恢复时叠成重放风暴，见 backoff.go），只保留"排空旧版本遗留文件"的职责。
 //
 //   - gzip 压缩 {@link maybeCompress}：body ≥ 1KB 时启用 gzip，HMAC 对压缩字节计算，server 端
 //     GzipDecodingFilter 解压。员工规模上行带宽下降 5~10 倍。
@@ -27,7 +27,8 @@
 //     避免每个 tick 都跑全量扫描；之后稳态下只增量。
 //   - 不在 cursors store 为空时 → 维持 48h 默认，重启后只扫近端。
 //
-// 单次上报失败不会阻断后续 tick；连续失败次数会写入日志（设计文档 §15.4）。
+// 单次上报失败不会阻断后续 tick；连续失败按指数退避 + 抖动放慢重试，并尊重服务端 Retry-After（backoff.go）；
+// 单请求 body 有字节预算，超出的会话 / 消息留给后续 tick（budget.go）。
 //
 // gz
 package reporter
@@ -37,6 +38,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -99,6 +101,27 @@ type Reporter struct {
 	sent         map[string]sentSession
 	pendingSent  map[string]sentSession
 	seenSessions map[string]struct{}
+	// sentPath / sentSaved：指纹表的落盘位置与"上次落盘的 key→指纹"，见 sentstate.go。sentPath 为空则不落盘。
+	sentPath  string
+	sentSaved map[string]uint64
+
+	// 失败退避与节奏抖动（backoff.go）。
+	//
+	// failStreak 连续失败的 tick 数，成功一次清零；仅 tickOnce（持有 tickMu）读写。
+	failStreak int
+	// busyUntil 是失败退避的截止时间（UnixNano，0 = 不在退避期）。退避期内定时 tick 之外的所有触发
+	// （watcher、以及 tickOnce 入口的兜底判断）一律不发起上报；watcher goroutine 也会读，所以用 atomic。
+	busyUntil atomic.Int64
+	// backlog 上一个成功 tick 是否还有内容没发完（字节预算 / 条数上限截断）。为 true 时 nextInterval 用
+	// backlogDrainInterval 加速回填，同时视同快报节奏（watcher 不再插队）。
+	backlog atomic.Bool
+	// nowFn / randFn 注入时钟与随机源，供单测；生产为 nil（time.Now / math/rand/v2）。
+	nowFn  func() time.Time
+	randFn func() float64
+
+	// 单请求字节预算（budget.go）：budget 是自适应预算；quarantine 记录"单条消息就 413"而被暂时搁置的会话。
+	budget     bodyBudget
+	quarantine map[string]time.Time
 
 	// v1.0.19 设备心跳解耦：让"在线状态"不被任何慢 provider（如重度用户 cursor 全量扫描，单 tick 可达数分钟）
 	// 阻塞——单独一个 goroutine 按 heartbeatInterval 仅上报设备态刷新 last_seen，数据报文仍由 tickOnce 正常上报。
@@ -141,7 +164,13 @@ func New(cfg *config.Config, registry *monitor.Registry, agentVersion, binaryHas
 	cursors, err := LoadCursorStore()
 	if err != nil {
 		logger.Warnf("load cursors store failed (continue without resume): %v", err)
-		cursors = &MsgCursorStore{cursors: make(map[string]MsgCursor)}
+		// 尽量带上落盘路径：path 为空的 store 永远存不了盘，重启后又是一轮全量 bootstrap。
+		fallback := &MsgCursorStore{cursors: make(map[string]MsgCursor)}
+		if dir, dirErr := stateDir(); dirErr == nil {
+			fallback.path = filepath.Join(dir, cursorsFileName)
+			fallback.dirty = true
+		}
+		cursors = fallback
 	}
 	outbox, err := LoadOutbox()
 	if err != nil {
@@ -157,8 +186,14 @@ func New(cfg *config.Config, registry *monitor.Registry, agentVersion, binaryHas
 		cursors:      cursors,
 		outbox:       outbox,
 		userCode:     cfg.UserCode,
+		budget:       newBodyBudget(cfg.ReportBodyBudget()),
 	}
 	r.creds.Store(&agentCreds{id: cfg.AgentID, secret: cfg.AgentSecret})
+	if dir, dirErr := stateDir(); dirErr == nil {
+		r.initSentState(dir, r.clock())
+	} else {
+		r.sent = make(map[string]sentSession)
+	}
 	if cursors.IsEmpty() {
 		r.bootstrap = true
 		applyLookback(registry, monitor.BootstrapLookback)
@@ -223,6 +258,20 @@ func (r *Reporter) Run(ctx context.Context) error {
 	// 在首 tick 之前启动，正好覆盖耗时最长的 bootstrap 首扫。
 	go r.runHeartbeat(ctx)
 
+	// 启动随机延迟 0–60s：服务端重启 / 发版后一批 agent 几乎同时被拉起，第一个 tick 不打散就是一个对齐的洪峰
+	// （心跳 goroutine 已在上面启动，在线状态不受影响）。
+	if d := r.startupDelay(); d > 0 {
+		logger.Infof("first report delayed by %s (startup jitter)", d.Round(time.Millisecond))
+		startTimer := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			startTimer.Stop()
+			logger.Infof("reporter stopping: %v", ctx.Err())
+			return nil
+		case <-startTimer.C:
+		}
+	}
+
 	if err := r.tickOnce(ctx); err != nil {
 		logger.Warnf("first report failed: %v", err)
 	}
@@ -234,16 +283,19 @@ func (r *Reporter) Run(ctx context.Context) error {
 	// watchArmed：每个定时 tick 之间最多响应一次 watcher 触发。trae / codebuddy / qoder 的 hint 是整个
 	// IDE 配置目录，IDE 自己写日志 / 缓存就会推进 mtime；不设闸时这类机器只要开着 IDE 就每 5s 上报一次。
 	// atomic：watcher goroutine 据它与 lastActive 判断"触发必被丢弃"，此时连扫描都跳过。
+	//
+	// 失败退避期（busyUntil 之前）同样暂停：1.3.3 遗留问题是 503 后 watcher 5 秒又补一个 tick。
 	var watchArmed atomic.Bool
 	watchArmed.Store(true)
-	watchPaused := func() bool { return r.lastActive.Load() || !watchArmed.Load() }
+	watchPaused := func() bool { return r.fastCadence() || !watchArmed.Load() || r.inBackoff() }
 	if w := newActivityWatcher(r.registry, triggerCh, watchPaused); w != nil {
 		go w.run(ctx)
 	}
 
 	// 首 tick 后即按 active 信号决定下个间隔；每个 tick 末 Reset 一次，使 cadence 跟随活跃度
 	// 与服务端下发的最新节奏（mergeReportCadence 已在 tickOnce 成功路径刷新过 atomic）。
-	ticker := time.NewTicker(r.nextInterval())
+	// 每次 Reset 都带 ±20% 抖动并且不早于失败退避截止时间（nextTickDelay）。
+	ticker := time.NewTicker(r.nextTickDelay())
 	defer ticker.Stop()
 
 	for {
@@ -257,11 +309,12 @@ func (r *Reporter) Run(ctx context.Context) error {
 			}
 			lastTick = time.Now()
 			watchArmed.Store(true)
-			ticker.Reset(r.nextInterval())
+			ticker.Reset(r.nextTickDelay())
 		case <-triggerCh:
 			// watcher 的价值只在空闲→活跃的首次加速：已在活跃快报节奏时 ticker 本身就快，直接忽略；
-			// 空闲期每个基线间隔至多补一个 tick，且距上次 tick 不足 minActiveReportInterval 也丢弃。
-			if !watchArmed.Load() || r.lastActive.Load() || time.Since(lastTick) < minActiveReportInterval {
+			// 空闲期每个基线间隔至多补一个 tick，距上次 tick 不足 minActiveReportInterval 也丢弃；
+			// 失败退避期一律不发起上报（triggerAllowed）。
+			if !r.triggerAllowed(watchArmed.Load(), time.Since(lastTick)) {
 				continue
 			}
 			watchArmed.Store(false)
@@ -269,7 +322,7 @@ func (r *Reporter) Run(ctx context.Context) error {
 				logger.Warnf("watch-triggered report failed: %v", err)
 			}
 			lastTick = time.Now()
-			ticker.Reset(r.nextInterval())
+			ticker.Reset(r.nextTickDelay())
 		}
 	}
 }
@@ -295,11 +348,23 @@ func resolveActiveInterval(cfgActiveMs int64, slow time.Duration) time.Duration 
 }
 
 // nextInterval 按最近一次上报的 active 信号选择下个 tick 间隔，读取当前动态节奏 atomic。
+// 空闲、但上个 tick 还有积压没发完（bootstrap 回填）时用 backlogDrainInterval 加速，不超过基线。
+// 这里不含任何随机：抖动与退避截止时间由 nextTickDelay 叠加，保持本函数可确定性单测。
 func (r *Reporter) nextInterval() time.Duration {
 	if r.lastActive.Load() {
 		return time.Duration(r.activeIntervalMs.Load()) * time.Millisecond
 	}
-	return time.Duration(r.baseIntervalMs.Load()) * time.Millisecond
+	base := time.Duration(r.baseIntervalMs.Load()) * time.Millisecond
+	if r.backlog.Load() && backlogDrainInterval < base {
+		return backlogDrainInterval
+	}
+	return base
+}
+
+// fastCadence 当前是否处于"快节奏"（活跃快报或回填加速）：此时 ticker 本身已经够快，
+// watcher 触发必被丢弃，连 mtime 扫描都不必做。
+func (r *Reporter) fastCadence() bool {
+	return r.lastActive.Load() || r.backlog.Load()
 }
 
 // setCadence 归一化并存储自适应节奏。baseMs<=0 用内置默认；activeMs 经 resolveActiveInterval
@@ -360,14 +425,6 @@ func (r *Reporter) ensureRegistered(ctx context.Context) error {
 	r.cfg = cfg2
 	r.creds.Store(&agentCreds{id: cfg2.AgentID, secret: cfg2.AgentSecret})
 	return nil
-}
-
-// handleServerBusy 处理服务端 503 / SERVER_BUSY：本次 body 不落 outbox（服务端什么都没入库、游标未推进，
-// 下个 tick 会带着同样的增量重报；落 outbox 只会在服务端恢复时叠出一波重复补发的洪峰），
-// 并把节奏退回空闲基线，避免在活跃快报节奏下每几秒重试一次。
-func (r *Reporter) handleServerBusy(err error) {
-	r.lastActive.Store(false)
-	logger.Infof("server busy, will retry at idle cadence without spooling to outbox (cursors not advanced): %v", err)
 }
 
 // handleReportError 在 server 返回 AGENT_NOT_FOUND 时，把本地 agent_id / secret 清空并落盘，
@@ -493,10 +550,18 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	}
 	defer r.tickMu.Unlock()
 
+	// 失败退避期内不发起上报：定时 tick 本来就被 nextTickDelay 排在 busyUntil 之后，这里是对其余
+	// 触发路径（watcher、将来的手动触发）与系统时钟回拨的兜底。
+	if rem := r.backoffRemaining(); rem > 0 {
+		logger.Debugf("skip report tick: backing off for another %s", rem.Round(time.Second))
+		return nil
+	}
+
 	tickStart := time.Now()
 	// v2.7：先确保已注册。未注册（首次安装但当时无网 / server 暂不可达）时本 tick 跳过；
-	// 已注册的常态下这里几乎是 0 开销。
+	// 已注册的常态下这里几乎是 0 开销。注册失败同样走退避，免得服务端故障时全员按基线节奏反复注册。
 	if err := r.ensureRegistered(ctx); err != nil {
+		r.noteFailure(err)
 		return err
 	}
 
@@ -589,7 +654,10 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 同时把"本 tick 即将上报的最后一条 message"暂存到 r.pending，等本次发送成功后再 commit。
 	// backfillPending = 因 MaxMessagesPerSession cap 而未发完的余量（存量员工首次升级时 > 0）。
 	backfillPending := r.applyMsgCursors(monitors)
-	skippedUnchanged := r.dropUnchangedIdleSessions(monitors, time.Now())
+	skippedUnchanged := r.dropUnchangedIdleSessions(monitors, r.clock())
+	// 有 content_parts 的消息省掉重复的 text，再按字节预算裁剪 body（同步修正暂存的游标 / 指纹）。
+	stripRedundantText(monitors)
+	bres := r.applyByteBudget(monitors, r.budget.current(), r.clock())
 
 	state := &deviceStateDto{
 		OSType:       info.OSType,
@@ -632,19 +700,16 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 		body, encoding = rawBody, ""
 	}
 
-	// 1) 先 drain outbox 历史失败报文（按文件名时序）。drain 出错时把本次 body 也排队，下次再试；
-	//    但服务端明确回"忙"时不排队（见 handleServerBusy）。
+	// 1) 先排空 outbox 里旧版本遗留的失败报文（按文件名时序，每 tick 有上限）。本版本不再往 outbox 写任何东西
+	//    （见 backoff.go 文件头：游标只在成功后推进，失败的增量下个 tick 自然重发）。排空失败 = 服务端没处理成功，
+	//    与发新包失败一样走退避，且本 tick 不再发新包。
 	if r.outbox != nil {
 		if drained, derr := r.outbox.Drain(ctx, r.sendOutboxBody); derr != nil {
 			if drained > 0 {
 				logger.Infof("outbox partial drained: sent=%d remaining_err=%v", drained, derr)
 			}
-			if apiclient.IsServerBusy(derr) {
-				r.handleServerBusy(derr)
-				return derr
-			}
-			if appendErr := r.outbox.Append(body); appendErr != nil {
-				logger.Warnf("outbox append after drain fail: %v", appendErr)
+			if !apiclient.IsAgentNotFound(derr) {
+				r.noteFailure(derr)
 			}
 			return derr
 		} else if drained > 0 {
@@ -652,26 +717,23 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 		}
 	}
 
-	// 2) 发本次 body
+	// 2) 发本次 body。任何失败都不写 outbox：游标此刻尚未推进（commitPendingCursors 在成功后才调用），
+	//    下个 tick 会带着同样的增量重发；落 outbox 只会在服务端恢复时叠出一波重复补发的洪峰。
 	summary, err := r.client.Report(ctx, r.cfg.AgentID, r.cfg.AgentSecret, body, encoding)
 	if err != nil {
 		// AGENT_NOT_FOUND 是数据问题（server 端没这条 device），重发 100 次也无用。
-		// 直接清本地凭证触发下个 tick 重新注册，body 不进 outbox 避免无限堆积。
+		// 直接清本地凭证触发下个 tick 重新注册。
 		if apiclient.IsAgentNotFound(err) {
 			r.handleReportError(err)
 			return err
 		}
-		if apiclient.IsServerBusy(err) {
-			r.handleServerBusy(err)
-			return err
+		if apiclient.IsPayloadTooLarge(err) {
+			// 413 / 业务码 41301：重发同一个包永远不会成功，必须让下一个 body 变小。日志只打大小与计数，不含内容。
+			logger.Warnf("report rejected as too large (HTTP 413 / code 41301): wire=%d bytes json=%d bytes sessions=%d messages=%d",
+				len(body), len(rawBody), bres.keptSessions, bres.keptMessages)
+			r.handleTooLarge(bres, r.clock())
 		}
-		if r.outbox != nil {
-			if appendErr := r.outbox.Append(body); appendErr != nil {
-				logger.Warnf("outbox append after send fail: %v", appendErr)
-			} else {
-				logger.Infof("body queued to outbox after send fail (will retry next tick)")
-			}
-		}
+		r.noteFailure(err)
 		return err
 	}
 
@@ -679,9 +741,14 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 记录成功上报时刻，供解耦心跳去抖（刚有数据 tick 落地就不必再补心跳）。v1.0.19。
 	r.lastReportUnix.Store(time.Now().Unix())
 
-	// 3) 上报成功：把暂存的游标 commit 到内存 + 落盘
+	// 3) 上报成功：把暂存的游标 commit 到内存 + 落盘。此时 r.pending 只含"实际放进 body 的最后一条"
+	//    （applyByteBudget 已把被推迟 / 截掉的部分剔除），所以没发出去的消息不会被游标越过。
 	r.commitPendingCursors()
 	r.commitSentSessions()
+	r.noteSuccess()
+	r.budget.onSuccess(bres.usedBytes)
+	// 还有内容没发完（预算 / 条数上限）：下个 tick 用回填加速节奏；否则回到 active / 基线。
+	r.backlog.Store(bres.deferred() || backfillPending > 0)
 
 	// 自适应 cadence 信号：记录服务端本次判定的 active，供 Run 决定下个 tick 间隔。
 	// 仅成功路径更新——失败 / overlap-skip 的 tick 不改 cadence，避免瞬态网络抖动拖慢活跃上报。
@@ -705,9 +772,9 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 仅"有事件 / 有消息 / 有活跃 / 慢 tick"才打 INFO；纯 idle tick 走 Debug，避免在
 	// fast path 之后每 5 秒一行 INFO 把日志撑爆。Debug 包含完整 per-provider 拆解便于排障。
 	if summary.Events > 0 || summary.Messages > 0 || summary.Active {
-		logger.Infof("report ok: providers=%d sessions=%d skipped_unchanged=%d events=%d messages=%d active=%v size=%d encoding=%s backfill_pending=%d total=%dms device=%dms collect=%dms",
+		logger.Infof("report ok: providers=%d sessions=%d skipped_unchanged=%d events=%d messages=%d active=%v size=%d encoding=%s backfill_pending=%d budget_deferred_sessions=%d budget_deferred_msgs=%d total=%dms device=%dms collect=%dms",
 			len(monitors), summary.Sessions, skippedUnchanged, summary.Events, summary.Messages, summary.Active,
-			len(body), encodingLabel(encoding), backfillPending, totalMs, deviceMs, collectMs)
+			len(body), encodingLabel(encoding), backfillPending, bres.deferredSessions, bres.deferredMessages, totalMs, deviceMs, collectMs)
 	} else {
 		logger.Debugf("report ok (idle): providers=%d sessions=%d skipped_unchanged=%d size=%d encoding=%s backfill_pending=%d total=%dms device=%dms collect=%dms breakdown=[%s]",
 			len(monitors), summary.Sessions, skippedUnchanged, len(body), encodingLabel(encoding), backfillPending, totalMs, deviceMs, collectMs, perProvider.String())
@@ -727,7 +794,10 @@ func (r *Reporter) tickOnce(ctx context.Context) error {
 	// 4) v2.8：bootstrap 阶段所有积压消息发完后切回稳态 48h 窗口，避免每 tick 都跑全量扫描。
 	// 触发条件：本 tick 之前还在 bootstrap，本 tick 上报成功且没有任何 session 被 cap 截断。
 	// 切回之后 cursors 已有水位，下次 tick 即使有老 session 也只走"自上次以来增量"。
-	if r.bootstrap && backfillPending == 0 {
+	//
+	// 字节预算推迟的内容同样算"还没发完"：bootstrap 一旦提前结束、lookback 切回 48h，被推迟的老会话
+	// 就再也扫不到、永远发不出去。
+	if r.bootstrap && backfillPending == 0 && !bres.deferred() {
 		r.bootstrap = false
 		applyLookback(r.registry, monitor.DefaultLookback)
 		logger.Infof("bootstrap mode OFF: backfill drained, all providers switched back to %s lookback",
@@ -749,6 +819,13 @@ func (r *Reporter) sendOutboxBody(ctx context.Context, body []byte) error {
 	summary, err := r.client.Report(ctx, r.cfg.AgentID, r.cfg.AgentSecret, body, encoding)
 	if err != nil && apiclient.IsAgentNotFound(err) {
 		r.handleReportError(err)
+	}
+	if err != nil && apiclient.IsPayloadTooLarge(err) {
+		// 旧版本 bootstrap 遗留的超大整包（HTTP 413 / 业务码 41301）：永远发不出去，留着只会把 Drain 之后的整个队列
+		// 卡死并持续重试。它当年失败时游标没有推进，这些增量会按字节预算分批重新从游标采集出来，
+		// 所以丢弃它不丢数据（除非会话早已滑出 48h 窗口）。
+		logger.Warnf("outbox body too large (HTTP 413 / code 41301, %d wire bytes): discarding; its increments will be re-collected in budgeted batches", len(body))
+		return nil
 	}
 	if err == nil {
 		r.mergeMonitorPolicy(summary)

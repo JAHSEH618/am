@@ -2,8 +2,51 @@ package qoder
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+// 增量解析在副本上进行：缓存里的会话对象不能被改写，否则解析失败后同一批行会被重复累加。
+func TestParseOne_IncrementalDoesNotMutateCachedBase(t *testing.T) {
+	const head = `{"type":"user","sessionId":"s1","uuid":"u1","timestamp":"2026-07-13T09:00:00Z","message":{"role":"user","content":"hi"}}
+`
+	const tail = `{"type":"assistant","sessionId":"s1","uuid":"a1","timestamp":"2026-07-13T09:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"yo"}],"usage":{"input_tokens":12,"output_tokens":7}}}
+`
+	path := filepath.Join(t.TempDir(), "s1.jsonl")
+	if err := os.WriteFile(path, []byte(head), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := &Provider{}
+	base, off, err := p.parseOne(path, 0, nil)
+	if err != nil || base == nil {
+		t.Fatalf("first parse: %v %v", base, err)
+	}
+	if err := os.WriteFile(path, []byte(head+tail), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := p.parseOne(path, off, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == base {
+		t.Fatal("incremental parse must return a new object, not the cached pointer")
+	}
+	if base.AssistantMessages != 0 || base.InputTokens != 0 || len(base.Messages) != 1 {
+		t.Fatalf("cached base was mutated: %+v", base)
+	}
+	if next.AssistantMessages != 1 || next.InputTokens != 12 || next.OutputTokens != 7 {
+		t.Fatalf("incremental result wrong: %+v", next)
+	}
+	// 同一个 base 再增量一次（模拟上一次结果因故被丢弃、游标没前进）：结果必须与第一次相同，不得翻倍
+	again, _, err := p.parseOne(path, off, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.InputTokens != 12 || again.OutputTokens != 7 || again.AssistantMessages != 1 {
+		t.Fatalf("re-parsing from the same cursor must be idempotent: %+v", again)
+	}
+}
 
 func TestMergeRecordParsesMessagesToolsAndTokens(t *testing.T) {
 	lines := []string{

@@ -1,6 +1,8 @@
 # 在 CentOS 上用 Docker 部署 AIWatch
 
-本文说明如何在 CentOS 上用 Docker 部署 **aiwatch-server**（含内置 React 后台）。配套文件已在仓库根目录：`Dockerfile`、`docker-compose.yml`、`.env.example`、`.dockerignore`。
+本文说明如何在 CentOS 上用 Docker 部署 **aiwatch-server**（含内置 React 后台）。配套文件已在仓库根目录：`Dockerfile`、`docker-compose.yml`、`.env.example`、`.dockerignore`，MySQL 参数在 `docker/mysql/aiwatch.cnf`。
+
+运维专题（监控告警 / 备份恢复 / 隔离级别评估）见 [`docs/ops/`](../ops/)：[monitoring.md](../ops/monitoring.md)、[backup-restore.md](../ops/backup-restore.md)、[read-committed-evaluation.md](../ops/read-committed-evaluation.md)。
 
 产品/源码构建/客户端分发的完整说明见 [安装使用教程.md](安装使用教程.md) 与 [README.md](../../README.md)。
 
@@ -40,12 +42,14 @@
 | - | ---- | ---- |
 | 1 | 宿主机 | 安装 Docker + compose 插件；防火墙放行 `9527/tcp`；（方案 A）构建期外网 |
 | 2 | 镜像构建 | 多阶段：JDK17（编 jar）、Node/pnpm（自动下载，编前端）、Go 1.25（编 agent 分发包）；版本见 `.env` 的 `AIWATCH_VERSION` |
-| 3 | MySQL | 库 `am`、`utf8mb4`、应用账号密码、首次启动导入 `schema.sql`、`max_connections` ≥ 连接池 |
-| 4 | server 环境变量 | `SPRING_PROFILES_ACTIVE=prod`、`DB_URL`、`DB_USERNAME`、`DB_PASSWORD`、`AIWATCH_INSTALL_DIR`、`TZ` |
+| 3 | MySQL | 库 `am`、`utf8mb4`、应用账号密码、首次启动导入 `schema.sql`；参数在 `docker/mysql/aiwatch.cnf`（`max_connections=300` ≥ 连接池 40、binlog 3 天、行锁等待 10s），**InnoDB 缓冲池按内存在 `.env` 配 `MYSQL_INNODB_BUFFER_POOL_SIZE`**（见 §5.1 与 §12） |
+| 4 | server 环境变量 | `SPRING_PROFILES_ACTIVE=prod`、`DB_URL`、`DB_USERNAME`、`DB_PASSWORD`、`AIWATCH_INSTALL_DIR`、`TZ`；可选 `AIWATCH_HEAPDUMP`、`AIWATCH_HEAPDUMP_DIR`、`AIWATCH_HEAPDUMP_MIN_FREE_MB`、`AIWATCH_JAVA_OPTS_EXTRA`、`AIWATCH_DB_ISOLATION`、`AIWATCH_DB_SOCKET_TIMEOUT_MS`（见 `.env.example`） |
 | 5 | 客户端分发目录 | agent 四平台二进制 + 安装脚本 + `manifest.json`（决定后台"安装客户端"功能是否可用） |
 | 6 | 安全收尾 | 首次登录后改默认 `admin/admin` 与 `X-Admin-Token` |
 | 7 | 磁盘 | 日常用 `./scripts/deploy.sh`（内置预检/清理）；手工回收用 `bash scripts/docker-prune-safe.sh`；勿 `prune --volumes` |
 | 8 | 可选 | Nginx 反代 + HTTPS（注意 agent 记的是完整 URL+端口） |
+| 9 | 备份 | 每日 `scripts/backup-mysql.sh`，**输出目录必须与 `mysql-data` 卷不在同一块盘**（见 [backup-restore.md](../ops/backup-restore.md)） |
+| 10 | 监控 | Prometheus 抓 `/actuator/prometheus`（需 `X-Admin-Token`），告警规则见 [monitoring.md](../ops/monitoring.md) |
 
 ---
 
@@ -142,6 +146,8 @@ cp .env.example .env
 vi .env        # 填入 MYSQL_ROOT_PASSWORD / DB_USERNAME / DB_PASSWORD
                # AIWATCH_VERSION 不用手工维护：./scripts/deploy.sh 每次会按仓库版本自动写回
                # DB_URL 已指向 mysql 服务，通常不用改
+               # MYSQL_INNODB_BUFFER_POOL_SIZE 按机器内存选（默认 1G，选值方法见 .env.example）
+               # 根分区小 / 容易满：把 AIWATCH_HEAPDUMP_DIR 指到大盘目录（OOM 堆转储最大约 2GB）
 ```
 
 > `.env` 已被 `.gitignore` 忽略，不会进版本库。  
@@ -152,7 +158,8 @@ vi .env        # 填入 MYSQL_ROOT_PASSWORD / DB_USERNAME / DB_PASSWORD
 ```bash
 docker compose build         # 首次较久：拉依赖 + 编前端 + 编 4 平台 agent
 docker compose up -d
-docker compose logs -f server   # 看到 "Started Application" 即就绪
+docker compose logs -f server   # 看到 "Started Application" 只表示 Spring 上下文起来了；
+                                # 启动期补丁 / 回填跑完后 /actuator/health/readiness 才变 200（见 5.3）
 ```
 
 日常升级推荐一键脚本（内置磁盘预检与旧镜像/构建缓存清理，**不删 MySQL 数据卷**）：
@@ -174,8 +181,14 @@ bash scripts/docker-prune-safe.sh --old-tags # 额外删未在跑的 aiwatch-ser
 
 ```bash
 sudo firewall-cmd --add-port=9527/tcp --permanent && sudo firewall-cmd --reload
-curl http://localhost:9527/actuator/health      # 期望 {"status":"UP"}
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:9527/actuator/health/readiness   # 期望 200（就绪 = 启动补丁 / 回填已跑完）
+curl http://localhost:9527/actuator/health      # 期望 {"status":"UP",...}（完整健康：含 db / 磁盘，SMTP 不计入）
 ```
+
+> **就绪（readiness）与存活（liveness）**：`/actuator/health/readiness` 在所有启动期 `ApplicationRunner`（SchemaPatches / 大表回填）跑完后才为 200，
+> 之前返回 503——大库首次升级带大回填的版本时可能持续几十分钟，属预期，期间 `/agent/report` 被拒、agent 会重试。
+> `/actuator/health/liveness` 只反映进程是否活着，不含数据库。compose 的 healthcheck、`scripts/deploy.sh` 都探 readiness。
+> `/actuator/prometheus` 等其它端点需要管理员会话或 `X-Admin-Token`，匿名一律 401。
 
 浏览器访问 `http://<服务器IP>:9527/`，用默认账号登录后**立即改密码与 Token**：
 
@@ -196,8 +209,8 @@ curl http://localhost:9527/actuator/health      # 期望 {"status":"UP"}
 ### 6.1 在有外网的机器编 jar 与 agent 分发包
 
 ```bash
-# 版本与 .env 的 AIWATCH_VERSION 对齐（示例 1.3.3）
-VER=1.3.3
+# 版本与 .env 的 AIWATCH_VERSION 对齐（示例 1.4.0）
+VER=1.4.0
 cd server && ./gradlew clean bootJar -PaiwatchVersion=$VER   # 产物 server/build/libs/aiwatch-server-$VER.jar
 cd ../agent && VERSION=$VER bash build-dist.sh               # 产物 agent/dist/install/
 ```
@@ -214,15 +227,20 @@ FROM docker.m.daocloud.io/library/eclipse-temurin:17-jre-jammy
 ENV TZ=Asia/Shanghai \
     SPRING_PROFILES_ACTIVE=prod \
     AIWATCH_INSTALL_DIR=/srv/aiwatch/install \
-    JAVA_OPTS="-Xms512m -Xmx2g"
+    JAVA_OPTS="-Xms512m -Xmx2g -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" \
+    JAVA_OPTS_EXTRA=""
 RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY server/build/libs/aiwatch-server-*.jar /app/aiwatch-server.jar
 COPY agent/dist/install/ /srv/aiwatch/install/
+COPY docker/entrypoint.sh /app/entrypoint.sh
 EXPOSE 9527
-ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
+ENTRYPOINT ["sh","/app/entrypoint.sh"]
 ```
+
+> 这份精简 Dockerfile 的 `JAVA_OPTS` / `COPY docker/entrypoint.sh` / `ENTRYPOINT` 要与仓库根 `Dockerfile` 保持一致（每个 JVM 参数的理由见根 `Dockerfile` 注释）：
+> `ExitOnOutOfMemoryError` 让 OOM 后进程退出、Docker 才会重启它；入口脚本按"`/dumps` 已挂载且剩余空间足够"决定是否开启 OOM 堆转储，并 `exec java` 让 SIGTERM 直达 JVM 触发优雅停机。
 
 把 `docker-compose.yml` 里 server 的 `build.dockerfile` 改为 `Dockerfile.offline` 后照常 `docker compose up -d`。
 （jre/mysql 基础镜像也无外网时，先在外网机 `docker pull` + `docker save`，传到生产机 `docker load`。）
@@ -251,7 +269,7 @@ ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
 
 ```bash
 # 1) 重新编分发包（用 Go 容器，避免本机装 Go；VERSION 与 .env 的 AIWATCH_VERSION 对齐）
-docker run --rm -e VERSION="${AIWATCH_VERSION:-1.3.3}" -e GOPROXY=https://goproxy.cn,direct \
+docker run --rm -e VERSION="${AIWATCH_VERSION:-1.4.0}" -e GOPROXY=https://goproxy.cn,direct \
   -v "$PWD/agent:/agent" -w /agent docker.m.daocloud.io/library/golang:1.25-bookworm bash build-dist.sh
 
 # 2) 解开 docker-compose.yml 中 server 的 volumes 挂载：
@@ -299,17 +317,24 @@ docker system df                  # 查看 Images / Build Cache / Volumes 占用
 
 ### 10.1 一键更新（拉新代码 → 重建 → 重启 → 健康检查）
 
-日常更新用仓库自带的 `scripts/deploy.sh`，一条命令完成「`git pull` 拉最新代码 → 重建 server 镜像 → `up -d` 重启 → 轮询 `/actuator/health` 直到 `UP`」，失败会打印近 50 行日志并给出回滚提示：
+日常更新用仓库自带的 `scripts/deploy.sh`，一条命令完成「`git pull` 拉最新代码 → 重建 server 镜像 → `up -d` 重启 → 轮询 `/actuator/health/readiness` 直到 200（就绪）」。
+等的是 **readiness** 而不是 `/actuator/health`：启动期补丁 / 大表回填跑完才算就绪，大库首次升级时可能要很久（默认最多等 300s，`READY_TIMEOUT` 可调）。
+超时会打印近 80 行日志、说明"这不一定是故障"及判断方法；容器已退出 / 反复重启（如 OOM）则立即失败：
 
 ```bash
 ./scripts/deploy.sh                 # 拉当前分支最新代码，重建 server 并重启
 BRANCH=am ./scripts/deploy.sh       # 指定拉取分支
+READY_TIMEOUT=900 ./scripts/deploy.sh   # 大库升级、回填很久时调大就绪等待（旧名 HEALTH_TIMEOUT 仍可用）
 NO_BUILD=1 ./scripts/deploy.sh      # 仅重启不重建（只在改了 .env / compose 时用；改了代码必须重建）
 MIN_FREE_GB=8 ./scripts/deploy.sh   # 构建前要求 Docker 存储盘最小可用空间（默认 5 GiB）
 PRUNE=0 ./scripts/deploy.sh         # 跳过部署成功后的自动清理（默认开启）
 ```
 
 > 用 `--ff-only` 拉取，避免在部署机上产生合并提交；server 启动时会自动跑 `*SchemaPatches` 补列/建索引与各回填补丁，更新代码无需手工改库。
+>
+> **首次升级到带 MySQL 配置文件 / 缓冲池参数的版本时**：`docker compose up -d` 会因 `command` / 挂载变化而**重建 mysql 容器 = MySQL 重启**（约十几秒到一分钟，
+> 期间上报失败、agent 自动重试；server 通过 Hikari 自动重连）。请选低峰期执行。`stop_grace_period` 已给 MySQL 留了 60s 刷脏页。
+> server 停机同样有 30s 优雅停机窗口（有管理员开着控制台的 SSE 长连接时会等满，见 [monitoring.md](../ops/monitoring.md)）。
 
 > 磁盘管理：构建前脚本会检查 `/var/lib/docker`、`/var/lib/containerd` 所在分区的可用空间，不足 `MIN_FREE_GB` 时自动清理旧版本 `aiwatch-server` 镜像、dangling 镜像与全部构建缓存后重试；部署成功后默认再做一次常规清理（保留 2GB 构建缓存加速下次重建）。清理只涉及镜像与构建缓存，**不动容器、不动 MySQL 数据卷**。
 
@@ -353,10 +378,56 @@ bootstrap 还会回灌 30 天历史。两处删不干净需人工处置：团队
 | 构建卡在下载 Node/Gradle | 网络问题。方案 A 需外网；国内可在 Dockerfile 解开 `GOPROXY`，或改用方案 B |
 | server 起不来、报连不上库 | 确认 `.env` 的 `DB_URL` host 是 `mysql`（compose 服务名）、账号密码与 MySQL 一致；`docker compose logs mysql` 看库是否就绪 |
 | 中文乱码 | 确认 `DB_URL` 的 `characterEncoding=UTF-8`（不是 utf8mb4），MySQL 启动参数为 `utf8mb4` |
-| 登录页能开、登录转圈/超时 | 多为大量员工同时首装、bootstrap 大包压库。prod 默认已 `audit-scan-enabled=false`；建议分批推广，并保证 MySQL `max_connections` ≥ HikariCP `maximum-pool-size`(prod=100) |
+| 登录页能开、登录转圈/超时 | 多为大量员工同时首装、bootstrap 大包压库。prod 默认已 `audit-scan-enabled=false`；建议分批推广，并保证 MySQL `max_connections`（`docker/mysql/aiwatch.cnf`，300）≥ HikariCP `maximum-pool-size`（prod=40） |
 | 后台"安装客户端"提示未就绪 | `AIWATCH_INSTALL_DIR` 下需有四平台二进制 + 两个安装脚本 + `manifest.json`，见第 8 节 |
 | 大 payload 上报失败(code=50000) | 走反代时设置 `client_max_body_size 512m`；后端已配 `max-http-form-post-size: 512MB` |
 | 磁盘被 Docker 占满 / 镜像版本越堆越多 | `docker system df` 看 Images vs Build Cache；改版本只改仓库版本号（`.env` 由 deploy.sh 对齐）；回收用 `./scripts/deploy.sh` 或 `bash scripts/docker-prune-safe.sh --old-tags` |
+| 部署后 `deploy.sh` 一直等"就绪"、readiness 始终 503 | 多半是启动期补丁 / 大表回填还在跑（大库可能几十分钟），`docker compose logs -f server` 日志还在滚动就再等，或调大 `READY_TIMEOUT`；日志不动且连接被拒才是卡死。详见 [monitoring.md](../ops/monitoring.md) |
+| `docker compose ps` 显示 server `unhealthy` | healthcheck 探 `/actuator/health/readiness`：启动补丁未完成 / 停机中 / Tomcat 50 个线程被占满都会这样。**Docker 不会因 unhealthy 自动重启容器**（只有进程退出才重启）；要自动自愈见 monitoring.md「卡死自愈」 |
+| 上报大量 `503` / `code=50301` | 上报舱壁（并发 ≤16）或连接池 5s 借不到连接在快速失败，agent 下个 tick 会重报。持续出现说明处理能力不足，看 `hikaricp_connections_pending`、MySQL 行锁等待与 `Connection leak detection triggered` 日志 |
+| server 容器反复重启 | `docker inspect -f '{{.State.OOMKilled}} {{.State.ExitCode}}' aiwatch-server`：退出码 3 = Java OOM（`ExitOnOutOfMemoryError`），堆转储在 `/dumps` 卷（默认命名卷 `heapdumps`，或 `AIWATCH_HEAPDUMP_DIR`；启动日志 `[entrypoint] heap dump enabled/DISABLED` 会说明是否开启——目录所在盘剩余空间不足 4GB 时自动关闭），取走分析后**删除**，否则下次 OOM 不再生成新转储。见 monitoring.md「OOM 与堆转储」 |
+| 备份 / 恢复 / 时间点恢复 | [backup-restore.md](../ops/backup-restore.md) |
+
+---
+
+## 12. MySQL 参数与在线调整
+
+参数分两处（都在仓库里，随部署走）：
+
+| 位置 | 内容 |
+| ---- | ---- |
+| `docker/mysql/aiwatch.cnf`（挂载到容器 `/etc/mysql/conf.d/`，只读） | `max_connections=300`、`innodb_lock_wait_timeout=10`、`binlog_expire_logs_seconds=259200`（3 天）、`long_query_time=2`，每项附理由；同时用注释写明**故意不改**的持久性参数（`innodb_flush_log_at_trx_commit=1`、`sync_binlog=1` 保持默认） |
+| `docker-compose.yml` 的 mysql `command` | 字符集，以及 `--innodb-buffer-pool-size=${MYSQL_INNODB_BUFFER_POOL_SIZE:-1G}`（cnf 不支持环境变量插值，所以缓冲池放这里，由 `.env` 覆盖） |
+
+**选缓冲池大小**（默认 128MB 太小，整窗聚合会大量读盘）：DB 与 server 同机（本 compose 默认形态）取
+≈ (内存 − 3G JVM − 1G 系统) × 60~70%（最少 512M）：4G→1G、8G→2G、16G→6G、32G→16G；MySQL 独占整机取内存的 50~60%。
+≥1G 时取 **1G 的整数倍**（MySQL 按 `chunk × instances = 1G` 对齐，1.5G 会被向上取整成 2G）。
+
+**在线调整（不重启 MySQL；改完还要同步 `.env` / cnf，否则容器重建后回到旧值）**：
+
+```bash
+source .env
+docker exec -i aiwatch-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "
+  SET GLOBAL innodb_buffer_pool_size   = 2147483648;   -- 在线缓冲池调整（后台进行，SHOW STATUS LIKE 'Innodb_buffer_pool_resize_status' 看进度）
+  SET GLOBAL max_connections           = 300;
+  SET GLOBAL binlog_expire_logs_seconds = 259200;      -- 3 天；binlog 在轮转 / FLUSH 时才清理，立即清理：FLUSH BINARY LOGS;
+  SET GLOBAL innodb_lock_wait_timeout  = 10;           -- 仅对【之后新建】的连接生效
+  SET GLOBAL long_query_time           = 2;            -- 同上
+  FLUSH BINARY LOGS;"
+```
+
+`innodb_lock_wait_timeout` / `long_query_time` 是"会话级带全局默认"的变量：`SET GLOBAL` 只影响之后新建的连接，
+应用连接池里已有的连接仍是旧值——**重启 server**（或等 `max-lifetime=30min` 让连接轮换完）后才全部生效。
+
+**验证 cnf 已被加载**：
+
+```bash
+docker exec aiwatch-mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e \
+  "SELECT @@innodb_lock_wait_timeout, @@binlog_expire_logs_seconds, @@max_connections, @@long_query_time, @@innodb_buffer_pool_size/1024/1024 AS pool_mb"
+```
+
+若数值仍是默认值：多半是 cnf 权限——MySQL 会**忽略任何人可写的配置文件**（日志里有 `World-writable config file … is ignored`），
+`chmod 644 docker/mysql/aiwatch.cnf` 后 `docker compose restart mysql`。改 cnf 后需要 `restart mysql`（bind mount 的内容变化不会让 compose 自动重建容器）。
 
 ---
 

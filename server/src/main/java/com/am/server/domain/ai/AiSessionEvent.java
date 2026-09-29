@@ -1,5 +1,6 @@
 package com.am.server.domain.ai;
 
+import com.am.server.domain.IdAllocation;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -33,7 +34,7 @@ public class AiSessionEvent {
     @GeneratedValue(strategy = GenerationType.TABLE, generator = "aiSessionEventIdGen")
     @TableGenerator(name = "aiSessionEventIdGen", table = "id_sequences",
             pkColumnName = "seq_name", valueColumnName = "next_val",
-            pkColumnValue = "ai_session_event", allocationSize = 50)
+            pkColumnValue = "ai_session_event", allocationSize = IdAllocation.BLOCK_SIZE)
     private Long id;
 
     @Column(name = "ai_session_id", nullable = false)

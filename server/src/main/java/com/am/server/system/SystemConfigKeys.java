@@ -84,6 +84,12 @@ public final class SystemConfigKeys {
     public static final String NOTIF_OFFLINE_WORK_HOUR_START = "notifications.offline_email.work_hour_start";
     /** 工作时段结束小时（不含）。 */
     public static final String NOTIF_OFFLINE_WORK_HOUR_END   = "notifications.offline_email.work_hour_end";
+    /**
+     * 启动宽限（分钟，默认 10）：应用 {@code ApplicationReadyEvent} 之后再等这么久才开始判定离线 / 发提醒；
+     * 0 = 不宽限（仍要求应用已就绪）。启动补丁 / 回填期间上报入口回 503，{@code last_seen} 不会更新，
+     * 宽限给 agent 在入口重新放行后补报（心跳 60s、数据 tick 45s～2min）留出恢复时间，避免全员被误报离线。
+     */
+    public static final String NOTIF_OFFLINE_STARTUP_GRACE_MINUTES = "notifications.offline_email.startup_grace_minutes";
     /** AIWatch 服务器公网地址（如 https://aiwatch.公司.com），用于邮件正文里的重装命令；留空则只给通用指引。 */
     public static final String NOTIF_OFFLINE_INSTALL_BASE_URL = "notifications.offline_email.install_base_url";
 

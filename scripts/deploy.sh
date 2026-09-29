@@ -7,7 +7,8 @@
 #   BRANCH=am ./scripts/deploy.sh       # 指定要拉取的分支
 #   NO_BUILD=1 ./scripts/deploy.sh      # 仅重启不重建（只在改了 .env / compose 时用；改了代码必须重建）
 #   SERVICE=server ./scripts/deploy.sh  # 只重建/重启指定服务（默认 server；mysql 一般无需重建）
-#   HEALTH_TIMEOUT=240 ./scripts/deploy.sh  # 覆盖健康检查最长等待秒数（默认 180）
+#   READY_TIMEOUT=900 ./scripts/deploy.sh   # 覆盖"等待就绪"的最长秒数（默认 300；旧名 HEALTH_TIMEOUT 仍可用）
+#                                           # 大库首次升级、启动期回填很长时调大；就绪 = /actuator/health/readiness 返回 200
 #   MIN_FREE_GB=8 ./scripts/deploy.sh   # 构建前要求 Docker 存储盘的最小可用空间（默认 5 GiB）
 #   PRUNE=0 ./scripts/deploy.sh         # 跳过部署成功后的旧镜像/构建缓存自动清理（默认开启）
 #
@@ -26,8 +27,11 @@ cd "$REPO_ROOT"
 
 BRANCH="${BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 SERVICE="${SERVICE:-server}"
-HEALTH_URL="${HEALTH_URL:-http://localhost:9527/actuator/health}"
-HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
+# 等的是 readiness 而不是 /actuator/health：Spring Boot 要等所有 ApplicationRunner（启动期 SchemaPatches / 回填）
+# 跑完才把 readiness 置为 UP，所以 200 才代表"已经能接流量"；而 /actuator/health 在应用刚起来、补丁还在跑时
+# 就可能已经是 UP，会让脚本过早宣告成功。READY_URL / READY_TIMEOUT 的旧名 HEALTH_URL / HEALTH_TIMEOUT 仍兼容。
+READY_URL="${READY_URL:-${HEALTH_URL:-http://localhost:9527/actuator/health/readiness}}"
+READY_TIMEOUT="${READY_TIMEOUT:-${HEALTH_TIMEOUT:-300}}"
 MIN_FREE_GB="${MIN_FREE_GB:-5}"
 PRUNE="${PRUNE:-1}"
 
@@ -156,14 +160,46 @@ fi
 log "启动/更新服务（up -d，含依赖）"
 docker compose up -d
 
-# ---- 健康检查 ----
-log "等待 $SERVICE 健康（最长 ${HEALTH_TIMEOUT}s，探测 $HEALTH_URL）..."
-deadline=$(( SECONDS + HEALTH_TIMEOUT ))
-healthy=0
+# ---- 等待就绪（readiness）----
+# "就绪"= Spring Boot 已跑完全部 ApplicationRunner（启动期 SchemaPatches / 大表回填）并置 ACCEPTING_TRAFFIC，
+# /actuator/health/readiness 返回 200。启动补丁 / 回填在大库上可能要很久，这期间返回 503 是正常的，不是故障。
+container_id() { docker compose ps -q "$SERVICE" 2>/dev/null | head -1; }
+
+# 返回容器当前状态：running / restarting / exited ...（取不到时返回 unknown）
+container_status() {
+    local id
+    id="$(container_id)"
+    [ -n "$id" ] || { echo unknown; return 0; }
+    docker inspect -f '{{.State.Status}}' "$id" 2>/dev/null || echo unknown
+}
+
+ready_http_code() {
+    # 连接被拒 / 超时时 curl 会输出 000
+    curl -s -o /dev/null -m 5 -w '%{http_code}' "$READY_URL" 2>/dev/null || true
+}
+
+log "等待 $SERVICE 就绪（最长 ${READY_TIMEOUT}s，探测 $READY_URL；启动期补丁/回填未跑完时返回 503 属正常）..."
+wait_start=$SECONDS
+deadline=$(( SECONDS + READY_TIMEOUT ))
+next_note=$(( SECONDS + 30 ))
+ready=0
+crashed=0
+code=000
 while [ "$SECONDS" -lt "$deadline" ]; do
-    if curl -fsS "$HEALTH_URL" 2>/dev/null | grep -q '"status":"UP"'; then
-        healthy=1
+    code="$(ready_http_code)"
+    if [ "$code" = "200" ]; then
+        ready=1
         break
+    fi
+    status="$(container_status)"
+    # 容器已退出 / 反复重启：不必再干等到超时（常见原因：启动失败、OOM 被 ExitOnOutOfMemoryError 终止）
+    if [ "$status" = "exited" ] || [ "$status" = "dead" ] || [ "$status" = "restarting" ]; then
+        crashed=1
+        break
+    fi
+    if [ "$SECONDS" -ge "$next_note" ]; then
+        log "  ...仍未就绪（HTTP $code，容器 $status，已等 $(( SECONDS - wait_start ))s）"
+        next_note=$(( SECONDS + 30 ))
     fi
     sleep 5
 done
@@ -171,9 +207,20 @@ done
 echo
 docker compose ps
 
-if [ "$healthy" != "1" ]; then
-    err "健康检查未在 ${HEALTH_TIMEOUT}s 内通过。近 50 行日志："
-    docker compose logs --tail=50 "$SERVICE" || true
+if [ "$ready" != "1" ]; then
+    if [ "$crashed" = "1" ]; then
+        err "$SERVICE 容器已退出或在反复重启（状态：$(container_status)），未能就绪。近 80 行日志："
+    else
+        err "$SERVICE 在 ${READY_TIMEOUT}s 内未就绪（最后一次探测 HTTP $code，容器 $(container_status)）。近 80 行日志："
+    fi
+    docker compose logs --tail=80 "$SERVICE" || true
+    if [ "$crashed" != "1" ]; then
+        err "这不一定是故障：大库升级时启动期回填可能要很久（readiness 会一直 503，直到回填结束）。判断方法："
+        err "  docker compose logs -f $SERVICE          # 日志还在滚动（回填 / SchemaPatches 进度）就再等等"
+        err "  curl -s -o /dev/null -w '%{http_code}\n' $READY_URL   # 200 即已就绪"
+        err "  READY_TIMEOUT=900 NO_BUILD=1 ./scripts/deploy.sh   # 只重新等待更久（代码已最新且不重建，容器不受影响）"
+        err "日志停止滚动、且始终 503 / 连接被拒 = 卡死，可 docker compose restart $SERVICE。"
+    fi
     err "如需回滚：git checkout $OLD_SHA && ./scripts/deploy.sh"
     exit 1
 fi
@@ -183,5 +230,5 @@ if [ "$PRUNE" = "1" ] && [ "${NO_BUILD:-0}" != "1" ]; then
     docker_cleanup 0
 fi
 
-log "部署完成，$SERVICE 健康（$OLD_SHA → $NEW_SHA）。"
+log "部署完成，$SERVICE 已就绪（$OLD_SHA → $NEW_SHA）。"
 log "查看日志：docker compose logs -f $SERVICE"

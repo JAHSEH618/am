@@ -94,5 +94,9 @@ Reuse these before hand-rolling anything; they encode contracts the server depen
 - **Cursor path is macOS-hardcoded**; on Windows/Linux the provider returns an empty snapshot gracefully.
 - **Cursor message-cursor schema version**: bumping the dedup/ID synthesis rules requires bumping
   `CursorSchemaVersion` in `../reporter/cursors.go`, which nukes stored cursors and forces a 30d backfill.
-- **No negative-token guard here** — providers trust wire counts; validation/caps are server-side.
+- **Token clamp lives at the registry exit** (`monitor.Registry.Register` → `WithTokenSanity`), and the server has its own guard, but
+  providers must still never double-count: any cached/incremental parse (`FileCache`, `parsedSessionCache`) must operate on a **copy**
+  (`clone()`), never mutate the cached pointer — that was the 2026-09 inflation source (sub-agent merge, and qoder's incremental parse
+  before it was fixed). Formulas still to be verified against real samples: Claude assistant streaming duplicate rows, codex
+  `output + reasoning`, qoder `input + prompt`, kimicode nested `SubagentEvent`.
 - `IsInstalled()` is for status output only; `Snapshot` is always called and must self-handle a missing source.

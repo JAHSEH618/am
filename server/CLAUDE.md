@@ -8,15 +8,16 @@ Java code is under `com.am.server` (`am` = "AI Monitoring"; **not** a company na
 
 ## Build, run, test
 
-A Gradle wrapper exists (`./gradlew`), but **this repo's AGENTS.md instructs using the machine-local
-`gradle`** — both work; follow AGENTS.md on this machine.
+**Always use the wrapper `./gradlew` (pinned Gradle 8.7), never the machine's global `gradle`** (9.2.x makes
+`io.spring.dependency-management` mutate `runtimeOnly` after resolution → `:test` / `bootJar` hard-fail; see root CLAUDE.md / AGENTS.md).
+Many `@SpringBootTest` classes need a MySQL 8 on `127.0.0.1:3306` (see `src/test/resources/application-test.yml`).
 
 ```bash
 cd server
-gradle bootRun                                  # dev profile by default, port 8081
-gradle bootJar                                  # -> build/libs/aiwatch-server-<ver>.jar
-gradle test                                     # all tests, incl. the ArchUnit boundary check
-gradle test --tests com.am.server.architecture.BoundaryTest   # a single test
+./gradlew bootRun                                  # dev profile by default, port 8081
+./gradlew bootJar                                  # -> build/libs/aiwatch-server-<ver>.jar
+./gradlew test                                     # all tests, incl. the ArchUnit boundary check
+./gradlew test --tests com.am.server.architecture.BoundaryTest   # a single test
 ```
 
 `processResources` depends on the frontend build, so any `bootJar`/`bootRun` rebuilds the SPA via a
@@ -54,12 +55,18 @@ Capability-based packages under `com.am.server`:
 
 ## Agent ingest pipeline
 
-`POST /api/v1/agent/report` → `AgentIngestBulkheadFilter` (caps concurrent heavy reports at
-`aiwatch.agent.ingest-max-concurrency`, default 16 — well under the 40-connection Hikari pool — and answers
-HTTP 503 + `ErrorCode.SERVER_BUSY` (50301) *before* the body is read or the DB touched; bodies ≤2 KB such as
-device heartbeats bypass it) → `AgentSignatureFilter` (verifies `X-Agent-*` HMAC headers: ±300 s timestamp
-window, nonce dedup via `agent_nonce`, device lookup, constant-time HMAC compare; `/agent/register` is the
-only exemption) → `AgentReportService` routes by `targetType` to a provider ingestor in `agent/ingest`
+`POST /api/v1/agent/report` → `AgentIngestBulkheadFilter` (**readiness gate** — `ApplicationAvailability` not
+`ACCEPTING_TRAFFIC` means startup patches/backfills are still running → 503; then 413 for `Content-Length` >
+`max-body-bytes` (32 MB); caps concurrent heavy reports at `aiwatch.agent.ingest-max-concurrency`, default 16 — well under
+the 40-connection Hikari pool — with **zero wait** (`ingest-acquire-timeout-ms: 0`, so rejected requests don't pin the
+other Tomcat threads) and answers HTTP 503 + `ErrorCode.SERVER_BUSY` (50301) *before* the body is read or the DB touched;
+bodies ≤2 KB such as device heartbeats use a separate small semaphore (`ingest-light-max-concurrency`, 8) and `/register`
+shares it with a 64 KB body cap; an in-flight byte budget (`IngestByteBudget`, 512 MB) bounds heap use) →
+`AgentSignatureFilter` (order: method/path → signature headers → ±300 s timestamp window → device lookup → **only then read
+the body** (limited read, gzip decoded ≤ `max-decoded-body-bytes` 64 MB and ≤ 100:1) → constant-time HMAC compare →
+`AgentIngestGuard` (**one heavy report in flight per agent**, and a tiny quota for agents older than 1.3.3 that don't
+back off on 503) → nonce dedup via `agent_nonce`; DB failures inside the filter map to 503 via `OverloadFailures`;
+`/agent/register` is the only signature exemption) → `AgentReportService` routes by `targetType` to a provider ingestor in `agent/ingest`
 (`AbstractAiSessionIngestService` + Cursor/Claude/Codex/Hermes/OpenClaw/OpenHarness subclasses). Ingest
 **upserts** `ai_session` (unique on `target_type + external_session_id`), appends `ai_session_event`,
 dedups `ai_session_message` on `(ai_session_id, external_message_id)`, then publishes an SSE
@@ -71,15 +78,30 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
 > gitlog cursor when `failed == 0`, otherwise those commits fall outside the next incremental window and are
 > lost for good. Never drop the field or return 0 unconditionally.
 
+> Every per-session write runs in its own `REQUIRES_NEW` transaction with a **10 s timeout** (`aiwatch.agent.ingest-session-timeout-seconds`,
+> effective budget ≈ timeout−1 s). A statement timeout makes Hikari close the connection and the rollback then fails, masking the
+> original exception — always go through `IngestTimeouts.inTransaction`, which normalises every timeout shape to
+> `TransactionTimedOutException`. Overload-class failures (`OverloadFailures.isOverload`) must **propagate** (→ HTTP 503, client
+> keeps its cursor and resends; dedup makes that idempotent) — optimistic-lock retry exhaustion and `prepare()` failures used to be
+> swallowed into a 200, which permanently lost that tick's messages. Token values from the client pass `TokenSanityGuard`
+> (session totals / deltas over the configured caps are not adopted and raise `TOKEN_TAMPER`); any new token write must too.
+> `WorkSessionService.advance` is no longer `@Transactional`: it takes a per-agent striped lock *outside* the transaction plus a
+> "counted-up-to" watermark (single-instance assumption), so heartbeat/report races can't double-count.
+> `agent_alert` writes are deduplicated (5 min per agent+type+level), globally rate-limited and asynchronous (never blocks or fails a request).
+>
 > Ingest cost is *per session per tick per agent*, so it dominates DB load. Sessions that carry no new
 > messages/deltas must stay cheap, and nothing preloads a whole session: dedup looks up only the keys present
 > in the report (`source_ref IN (…)` on `idx_session_sourceref` — falling back to the full set incl. the legacy
 > `extra_json` branch until sys_config marker `event.source_ref_backfill_v1` exists — and `external_message_id
 > IN (…)` on `uk_session_extmsg`); user/assistant/total counters are only recounted from `ai_session_message`
 > when the tick wrote messages (`SessionMessageCountSupport#reconcileAfterIngest`); NL-skill attribution
-> re-reads only from the turn the first new message lands in (`NlSkillAttributionSupport#reconcileSessionFrom`);
+> re-reads only from the turn the first new message lands in (`NlSkillAttributionSupport#reconcileSessionFrom`, a column
+> projection — never `save` a projected detached row, use `updateSlashHits`);
 > and "does this session have source refs" is an index-only existence check
-> (`AiSessionEventRepository#existsAnySourceRef`). `WorkSessionService.advance` runs on every report
+> (`AiSessionEventRepository#existsAnySourceRef`; once marker `event.source_ref_backfill_v1` exists it uses
+> `existsMaterializedSourceRef` and never falls back to the `extra_json` scan). `countByAiSessionId` runs only when the cursor is at
+> the tail or a tick wrote nothing (the residual COUNT on unchanged tail ticks needs a `stored_message_count` column to remove —
+> not done). `WorkSessionService.advance` runs on every report
 > including heartbeats and relies on `ai_session(agent_id,last_activity)` / `work_session(agent_id,status,
 > start_time)` (`PerformanceIndexSchemaPatches`). Prod has Hikari `leak-detection-threshold: 60000` — if the
 > pool saturates again, grep the log for `Connection leak detection triggered` to see who holds connections.
@@ -93,7 +115,8 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
   full-day delete+insert of `work_date × user × kind(skill/nl_skill/mcp/plugin_ns) × item × sub_item`
   from `slash_hits_json` + MCP `TOOL_CALL` events (content-parts fallback for event-less providers).
   Daily 00:15 + hourly :10 jobs + view-time `ensureFresh`; history backfilled once at boot
-  (`CapabilityDailyBackfillPatch`, sys_config marker `capability.backfill_v1`).
+  (`CapabilityDailyBackfillPatch`, sys_config marker `capability.backfill_v2`; it goes through `aggregateUnderDateLock`, the same
+  per-date lock as the hourly job, and — like the other three big backfills — through `ResumableBackfill`).
 - `GitCommitAttributionEngine` → writes **`git_commit_attribution`** (the only data source of
   `/attribution`, and the primary source of the north-star AI penetration since v2.12): one row per
   non-merge commit, tier B (trailer match, `AiTrailerRules` + sys_config `attribution.trailer_rules`) /
@@ -131,6 +154,8 @@ via `POST /api/v1/agent/report-commits` (same bulkhead).
   `AIWATCH_USER`/`AIWATCH_PASSWORD`) **or** the `X-Admin-Token` header (`AIWATCH_ADMIN_TOKEN`, stored in
   `sys_config`, hot-reloaded by `AuthConfigSyncer`). Agent/report, installer, and `X-Admin-Token` paths are
   whitelisted from login. Employees never log into the backend.
+- **Actuator:** only `/actuator/health`, `health/liveness`, `health/readiness`, `info` are anonymous; everything else under `/actuator/**`
+  (notably `prometheus`) needs admin auth (`X-Admin-Token`, constant-time compare). `/actuator/health` deliberately excludes SMTP.
 - **Schema governance:** no Flyway/Liquibase. `resources/sql/schema.sql` is the single idempotent source of
   truth (`CREATE TABLE IF NOT EXISTS` / `INSERT IGNORE`), `hibernate.ddl-auto=none`. Additive columns are
   applied at boot by idempotent `*SchemaPatches` classes — add migrations there + in `schema.sql`, never via

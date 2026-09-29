@@ -241,7 +241,11 @@ func NewRegistry() *Registry {
 }
 
 // Register 添加一个 Provider，重名直接覆盖（不会出现，因为 Type 是唯一键）。
+//
+// 注册时统一包一层 token 合理性护栏（见 tokensanity.go）：所有 provider 的 Snapshot 出口在此汇合，
+// 负数 / 超上限的 token 累计值与增量在离开 provider 之前就被钳掉，避免坏值经 reporter 上报后污染服务端趋势图。
 func (r *Registry) Register(p Provider) {
+	p = WithTokenSanity(p, DefaultTokenLimits())
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i, existing := range r.providers {

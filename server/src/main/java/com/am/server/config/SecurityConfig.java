@@ -113,8 +113,13 @@ public class SecurityConfig {
                         // AdminTokenAuthenticationFilter 在 Spring 层认成 ROLE_ADMIN；
                         // 登录 session 走 UI 通道；二者皆无 → 401。AdminTokenInterceptor 二层兜底。
                         .requestMatchers("/api/v1/admin/**").authenticated()
-                        // actuator
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        // actuator：只放行健康检查（完整 health + 两个探针）与 info，供 compose healthcheck / 部署脚本 /
+                        // 负载均衡探活。其余 /actuator/**（尤其 /actuator/prometheus，含线程 / 连接池 / 内存等内部状态）
+                        // 必须已认证：管理员会话，或 X-Admin-Token（AdminTokenAuthenticationFilter 已覆盖 /actuator/），
+                        // 这样 Prometheus 用 header 抓取即可。注意这条必须写在 anyRequest().permitAll() 之前。
+                        .requestMatchers("/actuator/health", "/actuator/health/liveness",
+                                "/actuator/health/readiness", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/**").authenticated()
                         // SPA 静态资源 + 入口；其它前端路由（/dashboard /people 等）不在 /api 下，由 anyRequest 放行
                         .requestMatchers("/", "/index.html", "/favicon.ico",
                                 "/assets/**", "/static/**").permitAll()

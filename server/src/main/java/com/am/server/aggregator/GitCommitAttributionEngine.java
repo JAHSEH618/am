@@ -37,6 +37,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * commit → AI 产出归因引擎（《管理后台-产出归因与能力使用分析 v1.0》§2）：把每个非 merge commit
@@ -89,6 +90,9 @@ public class GitCommitAttributionEngine {
     private final AiSessionEventRepository eventRepository;
     private final SystemConfigService systemConfigService;
     private final DynamicScheduledTaskManager scheduledTaskManager;
+
+    /** 串行化 {@link #replaceChunk} 的写入（见 {@link #attributeCommits}）。 */
+    private final ReentrantLock writeLock = new ReentrantLock();
 
     /** ingest 增量去抖队列：date → 受影响 user 并集，15s 合并一次。 */
     private final ConcurrentHashMap<LocalDate, Set<String>> pendingUsers = new ConcurrentHashMap<>();
@@ -222,7 +226,15 @@ public class GitCommitAttributionEngine {
 
         for (int i = 0; i < rows.size(); i += TX_CHUNK) {
             List<GitCommitAttribution> chunk = rows.subList(i, Math.min(i + TX_CHUNK, rows.size()));
-            self.replaceChunk(new ArrayList<>(chunk));
+            // 写入串行：ingest 去抖增量 / 夜间批 / 启动回溯可能同时重算同一批 commit，
+            // 各自「delete by commit_id + insert」交错会撞 uk_commit（或死锁）。锁在开事务之前取，
+            // 等锁的线程不占 DB 连接；临界区只是一个分块事务（≤200 行），代价可忽略。
+            writeLock.lock();
+            try {
+                self.replaceChunk(new ArrayList<>(chunk));
+            } finally {
+                writeLock.unlock();
+            }
         }
         return rows.size();
     }

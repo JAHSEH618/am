@@ -7,9 +7,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
 import java.sql.SQLException;
-import java.sql.Statement;
+import java.util.List;
 
 /**
  * 存量 MySQL：{@code ai_session_event} 补齐 input/output token 增量列，并把历史
@@ -32,23 +31,11 @@ public class AiSessionEventTokenDeltaSchemaPatches {
     }
 
     private static void migrate(DataSource dataSource) {
-        String[][] altersIf = {
-                {"ai_session_event", "input_tokens_delta",
-                        "BIGINT NOT NULL DEFAULT 0 COMMENT 'TOKEN_DELTA 时 input 增量'"},
-                {"ai_session_event", "output_tokens_delta",
-                        "BIGINT NOT NULL DEFAULT 0 COMMENT 'TOKEN_DELTA 时 output 增量'"},
-        };
-        for (String[] tri : altersIf) {
-            String table = tri[0];
-            String col = tri[1];
-            String def = tri[2];
-            try (Connection c = dataSource.getConnection(); Statement st = c.createStatement()) {
-                st.executeUpdate("ALTER TABLE " + table + " ADD COLUMN IF NOT EXISTS "
-                        + col + " " + def);
-            } catch (SQLException e) {
-                AnalysisReportSchemaPatches.tryFallbackAddColumn(dataSource, table, col, def, e);
-            }
-        }
+        SchemaPatchSupport.ensureColumns(dataSource, List.of(
+                new SchemaPatchSupport.ColumnSpec("ai_session_event", "input_tokens_delta",
+                        "BIGINT NOT NULL DEFAULT 0 COMMENT 'TOKEN_DELTA 时 input 增量'"),
+                new SchemaPatchSupport.ColumnSpec("ai_session_event", "output_tokens_delta",
+                        "BIGINT NOT NULL DEFAULT 0 COMMENT 'TOKEN_DELTA 时 output 增量'")));
 
         try {
             if (OneShotBackfillSupport.markerExists(dataSource, MARKER_KEY)) {

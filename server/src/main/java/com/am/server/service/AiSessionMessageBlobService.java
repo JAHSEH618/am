@@ -44,6 +44,10 @@ public class AiSessionMessageBlobService {
         AiSessionMessageBlob blob = blobRepository.findById(blobId)
                 .orElseThrow(() -> new BizException(ErrorCode.RESOURCE_NOT_FOUND,
                         "ai_session_message_blob not found: " + blobId));
+        if (blob.getGzipBlob() == null || blob.getGzipBlob().length == 0) {
+            // 已被内容保留期清理清空字节（行保留）：与"不存在"同样处理，而不是 gunzip 空数据报 500
+            throw new BizException(ErrorCode.RESOURCE_NOT_FOUND, "blob expired by retention: " + blobId);
+        }
         try {
             byte[] raw = gunzip(blob.getGzipBlob());
             return new BlobPayload(raw, blob.getMimeType());
