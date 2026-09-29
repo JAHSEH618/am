@@ -187,6 +187,37 @@ public interface AiSessionMessageRepository extends JpaRepository<AiSessionMessa
                                                            @Param("fromSeq") Integer fromSeq);
 
     /**
+     * 内容保留期清理沿主键推进用的最小列（见 {@code AiSessionContentRetentionCleaner}）：
+     * 只取 id / created_time / has_binary，不碰 MEDIUMTEXT / JSON。
+     */
+    interface MessageAgeRow {
+        Long getId();
+
+        LocalDateTime getCreatedTime();
+
+        Integer getHasBinary();
+    }
+
+    @Query("""
+        SELECT m.id AS id, m.createdTime AS createdTime, m.hasBinary AS hasBinary
+        FROM AiSessionMessage m
+        WHERE m.id > :afterId
+        ORDER BY m.id ASC
+        """)
+    List<MessageAgeRow> findAgeRowsAfterId(@Param("afterId") long afterId, Pageable pageable);
+
+    /**
+     * 内容保留期清理：只把 content_text / content_parts_json 置 NULL，行、role、序号、时间、token、slash 命中、
+     * content_kind / parts_count / has_binary 全部保留（daily_summary / 归因 / 报告口径只读这些）。
+     * WHERE 里的非空判断让已清理过的行不产生写入（也就没有 binlog）。
+     */
+    @Modifying
+    @Query(value = "UPDATE ai_session_message SET content_text = NULL, content_parts_json = NULL "
+            + "WHERE id IN (:ids) AND (content_text IS NOT NULL OR content_parts_json IS NOT NULL)",
+            nativeQuery = true)
+    int clearContentByIdIn(@Param("ids") Collection<Long> ids);
+
+    /**
      * NL skill 归因回写：只改 slash 三列，不碰 content_text / content_parts_json（对整行实体 save 会连 MEDIUMTEXT
      * 一起重写）。刻意不开 clearAutomatically：ingest 事务里还有同拍新建的 AiSession / message 托管实体，
      * 清掉持久化上下文会让随后的 {@code sessionRepository.save} 退化成 merge；同拍新消息的托管副本因此保留旧的

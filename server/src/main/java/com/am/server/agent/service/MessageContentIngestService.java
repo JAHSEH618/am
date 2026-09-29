@@ -183,7 +183,14 @@ public class MessageContentIngestService {
         String sha = sha256Hex(raw);
         Optional<AiSessionMessageBlob> existing = blobRepository.findByContentSha256(sha);
         if (existing.isPresent()) {
-            return new BlobStored(existing.get().getId(), sha);
+            AiSessionMessageBlob hit = existing.get();
+            if (hit.getGzipBlob() == null || hit.getGzipBlob().length == 0) {
+                // 内容保留期清理（AiSessionContentRetentionCleaner）清空了这条 blob 的字节但保留了行（sha 唯一键）。
+                // 这次上报带来了同一份内容：把字节补回去，否则新消息会引用到一条空 blob。
+                hit.setGzipBlob(gzip(raw));
+                blobRepository.save(hit);
+            }
+            return new BlobStored(hit.getId(), sha);
         }
         byte[] gz = gzip(raw);
         AiSessionMessageBlob blob = new AiSessionMessageBlob();
