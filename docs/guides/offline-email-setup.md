@@ -13,7 +13,7 @@
 ## 1. 部署 1.2.1 代码
 
 - [ ] 后端：`cd server && ./gradlew bootJar` → `aiwatch-server-1.2.1.jar`，部署启动。
-- [ ] 数据库：新列 `agent_device.last_offline_email_time` 启动时由 `OfflineEmailSchemaPatches` 自动补齐（`ALTER ... ADD COLUMN IF NOT EXISTS`），**无需手动改表**。
+- [ ] 数据库：新列 `agent_device.last_offline_email_time` 启动时由 `OfflineEmailSchemaPatches`（经 `SchemaPatchSupport`：先查 `information_schema`，缺才 `ALTER`）自动补齐，**无需手动改表**。
 - [ ] （可选，Part A 进程自愈）agent：`cd agent && go test ./... && VERSION=1.2.1 bash build-dist.sh`，再分发 / MDM 到客户端。
 
 ## 2. 配置 SMTP（环境变量，随后端进程注入）
@@ -41,6 +41,7 @@
 | `notifications.offline_email.install_base_url` | 空 | 建议 | 服务器公网地址；填了邮件给可直接复制的真命令，留空则只给通用指引 |
 | `notifications.offline_email.threshold_hours` | `1` | | 离线超过几小时才发 |
 | `notifications.offline_email.dedup_hours` | `2` | | 同一设备两封提醒最小间隔 |
+| `notifications.offline_email.startup_grace_minutes` | `10` | | 服务就绪（启动补丁/回填跑完）后多久内不判定离线；补丁/回填期间上报被拒、`last_seen` 不更新，宽限内手动触发也会被跳过；`0` = 不宽限 |
 | `notifications.offline_email.work_hour_start` | `9` | | 工作时段起始小时（含） |
 | `notifications.offline_email.work_hour_end` | `18` | | 工作时段结束小时（不含） |
 
@@ -80,4 +81,4 @@
 ## 涉及的配置面（速查）
 
 - 环境变量：`AIWATCH_SMTP_{HOST,PORT,USER,PASS,SSL,STARTTLS}`
-- sys_config：`notifications.offline_email.{from,install_base_url,threshold_hours,dedup_hours,work_hour_start,work_hour_end}`、`scheduling.offline_device_alerter.{enabled,cron}`
+- sys_config：`notifications.offline_email.{from,install_base_url,threshold_hours,dedup_hours,startup_grace_minutes,work_hour_start,work_hour_end}`、`scheduling.offline_device_alerter.{enabled,cron}`

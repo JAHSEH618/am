@@ -883,8 +883,8 @@ VALUES
 
 -- ============================================================================
 -- id 预分配序列表(P3-3b):高写表 IDENTITY→@TableGenerator 解锁 JDBC 批量 INSERT。
--- 种子 next_val = 各表当前 MAX(id)+1000 缓冲,避免与既有行撞主键(缓冲 >> allocationSize=50,
--- 任何 pooled 优化器语义下首块 id 都 > MAX(id))。INSERT IGNORE 幂等:行已存在则跳过
+-- 种子 next_val = 各表当前 MAX(id)+1000 缓冲,避免与既有行撞主键(表里存的是「已预留的最高 id」，
+-- 首块 = (next_val, next_val+allocationSize]，恒 > MAX(id)，与 allocationSize 取值无关；见 domain/IdAllocation)。INSERT IGNORE 幂等:行已存在则跳过
 -- (app 已接管 next_val,勿覆盖)。⚠️ 存量 prod 库升级须在 app 启动前先跑本段种子(见计划部署节)。
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS id_sequences

@@ -24,6 +24,9 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "agent_device")
+// 只更新被改动的列：每次上报 persistDeviceHeartbeat 都会 save 这一行，整行回写会把告警任务刚写的
+// last_offline_email_time 等列用它读到的旧值覆盖（OfflineDeviceAlerter 已改定向 UPDATE，这里堵反方向）。
+@org.hibernate.annotations.DynamicUpdate
 @EntityListeners(AuditingEntityListener.class)
 @Getter
 @Setter
