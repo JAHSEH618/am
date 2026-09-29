@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,12 +43,21 @@ const (
 	// CodeServerBusy 50301：服务端上报并发已满（随 HTTP 503 返回）。本次什么都没入库，
 	// 游标未推进，下个 tick 自然重报——不要把 body 落 outbox，否则恢复后补发洪峰会再次压垮服务端。
 	CodeServerBusy = 50301
+	// CodePayloadTooLarge 41301：服务端对超大请求体（线上字节 >32MB，或 gzip 解压后 >64MB / 压缩比 >100:1）
+	// 的业务码，随 HTTP 413（Connection: close）返回。确定性失败：原样重发永远 413，必须缩小 body。
+	CodePayloadTooLarge = 41301
 )
 
 // HTTPError 是非 2xx 的 HTTP 响应（不含 R 三段式业务错误）。
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	// Code 是响应体里 R 三段式 envelope 的业务码（如 41301 / 50301）；body 不是 envelope 时为 0。
+	// 网关（nginx）自己生成的 502/504/413 页面没有它，只能靠 StatusCode 判断。
+	Code int
+	// RetryAfter 是响应头 Retry-After 解析出的等待时长；服务端 / 网关没给或给了无法解析的值时为 0。
+	// 调用方把它当作退避的下限（见 reporter.backoffDelay），不要自己在这里 sleep。
+	RetryAfter time.Duration
 }
 
 func (e *HTTPError) Error() string {
@@ -55,13 +65,64 @@ func (e *HTTPError) Error() string {
 }
 
 // IsServerBusy 判断 err 是否为服务端限流 / 过载（503、429 或业务码 CodeServerBusy）。
+// 服务端在启动补丁没跑完（就绪门）时同样回 503+50301，可能持续几分钟——调用方的退避必须能扛住。
 func IsServerBusy(err error) bool {
 	var he *HTTPError
 	if errors.As(err, &he) {
-		return he.StatusCode == http.StatusServiceUnavailable || he.StatusCode == http.StatusTooManyRequests
+		return he.StatusCode == http.StatusServiceUnavailable || he.StatusCode == http.StatusTooManyRequests ||
+			he.Code == CodeServerBusy
 	}
 	var se *ServerError
 	return errors.As(err, &se) && se.Code == CodeServerBusy
+}
+
+// IsPayloadTooLarge 判断 err 是否为"请求体超过服务端 / 网关上限"：HTTP 413，或业务码 CodePayloadTooLarge(41301)
+// （无论 HTTP 状态码是什么）。重发同一个包永远不会成功，调用方必须缩小下一次的 body。
+//
+// 注意：服务端提前回 413 并关闭连接时，Go 客户端偶尔会先看到写错误（broken pipe / connection reset）
+// 而不是响应——那种情况这里识别不出来，按普通失败（不落 outbox、退避）处理，下一次重试通常就能读到 413。
+func IsPayloadTooLarge(err error) bool {
+	var he *HTTPError
+	if errors.As(err, &he) {
+		return he.StatusCode == http.StatusRequestEntityTooLarge || he.Code == CodePayloadTooLarge
+	}
+	var se *ServerError
+	return errors.As(err, &se) && se.Code == CodePayloadTooLarge
+}
+
+// RetryAfter 取出 err 链上 HTTP 响应携带的 Retry-After；没有则为 0。
+func RetryAfter(err error) time.Duration {
+	var he *HTTPError
+	if errors.As(err, &he) {
+		return he.RetryAfter
+	}
+	return 0
+}
+
+// parseRetryAfter 解析 Retry-After 响应头：RFC 9110 允许"整数秒"或"HTTP-date"两种写法。
+// 负数 / 过去的时间 / 无法解析都按 0（未给出）处理。
+func parseRetryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		// 防溢出：time.Duration 最多 ~292 年，超大值截到 1 年，反正调用方还会再封顶。
+		const maxSecs = 365 * 24 * 3600
+		if secs > maxSecs {
+			secs = maxSecs
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // ServerError 是 server 在 R 三段式 envelope 中返回的业务错误（HTTP 200 但 code != 0）。
@@ -91,12 +152,13 @@ type Client struct {
 
 // New 创建一个 Client。baseURL 末尾不带斜杠。
 //
-// timeout 由 config.json report_timeout_ms 控制，默认 15 分钟（见 config.DefaultReportTimeoutMs）。
-// bootstrap 首次 tick 可能 collect 大量 session/message，server ingest 耗时可达数分钟；
-// 普通增量 tick 仍用同一超时，实际 RT 通常远小于上限。
+// timeout 由 config.json report_timeout_ms 控制（见 config.Config.ReportTimeout），默认 90 秒。
+// 曾经是 15 分钟：那是为"单次 bootstrap 请求可达数百 MB"留的余量，代价是服务端卡住时每个 agent 的
+// 连接 / 线程都被占满 15 分钟，2026-09 事故里正是这些挂起的长请求把服务端拖死。现在 body 有字节预算
+// （reporter 单请求约 4MB），90 秒绰绰有余，超时即视为失败并走退避。
 func New(baseURL string, timeout time.Duration) *Client {
 	if timeout <= 0 {
-		timeout = 15 * time.Minute
+		timeout = time.Duration(config.DefaultReportTimeoutMs) * time.Millisecond
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -255,7 +317,16 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body []byte, he
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		return &HTTPError{StatusCode: resp.StatusCode, Body: truncate(string(respBody), 256)}
+		he := &HTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       truncate(string(respBody), 256),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
+		var env envelope
+		if json.Unmarshal(respBody, &env) == nil {
+			he.Code = env.Code
+		}
+		return he
 	}
 	var env envelope
 	if err := json.Unmarshal(respBody, &env); err != nil {

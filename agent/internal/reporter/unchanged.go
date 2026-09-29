@@ -12,7 +12,8 @@
 //   - 距上次成功上报它不足 unchangedResyncInterval（到点强制重发一次，给服务端自愈的机会）。
 //
 // <p>指纹与游标同一套"成功才提交"语义：失败 tick 暂存的指纹直接丢弃，下个 tick 重新比对。
-// 进程重启后指纹表为空，首个 tick 全量上报，与旧行为一致。
+// 其中"idle 且 15 分钟内"的部分会落盘（sentstate.go），进程重启后加载，避免重启后的首个 tick 把 48 小时窗口内
+// 的全部会话重发一遍；落盘文件缺失 / 损坏时退化为首个 tick 全量上报。
 //
 // gz
 package reporter
@@ -33,10 +34,15 @@ const unchangedResyncInterval = 15 * time.Minute
 type sentSession struct {
 	fingerprint uint64
 	sentAt      time.Time
+	// idle 该次上报时会话是否 idle。只有 idle 条目才可能在重启后被判定"未变化"，所以只有它们值得落盘。
+	idle bool
 }
 
 // sessionFingerprint 覆盖服务端 upsert 会写入 ai_session 的全部会话级字段；
 // 消息 / 增量不在其中——它们由游标切片单独判定"有没有新东西"。
+//
+// 改动这里覆盖的字段集合时必须同时把 sentStateSchema 加一：落盘的旧指纹不包含新字段，
+// 不加版本号的话，新字段的变化会被旧指纹"掩盖"到下一次强制重发（至多 15 分钟）。
 func sessionFingerprint(s *monitor.Session) uint64 {
 	h := fnv.New64a()
 	w := func(v string) {
@@ -99,7 +105,7 @@ func (r *Reporter) dropUnchangedIdleSessions(monitors []monitor.Snapshot, now ti
 				dropped++
 				continue
 			}
-			r.pendingSent[key] = sentSession{fingerprint: fp, sentAt: now}
+			r.pendingSent[key] = sentSession{fingerprint: fp, sentAt: now, idle: sess.Status == common.StatusIdle}
 			kept = append(kept, sess)
 		}
 		// 清掉尾部残留引用，让被剔除会话的消息切片能被 GC。
@@ -128,4 +134,5 @@ func (r *Reporter) commitSentSessions() {
 	}
 	r.pendingSent = nil
 	r.seenSessions = nil
+	r.persistSentIfChanged()
 }

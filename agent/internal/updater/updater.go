@@ -49,15 +49,38 @@ const (
 // {
 //   "version": "2.0.1",
 //   "generated_at": "2026-05-08T12:00:00Z",
+//   "rollout_percent": 100,          // 可选，0–100；缺省 = 100（全员）。见 autoupdate.go 的灰度说明
 //   "artifacts": {
 //     "darwin-arm64": {"filename": "aiwatchd-darwin-arm64", "sha256": "...", "size": 12345},
 //     ...
 //   }
 // }
 type Manifest struct {
-	Version     string                       `json:"version"`
-	GeneratedAt string                       `json:"generated_at"`
-	Artifacts   map[string]ManifestArtifact  `json:"artifacts"`
+	Version     string                      `json:"version"`
+	GeneratedAt string                      `json:"generated_at"`
+	Artifacts   map[string]ManifestArtifact `json:"artifacts"`
+	// RolloutPercent 灰度比例（0–100）：只有 agent_id 稳定哈希落在该比例内的机器才会自动升级到这个版本。
+	// 字段可选，缺省（老 manifest）= 100，向后兼容。用 *float64：既能区分"缺省"与"0"，
+	// 也容忍 jq / 手写成 50.0 这类写法（*int 遇到 50.0 会让整份 manifest 解析失败，等于全员失去自动升级）。
+	RolloutPercent *float64 `json:"rollout_percent,omitempty"`
+}
+
+// EffectiveRolloutPercent 返回夹到 [0,100] 的整数灰度比例；字段缺省 / 非法（NaN）按 100 处理。
+func (m *Manifest) EffectiveRolloutPercent() int {
+	if m == nil || m.RolloutPercent == nil {
+		return 100
+	}
+	p := *m.RolloutPercent
+	if p != p { // NaN
+		return 100
+	}
+	switch {
+	case p <= 0:
+		return 0
+	case p >= 100:
+		return 100
+	}
+	return int(p)
 }
 
 // ManifestArtifact 描述单个平台的产物。
@@ -99,8 +122,8 @@ func CheckOnly(currentVersion string) error {
 	if err != nil {
 		return fmt.Errorf("fetch manifest: %w", err)
 	}
-	fmt.Printf("当前版本: %s\n服务端版本: %s\n生成时间: %s\n",
-		currentVersion, manifest.Version, manifest.GeneratedAt)
+	fmt.Printf("当前版本: %s\n服务端版本: %s\n生成时间: %s\n灰度比例: %d%%\n",
+		currentVersion, manifest.Version, manifest.GeneratedAt, manifest.EffectiveRolloutPercent())
 	if manifest.Version == currentVersion {
 		fmt.Println("状态: 已是最新")
 	} else {

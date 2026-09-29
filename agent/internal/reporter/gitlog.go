@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"github.com/am/aiwatch-agent/internal/apiclient"
@@ -71,7 +72,8 @@ func (g *GitLogReporter) Run(ctx context.Context) error {
 			if err := g.scanAndReport(ctx); err != nil {
 				logger.Warnf("gitlog report failed: %v", err)
 			}
-			timer.Reset(interval)
+			// ±20% 抖动：全员 5 分钟扫描的相位不该对齐（服务端重启 / 批量升级后尤其如此）。
+			timer.Reset(jitterDuration(interval, tickJitterFrac, rand.Float64()))
 		}
 	}
 }

@@ -27,7 +27,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/am/aiwatch-agent/internal/config"
 	"github.com/am/aiwatch-agent/internal/logger"
@@ -266,25 +265,14 @@ func cmdStart() error {
 		}
 	}()
 
-	// 方案 A：daemon 每小时拉 manifest，有新版本则分离拉起 `aiwatchd update`
-	//（不可在主进程内直接 updater.Run：Stop service 会先杀掉当前 daemon）。
+	// 方案 A：daemon 约每小时（±25% 抖动）拉 manifest，有新版本且本机在灰度范围内（manifest.rollout_percent）
+	// 则分离拉起 `aiwatchd update`（不可在主进程内直接 updater.Run：Stop service 会先杀掉当前 daemon）。
 	go func() {
 		if !envAutoUpdateEnabled() {
 			logger.Infof("auto-update: disabled via AM_AUTO_UPDATE")
 			return
 		}
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := updater.MaybeScheduleDetachedUpgrade(Version); err != nil {
-					logger.Warnf("auto-update: could not spawn updater: %v", err)
-				}
-			}
-		}
+		updater.RunAutoUpdateLoop(ctx, Version)
 	}()
 
 	return r.Run(ctx)
