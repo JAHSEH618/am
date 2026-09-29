@@ -101,7 +101,31 @@ aiwatch:
     # 同时处理的「重」agent 上报上限（≤2KB 的心跳小包不占名额），超出直接 503、客户端下个 tick 重报。
     # 必须明显小于 Hikari 池（prod 40），给控制台 / 定时任务 / 心跳留连接。见 AgentIngestBulkheadFilter。
     ingest-max-concurrency: 16
-    ingest-acquire-timeout-ms: 500
+    # 等重名额的最长时间（ms）。0 = 拿不到立即 503、不排队：被拒请求每多等一毫秒都占着一个 Tomcat 线程
+    # （prod 只有 50 个），排队会把剩余线程也吃光。旧值 500 已废弃。
+    ingest-acquire-timeout-ms: 0
+    # 轻请求（Content-Length ≤2KB：心跳 / 空闲 tick，以及 /register）的独立并发上限与最长等待（ms，≤200）。
+    ingest-light-max-concurrency: 8
+    ingest-light-acquire-timeout-ms: 200
+    # 老客户端（agent_version < legacy-client-below-version，即 1.3.3 之前，收到 503 仍落 outbox 快节奏重报）
+    # 的重请求独立小名额；验签通过后扣，超额 503。<=0 关闭。
+    ingest-legacy-max-concurrency: 2
+    legacy-client-below-version: 1.3.3
+    # 请求体上限（字节）。线上字节（gzip 后）> max-body-bytes、解压后 > max-decoded-body-bytes、或压缩比 > max-gzip-ratio
+    # 一律 HTTP 413（确定性失败，重发无用）。1.3.3 之前的老客户端首次回填过大会持续 413，属有意。
+    max-body-bytes: 33554432            # 32MB
+    max-decoded-body-bytes: 67108864    # 64MB
+    max-gzip-ratio: 100
+    # 所有在途重请求的估算堆占用总预算（字节，默认 512MB = -Xmx2g 的 1/4；明文按 3x、gzip 按 线上+3x解压 计价）。
+    # 预占不到 503。必须 >= 3 x max-body-bytes。最坏情况算术见 AgentIngestBulkheadFilter Javadoc。
+    ingest-inflight-bytes-budget: 536870912   # 512MB
+    # 未认证的 /agent/register 请求体上限（字节）。
+    register-max-body-bytes: 65536
+    # agent_alert 写入限速与保留期：同 (agentId,type,level) 在窗口内只写一条；全局每分钟上限；保留天数
+    # （运行期以 sys_config agent.alert_retention_days 为准，<=0 不清理）。见 AlertService / AgentAlertRetentionCleaner。
+    alert-dedup-window-minutes: 5
+    alert-max-per-minute: 120
+    alert-retention-days: 30
   capture:
     max-text-bytes-per-part: 524288
     max-blob-bytes-per-part: 1048576

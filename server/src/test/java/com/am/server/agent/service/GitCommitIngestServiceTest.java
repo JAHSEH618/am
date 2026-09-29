@@ -123,6 +123,93 @@ class GitCommitIngestServiceTest {
     }
 
     @Test
+    void handle_databaseUnavailableAbortsTheWholeBatchAndBubblesInsteadOfReportingFailed() {
+        // 连接池取不到连接时，逐条 catch 会让批里每一条都白等一个 30s 连接超时，最后还返回 200 + failed>0。
+        // 库不可用必须整批中止、异常冒泡（GlobalExceptionHandler 会把它映射成 503 + 50301）。
+        GitCommitRepository commitRepo = mock(GitCommitRepository.class);
+        GitCommitFileRepository fileRepo = mock(GitCommitFileRepository.class);
+        AgentDeviceRepository deviceRepo = mock(AgentDeviceRepository.class);
+        GitCommitAttributionEngine engine = mock(GitCommitAttributionEngine.class);
+        when(deviceRepo.findByAgentId(anyString())).thenReturn(Optional.empty());
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), anyString()))
+                .thenThrow(new org.springframework.transaction.CannotCreateTransactionException(
+                        "Could not open JPA EntityManager for transaction",
+                        new java.sql.SQLTransientConnectionException("Connection is not available")));
+        GitCommitIngestService inner =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, null);
+        GitCommitIngestService svc =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, inner);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.transaction.CannotCreateTransactionException.class,
+                () -> svc.handle(requestWith(commitItem("a1"), commitItem("a2"), commitItem("a3")),
+                        new SignatureContext("agent-1", "u1", "host-1")));
+
+        // 只尝试了第一条：后面两条没有白等连接超时
+        verify(commitRepo, org.mockito.Mockito.times(1)).findByRepoUrlAndCommitHash(anyString(), anyString());
+    }
+
+    @Test
+    void handle_databaseAbortStillEnqueuesAttributionForCommitsAlreadyWritten() {
+        GitCommitRepository commitRepo = mock(GitCommitRepository.class);
+        GitCommitFileRepository fileRepo = mock(GitCommitFileRepository.class);
+        AgentDeviceRepository deviceRepo = mock(AgentDeviceRepository.class);
+        GitCommitAttributionEngine engine = mock(GitCommitAttributionEngine.class);
+        when(deviceRepo.findByAgentId(anyString())).thenReturn(Optional.empty());
+        // 第一条正常新增，第二条库不可用
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), org.mockito.ArgumentMatchers.eq("ok1")))
+                .thenReturn(Optional.empty());
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), org.mockito.ArgumentMatchers.eq("down")))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("connection lost"));
+        when(commitRepo.save(any(GitCommit.class))).thenAnswer(inv -> {
+            GitCommit c = inv.getArgument(0);
+            c.setId(7L);
+            return c;
+        });
+        GitCommitIngestService inner =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, null);
+        GitCommitIngestService svc =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, inner);
+
+        org.junit.jupiter.api.Assertions.assertThrows(
+                org.springframework.dao.DataAccessResourceFailureException.class,
+                () -> svc.handle(requestWith(commitItem("ok1"), commitItem("down")),
+                        new SignatureContext("agent-1", "u1", "host-1")));
+
+        // 客户端整批重报时，ok1 会被判 DUPLICATE、不会再触发入队，所以中止前必须先把它交给归因引擎
+        verify(engine).enqueue(any());
+    }
+
+    @Test
+    void handle_lockConflictOnOneCommitIsStillCountedAsFailedAndTheBatchContinues() {
+        // 死锁 / 锁等待超时是「这一条」的问题，不是库不可用：保持 failed 计数契约，其余提交照常落库
+        GitCommitRepository commitRepo = mock(GitCommitRepository.class);
+        GitCommitFileRepository fileRepo = mock(GitCommitFileRepository.class);
+        AgentDeviceRepository deviceRepo = mock(AgentDeviceRepository.class);
+        GitCommitAttributionEngine engine = mock(GitCommitAttributionEngine.class);
+        when(deviceRepo.findByAgentId(anyString())).thenReturn(Optional.empty());
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), org.mockito.ArgumentMatchers.eq("locked")))
+                .thenThrow(new org.springframework.dao.CannotAcquireLockException("Lock wait timeout exceeded"));
+        when(commitRepo.findByRepoUrlAndCommitHash(anyString(), org.mockito.ArgumentMatchers.eq("fine")))
+                .thenReturn(Optional.empty());
+        when(commitRepo.save(any(GitCommit.class))).thenAnswer(inv -> {
+            GitCommit c = inv.getArgument(0);
+            c.setId(8L);
+            return c;
+        });
+        GitCommitIngestService inner =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, null);
+        GitCommitIngestService svc =
+                new GitCommitIngestService(commitRepo, fileRepo, objectMapper, deviceRepo, engine, inner);
+
+        GitCommitIngestService.IngestSummary summary = svc.handle(
+                requestWith(commitItem("locked"), commitItem("fine")), new SignatureContext("agent-1", "u1", "host-1"));
+
+        assertEquals(1, summary.failed());
+        assertEquals(1, summary.inserted());
+    }
+
+    @Test
     void handle_newCommitInsertsFilesWithoutDelete() {
         // 新 commit 不可能已有 file 行；空删会在 idx_commit 上加间隙锁，两条并发新 commit 上报互相死锁。
         GitCommitRepository commitRepo = mock(GitCommitRepository.class);

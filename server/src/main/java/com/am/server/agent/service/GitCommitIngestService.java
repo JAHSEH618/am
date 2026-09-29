@@ -3,6 +3,7 @@ package com.am.server.agent.service;
 import com.am.server.agent.api.dto.GitCommitReportRequest;
 import com.am.server.agent.security.SignatureContext;
 import com.am.server.aggregator.GitCommitAttributionEngine;
+import com.am.server.common.OverloadFailures;
 import com.am.server.domain.agent.AgentDevice;
 import com.am.server.domain.agent.AgentDeviceRepository;
 import com.am.server.domain.git.GitCommit;
@@ -98,6 +99,18 @@ public class GitCommitIngestService {
                             .add(ctx.getUserCode());
                 }
             } catch (Exception e) {
+                if (OverloadFailures.isConnectionUnavailable(e)) {
+                    // 连接池取不到连接 / 开不了事务 / 语句或事务超时：是「库不可用」而不是「这一条 commit 有问题」。
+                    // 继续循环只会让后面每一条都白等一个 Hikari 连接超时（30s × 批内条数 = 线程被占上几十分钟），
+                    // 且最后仍返回 200 + failed>0。改为整批中止、异常冒泡 → GlobalExceptionHandler 回 503 + 50301，
+                    // 客户端游标不推进，等库恢复后整批重报（已入库的判 DUPLICATE，无害）。
+                    // 单条逻辑失败（约束冲突、死锁 / 锁等待超时、乐观锁……）仍走 failed 计数，保持 IngestSummary.failed 契约。
+                    log.warn("git commit ingest aborted, database unavailable: agent_id={} received={} inserted={} "
+                                    + "details_updated={} err={}",
+                            ctx.getAgentId(), request.getCommits().size(), inserted, detailsUpdated, e.toString());
+                    enqueueAttributionBestEffort(inserted + detailsUpdated, attributionDates);
+                    throw e;
+                }
                 failed++;
                 log.warn("ingest commit failed repo={} hash={} err={}",
                         item.getRepoUrl(), item.getCommitHash(), e.toString());
@@ -112,6 +125,22 @@ public class GitCommitIngestService {
             attributionEngine.enqueue(attributionDates);
         }
         return new IngestSummary(inserted, duplicates, ignoredMismatch, detailsUpdated, failed);
+    }
+
+    /**
+     * 中止路径上的归因入队：已落库的 commit 在客户端整批重报时会被判 DUPLICATE，不会再触发入队，
+     * 所以这里先把已成功的那部分交给引擎（引擎只是内存去抖队列，不碰 DB，库不可用时也不会抛）；
+     * 即便丢了，夜间 00:30 的近两天重算也会兜底。
+     */
+    private void enqueueAttributionBestEffort(int written, java.util.Map<java.time.LocalDate, Set<String>> dates) {
+        if (written <= 0) {
+            return;
+        }
+        try {
+            attributionEngine.enqueue(dates);
+        } catch (RuntimeException ex) {
+            log.warn("git commit ingest: attribution enqueue after abort failed: {}", ex.toString());
+        }
     }
 
     /**
@@ -393,6 +422,10 @@ public class GitCommitIngestService {
     /**
      * {@code failed} = 逐条落库抛异常的条数。整个请求仍返 200（其余提交已入库），
      * 但客户端据此保留 gitlog cursor 下轮重报——否则这些提交会永久丢失。
+     *
+     * <p>例外：<b>数据库整体不可用</b>（连接池取不到连接、开不了事务、语句 / 事务超时，见
+     * {@link OverloadFailures#isConnectionUnavailable}）不进 {@code failed}，而是整批中止并让异常冒泡成
+     * HTTP 503 + 50301（{@code GlobalExceptionHandler}）——否则批里每一条都白等一个连接超时，最后还返回 200。
      */
     public record IngestSummary(int inserted, int duplicates, int ignoredIdentityMismatch, int detailsUpdated,
                                 int failed) {
