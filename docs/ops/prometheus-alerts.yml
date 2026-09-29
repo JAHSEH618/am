@@ -1,0 +1,268 @@
+# AIWatch Prometheus 告警规则示例（配合 docs/ops/monitoring.md）。
+#
+# 用法：在 prometheus.yml 里 `rule_files: ["aiwatch-alerts.yml"]`，把本文件拷过去；用 promtool 校验：
+#   promtool check rules docs/ops/prometheus-alerts.yml
+#
+# 前提（缺哪个，对应分组的规则就不会触发，但不会报错）：
+#   - job="aiwatch"        抓取 aiwatch-server 的 /actuator/prometheus（需 X-Admin-Token，见 monitoring.md）
+#   - job="node"           node_exporter（磁盘 / 备份 textfile 指标）
+#   - job="mysql"          mysqld_exporter（MySQL 指标）
+# 阈值是按现网参数（Tomcat 50 线程 / Hikari 40 / 舱壁 16 / -Xmx2g）给的起点，上线后按基线调整；
+# 每条规则的 annotations.runbook 指向 monitoring.md 里对应的排查步骤。
+#
+# 注意：被 /agent/report 舱壁在 Filter 层直接拒绝的请求（503 + 50301）不会带 uri 标签
+# （在 http_server_requests 里通常落到 uri="UNKNOWN"），所以"上报被拒"用 aiwatch_agent_ingest_rejected_total 告警，
+# 不要用 http_server_requests 的 5xx 比例去猜。该计数器 / aiwatch_agent_ingest_inflight 由舱壁过滤器暴露；
+# 若实际标签与这里的聚合方式不同，按 /actuator/prometheus 的输出微调 sum by (...) 即可。
+
+groups:
+  # ---------------------------------------------------------------- 存活 / 抓取
+  - name: aiwatch-availability
+    rules:
+      - alert: AiwatchDown
+        expr: up{job="aiwatch"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "aiwatch-server 抓取失败（{{ $labels.instance }}）"
+          description: >
+            连续 2 分钟抓不到 /actuator/prometheus：进程挂了 / 卡死（线程池被占满时连抓取也会超时）/ 令牌失效。
+            先 docker compose ps 与 docker compose logs --tail=100 server。
+          runbook: "docs/ops/monitoring.md#排查手册"
+
+  # ---------------------------------------------------------------- 连接池（2026-09 事故的直接现场）
+  - name: aiwatch-hikari
+    rules:
+      - alert: AiwatchHikariPoolSaturated
+        # 40 条里用了 ≥36 条并持续 2 分钟。健康时 active 是个位数。
+        expr: hikaricp_connections_active{job="aiwatch"} / hikaricp_connections_max{job="aiwatch"} >= 0.9
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Hikari 连接池使用率 ≥90%（{{ $labels.pool }}）"
+          description: >
+            active={{ $value | humanizePercentage }} of max。看 "Connection leak detection triggered" 日志找占连接的调用栈，
+            以及 MySQL 侧 SHOW PROCESSLIST 有没有长语句 / 锁等待。
+          runbook: "docs/ops/monitoring.md#连接池与线程池"
+      - alert: AiwatchHikariThreadsWaiting
+        # pending = 正在排队等连接的线程数，稳态应为 0。
+        expr: hikaricp_connections_pending{job="aiwatch"} > 0
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "有线程在排队等数据库连接（{{ $labels.pool }}）"
+          description: "pending={{ $value }}，已持续 2 分钟：池已被打满，新请求正在等连接（5s 后会 503）。"
+          runbook: "docs/ops/monitoring.md#连接池与线程池"
+      - alert: AiwatchHikariConnectionTimeouts
+        # connection-timeout=5s：拿不到连接直接失败（用户 / agent 收到 503 + 50301）。任何增长都值得看。
+        expr: increase(hikaricp_connections_timeout_total{job="aiwatch"}[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Hikari 借连接超时（{{ $labels.pool }}）"
+          description: "最近 5 分钟有 {{ $value }} 次借连接超时，对应请求已被快速失败为 503。"
+          runbook: "docs/ops/monitoring.md#连接池与线程池"
+      - alert: AiwatchHikariAcquireSlow
+        # 平均借连接耗时：健康时是微秒级。
+        expr: >
+          rate(hikaricp_connections_acquire_seconds_sum{job="aiwatch"}[5m])
+          / rate(hikaricp_connections_acquire_seconds_count{job="aiwatch"}[5m]) > 0.5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "借连接平均耗时 >500ms（{{ $labels.pool }}）"
+          runbook: "docs/ops/monitoring.md#连接池与线程池"
+
+  # ---------------------------------------------------------------- Tomcat / 上报舱壁
+  - name: aiwatch-http
+    rules:
+      - alert: AiwatchTomcatThreadsSaturated
+        # 需要 server.tomcat.mbeanregistry.enabled=true（已在 application.yml 开启）。50 个线程被占满 = 事故形态。
+        expr: >
+          tomcat_threads_busy_threads{job="aiwatch"} / tomcat_threads_config_max_threads{job="aiwatch"} >= 0.9
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Tomcat 工作线程 ≥90% 忙（{{ $labels.instance }}）"
+          description: "线程池快满了：新请求开始排队，健康检查也可能超时。jstack / 看哪个接口占着线程。"
+          runbook: "docs/ops/monitoring.md#连接池与线程池"
+      - alert: AiwatchAgentReportP99High
+        # /api/v1/agent/report 的 P99（SLO 直方图桶，精度受桶边界限制）。30s 只是起点：bootstrap 大包本来就慢，按基线调。
+        expr: >
+          histogram_quantile(0.99,
+            sum by (le, instance) (rate(http_server_requests_seconds_bucket{job="aiwatch",uri="/api/v1/agent/report"}[5m]))
+          ) > 30
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "/agent/report P99 超过 30s（{{ $labels.instance }}）"
+          description: "P99={{ $value | humanizeDuration }}。对照 Hikari / GC / MySQL 锁等待，看是哪一层慢。"
+          runbook: "docs/ops/monitoring.md#上报舱壁与延迟"
+      - alert: AiwatchAgentReport5xxRatio
+        expr: >
+          sum by (instance) (rate(http_server_requests_seconds_count{job="aiwatch",uri="/api/v1/agent/report",status=~"5.."}[5m]))
+          / sum by (instance) (rate(http_server_requests_seconds_count{job="aiwatch",uri="/api/v1/agent/report"}[5m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "/agent/report 5xx 占比 >5%（{{ $labels.instance }}）"
+          runbook: "docs/ops/monitoring.md#上报舱壁与延迟"
+      - alert: AiwatchIngestBulkheadRejecting
+        # 舱壁（≤16 重上报并发）在持续拒绝：10 分钟内被拒 >50 次。偶发拒绝是设计内的（agent 下个 tick 重报）。
+        expr: sum by (instance) (increase(aiwatch_agent_ingest_rejected_total{job="aiwatch"}[10m])) > 50
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "上报舱壁持续拒绝（{{ $labels.instance }}）"
+          description: "10 分钟被拒 {{ $value }} 次：上报量超过处理能力（回填 / 大包 / DB 慢）。"
+          runbook: "docs/ops/monitoring.md#上报舱壁与延迟"
+      - alert: AiwatchIngestBulkheadFull
+        # 16 = aiwatch.agent.ingest-max-concurrency；改了配置这里同步改。
+        expr: aiwatch_agent_ingest_inflight{job="aiwatch"} >= 16
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "上报舱壁长时间满员（{{ $labels.instance }}）"
+          description: "重上报并发一直顶在上限，处理速度跟不上进入速度。"
+          runbook: "docs/ops/monitoring.md#上报舱壁与延迟"
+
+  # ---------------------------------------------------------------- JVM
+  - name: aiwatch-jvm
+    rules:
+      - alert: AiwatchHeapLiveSetHigh
+        # GC 之后仍存活的数据 / 堆上限：比"当前 used"更能反映真实压力（used 里有大量待回收垃圾）。
+        expr: jvm_gc_live_data_size_bytes{job="aiwatch"} / jvm_gc_max_data_size_bytes{job="aiwatch"} > 0.7
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "老年代 GC 后存活数据 >70% 堆上限（{{ $labels.instance }}）"
+          description: >
+            存活集持续偏高：内存泄漏 / 并发上报包过大 / 堆偏小。-Xmx2g 见 Dockerfile。
+            OOM 时（堆转储开启的话）会写转储到 /dumps（见 docs/ops/monitoring.md「OOM 与堆转储」）。
+          runbook: "docs/ops/monitoring.md#jvm"
+      - alert: AiwatchHeapOldGenNearlyFull
+        # 直接按 jvm_memory_used_bytes{area="heap"} 的老年代池看（G1 的年轻代池上限为 -1，不能参与比值）。
+        expr: >
+          jvm_memory_used_bytes{job="aiwatch",area="heap",id="G1 Old Gen"}
+          / jvm_memory_max_bytes{job="aiwatch",area="heap",id="G1 Old Gen"} > 0.9
+        for: 15m
+        labels: {severity: critical}
+        annotations:
+          summary: "老年代使用率 >90% 持续 15 分钟（{{ $labels.instance }}）"
+          description: "接近 OOM。OOM 后进程会退出（ExitOnOutOfMemoryError）并由 Docker 重启，期间上报会 503。"
+          runbook: "docs/ops/monitoring.md#jvm"
+      - alert: AiwatchGcTimeHigh
+        # GC 暂停占总时间的比例 >10%：应用大部分时间在停顿。
+        expr: sum by (instance) (rate(jvm_gc_pause_seconds_sum{job="aiwatch"}[5m])) > 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "GC 暂停占比 >10%（{{ $labels.instance }}）"
+          runbook: "docs/ops/monitoring.md#jvm"
+      - alert: AiwatchGcLongPause
+        expr: max_over_time(jvm_gc_pause_seconds_max{job="aiwatch"}[5m]) > 2
+        labels: {severity: warning}
+        annotations:
+          summary: "出现 >2s 的 GC 暂停（{{ $labels.instance }}，{{ $labels.gc }}）"
+          runbook: "docs/ops/monitoring.md#jvm"
+
+  # ---------------------------------------------------------------- 磁盘（node_exporter）
+  - name: aiwatch-disk
+    rules:
+      - alert: HostDiskLow
+        # 2026-07 根分区被 binlog / 大表打满过。任何真实文件系统可用 <15% 就该看一眼。
+        expr: >
+          node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs|ramfs"}
+          / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs|ramfs"} < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "磁盘可用 <15%（{{ $labels.instance }} {{ $labels.mountpoint }}）"
+          description: "可用 {{ $value | humanizePercentage }}。先 docker system df、SHOW BINARY LOGS、备份目录。"
+          runbook: "docs/ops/monitoring.md#磁盘"
+      - alert: HostDiskCritical
+        expr: >
+          node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs|ramfs"}
+          / node_filesystem_size_bytes{job="node",fstype!~"tmpfs|overlay|squashfs|ramfs"} < 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "磁盘可用 <5%（{{ $labels.instance }} {{ $labels.mountpoint }}）"
+          runbook: "docs/ops/monitoring.md#磁盘"
+      - alert: HostDiskWillFillIn24h
+        # 按最近 6 小时的下降斜率外推，24 小时内会写满。
+        expr: >
+          predict_linear(node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs|ramfs"}[6h], 24 * 3600) < 0
+          and node_filesystem_avail_bytes{job="node",fstype!~"tmpfs|overlay|squashfs|ramfs"} > 0
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "按当前速度 24 小时内磁盘写满（{{ $labels.instance }} {{ $labels.mountpoint }}）"
+          runbook: "docs/ops/monitoring.md#磁盘"
+
+  # ---------------------------------------------------------------- MySQL（mysqld_exporter）
+  - name: aiwatch-mysql
+    rules:
+      - alert: MysqlDown
+        expr: mysql_up{job="mysql"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "MySQL 不可达（{{ $labels.instance }}）"
+          runbook: "docs/ops/monitoring.md#mysql"
+      - alert: MysqlSlowQueries
+        # long_query_time=2（docker/mysql/aiwatch.cnf）。Slow_queries 不管慢日志开没开都计数。
+        expr: rate(mysql_global_status_slow_queries{job="mysql"}[5m]) * 60 > 6
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "慢查询（>2s）每分钟超过 6 条（{{ $labels.instance }}）"
+          description: "临时 SET GLOBAL slow_query_log=ON 抓一段再关，做法见 monitoring.md。"
+          runbook: "docs/ops/monitoring.md#mysql"
+      - alert: MysqlConnectionsHigh
+        expr: mysql_global_status_threads_connected{job="mysql"} / mysql_global_variables_max_connections{job="mysql"} > 0.5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "MySQL 连接数超过 max_connections 的 50%（{{ $labels.instance }}）"
+          description: "应用池只有 40 条，正常应远低于此；出现说明有别的客户端 / 泄漏。"
+          runbook: "docs/ops/monitoring.md#mysql"
+      - alert: MysqlRowLockWaits
+        # 2026-09 事故的 MySQL 侧信号：行锁等待（间隙锁 / 长事务）。
+        expr: rate(mysql_global_status_innodb_row_lock_waits{job="mysql"}[5m]) > 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "InnoDB 行锁等待 >1 次/秒（{{ $labels.instance }}）"
+          description: "innodb_lock_wait_timeout=10s。查 information_schema.innodb_trx / performance_schema.data_lock_waits。"
+          runbook: "docs/ops/monitoring.md#mysql"
+      - alert: MysqlBufferPoolMissHigh
+        # 缓冲池读盘比例 >1%：缓冲池偏小（默认 128MB 时几乎必现；compose 默认已提到 1G）。
+        expr: >
+          rate(mysql_global_status_innodb_buffer_pool_reads{job="mysql"}[15m])
+          / rate(mysql_global_status_innodb_buffer_pool_read_requests{job="mysql"}[15m]) > 0.01
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "InnoDB 缓冲池未命中率 >1%（{{ $labels.instance }}）"
+          description: "考虑调大 MYSQL_INNODB_BUFFER_POOL_SIZE（.env），选值见 .env.example。"
+          runbook: "docs/ops/monitoring.md#mysql"
+
+  # ---------------------------------------------------------------- 备份（需 scripts/backup-mysql.sh 配 NODE_EXPORTER_TEXTFILE_DIR）
+  - name: aiwatch-backup
+    rules:
+      - alert: AiwatchBackupStale
+        # 每天备份一次：超过 26 小时没有成功 = 至少漏了一次。
+        expr: time() - aiwatch_backup_last_success_timestamp_seconds{job="node"} > 26 * 3600
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "MySQL 备份超过 26 小时没有成功（{{ $labels.instance }}）"
+          runbook: "docs/ops/backup-restore.md"
+      - alert: AiwatchBackupMetricMissing
+        # 从来没写过 / 文件被删：absent 需要具体的 job 才不会永远为真，按你的 node job 名调整。
+        expr: absent(aiwatch_backup_last_success_timestamp_seconds{job="node"})
+        for: 1h
+        labels: {severity: info}
+        annotations:
+          summary: "没有备份指标（未配置 NODE_EXPORTER_TEXTFILE_DIR，或备份从未成功）"
+          runbook: "docs/ops/backup-restore.md"

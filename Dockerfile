@@ -74,16 +74,32 @@ RUN VERSION=${VERSION} bash build-dist.sh    # 产物在 dist/install/
 # Stage 3: 运行时镜像
 ##############################################
 FROM docker.m.daocloud.io/library/eclipse-temurin:17-jre-jammy AS runtime
+# JVM 参数（每项的理由）：
+#   -Xms512m -Xmx2g                 堆上限 2g：HMAC 要求整包读进内存，Tomcat 线程数（50）就是按它算的（见 application.yml）。
+#   -XX:+UseG1GC                    显式指定 G1。JVM 在 <2 核 / <1792MB 的容器里会自动退回 SerialGC，
+#                                   2g 堆下 Serial 的 Full GC 停顿是秒级，会表现成"请求集体卡住"。
+#   -XX:+ExitOnOutOfMemoryError     OOM 后进程直接退出。否则 JVM 半死不活（线程还在、健康检查还可能通过），
+#                                   Docker 的 restart: unless-stopped 只在进程退出时才会重启它——2026-09 事故的教训。
+# 堆转储（-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dumps/aiwatch-oom.hprof）不写死在这里，
+# 而是由 docker/entrypoint.sh 按条件追加：转储最大 ~2GB 且含内存里的会话内容 / 凭据，
+# 只有 /dumps 已挂载、且所在盘剩余空间足够时才开启（2026-07 根分区被打满过，见 CLAUDE.md），否则自动关闭并打 WARN。
+# OOM 时 JVM 先写转储再退出（先 dump 后 exit），同名文件已存在时不覆盖，所以磁盘上最多一份。
+# 开关 / 阈值：AIWATCH_HEAPDUMP=on|off、AIWATCH_HEAPDUMP_MIN_FREE_MB（.env，经 compose 传入）。
+# 需要临时覆盖/追加参数（如换堆大小、开 GC 日志）用 JAVA_OPTS_EXTRA（compose 从 .env 的 AIWATCH_JAVA_OPTS_EXTRA 注入），
+# 它排在最后，后出现的同名 -XX / -Xmx 生效。
 ENV TZ=Asia/Shanghai \
     SPRING_PROFILES_ACTIVE=prod \
     AIWATCH_INSTALL_DIR=/srv/aiwatch/install \
-    JAVA_OPTS="-Xms512m -Xmx2g"
+    JAVA_OPTS="-Xms512m -Xmx2g -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError" \
+    JAVA_OPTS_EXTRA=""
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=server-build /build/server/build/libs/aiwatch-server-*.jar /app/aiwatch-server.jar
 COPY --from=agent-build  /build/agent/dist/install/ /srv/aiwatch/install/
+COPY docker/entrypoint.sh /app/entrypoint.sh
 EXPOSE 9527
-# exec 让 java 成为 PID 1，正确接收停止信号
-ENTRYPOINT ["sh","-c","exec java $JAVA_OPTS -jar /app/aiwatch-server.jar"]
+# 入口脚本最后 `exec java ...`：让 java 成为 PID 1，SIGTERM 直达 JVM 触发 Spring 优雅停机（server.shutdown=graceful）；
+# 不能省掉 exec，否则信号只到 sh，JVM 会被 Docker 超时后 SIGKILL，在途上报被硬切断。
+ENTRYPOINT ["sh","/app/entrypoint.sh"]

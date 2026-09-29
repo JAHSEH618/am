@@ -11,12 +11,16 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.List;
 
 /**
  * 防御纵深：把合法 {@code X-Admin-Token} 请求在 Spring Security 层认成 {@code ROLE_ADMIN}，
  * 使 {@link com.am.server.config.SecurityConfig} 能把 {@code /api/v1/admin/**} 配成
  * {@code authenticated()} 而不破坏自动化（curl / 脚本）通道。
+ *
+ * <p>同样的头也用于 {@code /actuator/**} 里需要认证的端点（如 {@code /actuator/prometheus}）。
  *
  * <p>仅在当前无认证态时才尝试（已登录 session 用户保持其原身份）。token 配置为空时不认（fail-closed）。
  *
@@ -36,11 +40,16 @@ public class AdminTokenAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws ServletException, IOException {
-        if (request.getRequestURI().startsWith("/api/v1/admin/")
+        String uri = request.getRequestURI();
+        // /actuator/：非健康类端点（prometheus 等）由 SecurityConfig 要求 authenticated()，
+        // 这里让 Prometheus / 脚本带 X-Admin-Token 头即可抓取，无需登录会话。
+        if ((uri.startsWith("/api/v1/admin/") || uri.startsWith("/actuator/"))
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
             String expected = authConfigSyncer.getCurrentAdminToken();
             String got = request.getHeader(AdminTokenInterceptor.HEADER_NAME);
-            if (expected != null && !expected.isEmpty() && got != null && got.equals(expected)) {
+            if (expected != null && !expected.isEmpty() && got != null
+                    && MessageDigest.isEqual(got.getBytes(StandardCharsets.UTF_8),
+                    expected.getBytes(StandardCharsets.UTF_8))) {
                 var auth = new UsernamePasswordAuthenticationToken(
                         "admin-token", null,
                         List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
