@@ -1,5 +1,6 @@
 package com.am.server.insight.domain;
 
+import com.am.server.domain.IdAllocation;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -39,7 +40,7 @@ public class AiSessionAudit {
     @GeneratedValue(strategy = GenerationType.TABLE, generator = "aiSessionAuditIdGen")
     @TableGenerator(name = "aiSessionAuditIdGen", table = "id_sequences",
             pkColumnName = "seq_name", valueColumnName = "next_val",
-            pkColumnValue = "ai_session_audit", allocationSize = 50)
+            pkColumnValue = "ai_session_audit", allocationSize = IdAllocation.BLOCK_SIZE)
     private Long id;
 
     @Column(name = "ai_session_id", nullable = false)
