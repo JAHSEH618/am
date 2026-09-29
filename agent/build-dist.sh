@@ -12,6 +12,14 @@
 #   bash agent/build-dist.sh                    # 默认版本 dev，全量重编 4 平台
 #   VERSION=2.0.0 bash agent/build-dist.sh      # 指定版本
 #   bash agent/build-dist.sh --scripts-only     # 仅刷脚本（install.sh / install.ps1），不重编 go（秒级）
+#   ROLLOUT_PERCENT=10 VERSION=2.0.0 bash agent/build-dist.sh   # 灰度：只有 ~10% 的 agent 会自动升级到它
+#
+# 灰度发布（manifest.json 的 rollout_percent，0-100，缺省 100）：
+#   客户端 updater 用 agent_id 的稳定哈希决定自己在不在灰度比例内（见 internal/updater/autoupdate.go），
+#   比例只增不减时升级的机器集合单调扩大。放量不需要重编：把已发布目录里 manifest.json 的 rollout_percent
+#   改大即可，或者用同一 VERSION 重跑本脚本的 --scripts-only 并带新的 ROLLOUT_PERCENT
+#   （注意：--scripts-only 会重新生成整份 manifest，务必带上 VERSION，否则版本号会变回 dev）。
+#   手动 `aiwatchd update` 不受灰度限制；新装（install.sh / install.ps1）也不受灰度限制。
 #
 # 设计取舍：
 #   - go install 用 -trimpath + -ldflags "-s -w"，单二进制 ~12MB（带符号 ~17MB）
@@ -27,12 +35,19 @@ for arg in "$@"; do
     case "$arg" in
         --scripts-only) SCRIPTS_ONLY=1 ;;
         -h|--help)
-            sed -n '1,15p' "$0"; exit 0 ;;
+            sed -n '1,25p' "$0"; exit 0 ;;
         *) echo "unknown arg: $arg" >&2; exit 2 ;;
     esac
 done
 
 VERSION="${VERSION:-dev}"
+ROLLOUT_PERCENT="${ROLLOUT_PERCENT:-100}"
+case "$ROLLOUT_PERCENT" in
+    ''|*[!0-9]*) echo "ROLLOUT_PERCENT must be an integer in 0..100, got: '$ROLLOUT_PERCENT'" >&2; exit 2 ;;
+esac
+if [ "$ROLLOUT_PERCENT" -gt 100 ]; then
+    echo "ROLLOUT_PERCENT must be an integer in 0..100, got: '$ROLLOUT_PERCENT'" >&2; exit 2
+fi
 OUT_DIR="dist/install"
 mkdir -p "$OUT_DIR"
 
@@ -87,6 +102,7 @@ manifest_artifact() {
     echo "{"
     echo "  \"version\": \"$VERSION\","
     echo "  \"generated_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+    echo "  \"rollout_percent\": $ROLLOUT_PERCENT,"
     echo "  \"artifacts\": {"
     first=1
     for entry in \
@@ -109,7 +125,7 @@ echo
 if [ "$SCRIPTS_ONLY" -eq 1 ]; then
     echo "[build-dist] scripts + manifest refreshed (binaries untouched)"
 else
-    echo "[build-dist] done. version=$VERSION"
+    echo "[build-dist] done. version=$VERSION rollout_percent=$ROLLOUT_PERCENT"
 fi
 ls -lh "$OUT_DIR"
 echo
