@@ -137,4 +137,15 @@ public class AgentProperties {
      * 运行期可经 sys_config {@code agent.alert_retention_days} 热改（≤0 = 不清理），此处只是种子默认值。
      */
     private int alertRetentionDays = 30;
+
+    /**
+     * 单个会话 ingest 事务（{@code REQUIRES_NEW}）的超时秒数。DB 变慢时，没有它上报线程会无限期占着连接、
+     * 把 {@link #ingestMaxConcurrency} 个名额和对应连接全部拖住；超时后事务回滚，异常以
+     * {@code TransactionTimedOutException} 上抛（不吞、不推进游标），客户端下个 tick 用同一批数据重报。
+     *
+     * <p>注意有效预算 ≈ 本值 − 1 秒：Hibernate 把剩余<b>整秒数</b>设为语句超时，剩余不足 1 秒后发出的语句立即失败。
+     * 已有会话的增量 tick 通常是毫秒～百毫秒级；bootstrap 大会话（Cursor 单包上千条消息）才可能逼近，
+     * 若某会话持续超时，先看它的消息数 / DB 慢查询，再考虑调大本值，别直接关掉。
+     */
+    private int ingestSessionTimeoutSeconds = 10;
 }

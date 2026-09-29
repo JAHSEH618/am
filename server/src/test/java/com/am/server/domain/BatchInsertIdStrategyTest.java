@@ -3,6 +3,7 @@ package com.am.server.domain;
 import com.am.server.domain.ai.AiSessionEvent;
 import com.am.server.domain.ai.AiSessionMessage;
 import com.am.server.domain.git.GitCommit;
+import com.am.server.domain.git.GitCommitAttribution;
 import com.am.server.domain.git.GitCommitFile;
 import com.am.server.insight.domain.AiSessionAudit;
 import jakarta.persistence.GeneratedValue;
@@ -24,7 +25,8 @@ class BatchInsertIdStrategyTest {
                 AiSessionMessage.class, "ai_session_message",
                 AiSessionAudit.class, "ai_session_audit",
                 GitCommit.class, "git_commit",
-                GitCommitFile.class, "git_commit_file");
+                GitCommitFile.class, "git_commit_file",
+                GitCommitAttribution.class, "git_commit_attribution");
 
         for (Map.Entry<Class<?>, String> e : entities.entrySet()) {
             Field id = e.getKey().getDeclaredField("id");
@@ -38,7 +40,9 @@ class BatchInsertIdStrategyTest {
             assertThat(tg.pkColumnName()).isEqualTo("seq_name");
             assertThat(tg.valueColumnName()).isEqualTo("next_val");
             assertThat(tg.pkColumnValue()).isEqualTo(e.getValue());
-            assertThat(tg.allocationSize()).isEqualTo(50);
+            // 1000：每用完一个区间要另借一条连接取号，调大以减少与会话事务连接的互相等待。
+            // 为什么 50→1000 不撞 id / 不回退见 IdAllocation 与 TableGeneratorAllocationSwitchTest。
+            assertThat(tg.allocationSize()).isEqualTo(1000).isEqualTo(IdAllocation.BLOCK_SIZE);
         }
     }
 }
