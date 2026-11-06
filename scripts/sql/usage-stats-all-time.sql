@@ -8,7 +8,7 @@
 --   -N 去列名、-B 批模式、-r 不转义 —— 三个都要，否则输出不是合法 Markdown。
 --
 -- 数据源只有 ai_session（会话级累计值，一行一个会话）+ employee + monitor_target，不扫 ai_session_event，
--- 每段整表扫一次 ai_session，共 6 次；建议低峰期或从库执行（max_execution_time 封顶 5 分钟/段）。
+-- 每段整表扫一次 ai_session，共 7 次；建议低峰期或从库执行（max_execution_time 封顶 5 分钟/段）。
 --
 -- 口径（与控制台一致）：
 --   * Token 合计 = input + output；cache 写 / cache 读单列展示、不计入合计（Codex / Kimi 等的 input 本身已含缓存）。
@@ -106,9 +106,79 @@ ORDER BY ord;
 SELECT '';
 
 -- -----------------------------------------------------------------------------------------------------
--- 2. 按编码工具
+-- 2. 按月趋势
 -- -----------------------------------------------------------------------------------------------------
-SELECT '## 2. 按编码工具';
+SELECT '## 2. 按月趋势';
+SELECT '';
+SELECT '> 会话按「最后活跃时间」所在月份归属：跨月的长会话，整段 token 都记在它最后活跃的那个月。环比 = 本月 Token 合计 / 上月 − 1。';
+SELECT '';
+SELECT '| 月份 | 活跃用户 | 会话数 | 消息数 | Input | Output | Cache 写 | Cache 读 | Token 合计 | 环比 | 人均 Token | Top 编码工具 | Top 模型 |';
+SELECT '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |';
+WITH s AS (
+    SELECT a.user_code,
+           DATE_FORMAT(a.last_activity, '%Y-%m')                                    AS ym,
+           COALESCE(mt.type_name, a.target_type)                                   AS tool,
+           COALESCE(NULLIF(TRIM(a.model), ''), '(未知)')                            AS model,
+           a.total_messages                                                        AS msgs,
+           a.input_tokens                                                          AS in_t,
+           a.output_tokens                                                         AS out_t,
+           IF(a.cache_create_tokens BETWEEN 0 AND @cache_cap, a.cache_create_tokens, 0) AS cc_t,
+           IF(a.cache_read_tokens   BETWEEN 0 AND @cache_cap, a.cache_read_tokens,   0) AS cr_t
+    FROM ai_session a
+    LEFT JOIN monitor_target mt ON mt.type_code = a.target_type
+    WHERE a.invalid_reason IS NULL
+      AND a.input_tokens  BETWEEN 0 AND @sess_cap
+      AND a.output_tokens BETWEEN 0 AND @sess_cap
+      AND a.last_activity >= @since AND a.last_activity < @until
+      AND (@only_enabled = 0 OR a.target_type IN (SELECT type_code FROM monitor_target WHERE enabled = 1))
+),
+mtool AS (  -- 每月 token 最多的编码工具
+    SELECT ym, tool,
+           SUM(in_t + out_t) AS t,
+           ROW_NUMBER() OVER (PARTITION BY ym ORDER BY SUM(in_t + out_t) DESC, COUNT(*) DESC, tool) AS rn
+    FROM s
+    GROUP BY ym, tool
+),
+mmodel AS (  -- 每月 token 最多的模型
+    SELECT ym, model,
+           SUM(in_t + out_t) AS t,
+           ROW_NUMBER() OVER (PARTITION BY ym ORDER BY SUM(in_t + out_t) DESC, COUNT(*) DESC, model) AS rn
+    FROM s
+    GROUP BY ym, model
+),
+g AS (
+    SELECT ym,
+           COUNT(DISTINCT user_code) AS users, COUNT(*) AS sessions, SUM(msgs) AS msgs,
+           SUM(in_t) AS in_t, SUM(out_t) AS out_t, SUM(cc_t) AS cc_t, SUM(cr_t) AS cr_t,
+           SUM(in_t + out_t) AS total
+    FROM s
+    GROUP BY ym
+),
+w AS (
+    SELECT g.*, LAG(total) OVER (ORDER BY ym) AS prev_total
+    FROM g
+)
+SELECT CONCAT('| ', w.ym,
+              ' | ', FORMAT(w.users, 0), ' | ', FORMAT(w.sessions, 0), ' | ', FORMAT(w.msgs, 0),
+              ' | ', FORMAT(w.in_t, 0), ' | ', FORMAT(w.out_t, 0), ' | ', FORMAT(w.cc_t, 0), ' | ', FORMAT(w.cr_t, 0),
+              ' | **', FORMAT(w.total, 0), '** | ',
+              CASE WHEN w.prev_total IS NULL OR w.prev_total = 0 THEN '-'
+                   ELSE CONCAT(IF(w.total >= w.prev_total, '+', ''),
+                               FORMAT(100 * (w.total - w.prev_total) / w.prev_total, 1), '%') END,
+              ' | ', FORMAT(w.total / NULLIF(w.users, 0), 0),
+              ' | ', REPLACE(COALESCE(CONCAT(t.tool, '（', FORMAT(100 * t.t / NULLIF(w.total, 0), 0), '%）'), '-'), '|', '\\|'),
+              ' | ', REPLACE(COALESCE(CONCAT(m.model, '（', FORMAT(100 * m.t / NULLIF(w.total, 0), 0), '%）'), '-'), '|', '\\|'),
+              ' |')
+FROM w
+LEFT JOIN mtool  t ON t.ym = w.ym AND t.rn = 1
+LEFT JOIN mmodel m ON m.ym = w.ym AND m.rn = 1
+ORDER BY w.ym;
+SELECT '';
+
+-- -----------------------------------------------------------------------------------------------------
+-- 3. 按编码工具
+-- -----------------------------------------------------------------------------------------------------
+SELECT '## 3. 按编码工具';
 SELECT '';
 SELECT '| 编码工具 | 用户数 | 会话数 | 消息数 | 模型数 | Input | Output | Cache 写 | Cache 读 | Token 合计 | 占比 | 首次使用 | 最近使用 |';
 SELECT '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |';
@@ -152,9 +222,9 @@ ORDER BY total DESC, sessions DESC, tool;
 SELECT '';
 
 -- -----------------------------------------------------------------------------------------------------
--- 3. 按模型
+-- 4. 按模型
 -- -----------------------------------------------------------------------------------------------------
-SELECT '## 3. 按模型';
+SELECT '## 4. 按模型';
 SELECT '';
 SELECT '| 排名 | 模型 | 编码工具 | 用户数 | 会话数 | Input | Output | Cache 写 | Cache 读 | Token 合计 | 占比 |';
 SELECT '| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
@@ -194,9 +264,9 @@ ORDER BY total DESC, sessions DESC, model;
 SELECT '';
 
 -- -----------------------------------------------------------------------------------------------------
--- 4. 按用户（排行）
+-- 5. 按用户（排行）
 -- -----------------------------------------------------------------------------------------------------
-SELECT '## 4. 按用户';
+SELECT '## 5. 按用户';
 SELECT '';
 SELECT '| 排名 | 工号 | 姓名 | 部门 | 会话数 | 编码工具 | 主力模型 | Input | Output | Cache 写 | Cache 读 | Token 合计 | 占比 | 首次使用 | 最近使用 |';
 SELECT '| ---: | --- | --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |';
@@ -252,9 +322,9 @@ ORDER BY g.total DESC, g.sessions DESC, g.user_code;
 SELECT '';
 
 -- -----------------------------------------------------------------------------------------------------
--- 5. 用户 × 编码工具 × 模型 明细
+-- 6. 用户 × 编码工具 × 模型 明细
 -- -----------------------------------------------------------------------------------------------------
-SELECT '## 5. 用户 × 编码工具 × 模型 明细';
+SELECT '## 6. 用户 × 编码工具 × 模型 明细';
 SELECT '';
 SELECT '> 按用户 Token 合计降序，同一用户内按 Token 合计降序；「用户内占比」= 该行 / 该用户合计。';
 SELECT '';
